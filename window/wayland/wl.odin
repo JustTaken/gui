@@ -1,700 +1,677 @@
-package main
-ArgumentKind :: enum {
-  Int,
-  Uint,
-  Fixed,
-  String,
-  Object,
-  NewId,
-  Array,
-  Fd,
-}
-Request :: struct {
-  name: string,
-  arguments: []ArgumentKind,
-}
-Event :: struct {
-  name: string,
-  arguments: []ArgumentKind,
-}
-Interface :: struct {
-  name: string,
-  requests: []Request,
-  events: []Event,
-}
+package protocol
 interfaces := [?]Interface{
   Interface{
-    name = "display",
+    name = "wl_display",
     requests = {
       Request{
         name = "sync",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "get_registry",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "error",
-        args = { .Object, .Uint, .String }
+        arguments = { .Object, .Uint, .String }
       },
       Request{
         name = "delete_id",
-        args = { .Uint }
+        arguments = { .Uint }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "registry",
+    name = "wl_registry",
     requests = {
       Request{
         name = "bind",
-        args = { .Uint, .NewId }
+        arguments = { .Uint, .NewId }
       },
       Request{
         name = "global",
-        args = { .Uint, .String, .Uint }
+        arguments = { .Uint, .String, .Uint }
       },
       Request{
         name = "global_remove",
-        args = { .Uint }
+        arguments = { .Uint }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "callback",
+    name = "wl_callback",
     requests = {
       Request{
         name = "done",
-        args = { .Uint }
+        arguments = { .Uint }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "compositor",
+    name = "wl_compositor",
     requests = {
       Request{
         name = "create_surface",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "create_region",
-        args = { .NewId }
+        arguments = { .NewId }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "shm_pool",
+    name = "wl_shm_pool",
     requests = {
       Request{
         name = "create_buffer",
-        args = { .NewId, .Int, .Int, .Int, .Int, .Uint }
+        arguments = { .NewId, .Int, .Int, .Int, .Int, .Uint }
       },
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "resize",
-        args = { .Int }
+        arguments = { .Int }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "shm",
+    name = "wl_shm",
     requests = {
       Request{
         name = "create_pool",
-        args = { .NewId, .Fd, .Int }
+        arguments = { .NewId, .Fd, .Int }
       },
       Request{
         name = "format",
-        args = { .Uint }
+        arguments = { .Uint }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "buffer",
+    name = "wl_buffer",
     requests = {
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "data_offer",
+    name = "wl_data_offer",
     requests = {
       Request{
         name = "accept",
-        args = { .Uint, .String }
+        arguments = { .Uint, .String }
       },
       Request{
         name = "receive",
-        args = { .String, .Fd }
+        arguments = { .String, .Fd }
       },
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "offer",
-        args = { .String }
+        arguments = { .String }
       },
       Request{
         name = "finish",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "set_actions",
-        args = { .Uint, .Uint }
+        arguments = { .Uint, .Uint }
       },
       Request{
         name = "source_actions",
-        args = { .Uint }
+        arguments = { .Uint }
       },
       Request{
         name = "action",
-        args = { .Uint }
+        arguments = { .Uint }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "data_source",
+    name = "wl_data_source",
     requests = {
       Request{
         name = "offer",
-        args = { .String }
+        arguments = { .String }
       },
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "target",
-        args = { .String }
+        arguments = { .String }
       },
       Request{
         name = "send",
-        args = { .String, .Fd }
+        arguments = { .String, .Fd }
       },
       Request{
         name = "cancelled",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "set_actions",
-        args = { .Uint }
+        arguments = { .Uint }
       },
       Request{
         name = "dnd_drop_performed",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "dnd_finished",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "action",
-        args = { .Uint }
+        arguments = { .Uint }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "data_device",
+    name = "wl_data_device",
     requests = {
       Request{
         name = "start_drag",
-        args = { .Object, .Object, .Object, .Uint }
+        arguments = { .Object, .Object, .Object, .Uint }
       },
       Request{
         name = "set_selection",
-        args = { .Object, .Uint }
+        arguments = { .Object, .Uint }
       },
       Request{
         name = "data_offer",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "enter",
-        args = { .Uint, .Object, .Fixed, .Fixed, .Object }
+        arguments = { .Uint, .Object, .Fixed, .Fixed, .Object }
       },
       Request{
         name = "leave",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "motion",
-        args = { .Uint, .Fixed, .Fixed }
+        arguments = { .Uint, .Fixed, .Fixed }
       },
       Request{
         name = "drop",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "selection",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "data_device_manager",
+    name = "wl_data_device_manager",
     requests = {
       Request{
         name = "create_data_source",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "get_data_device",
-        args = { .NewId, .Object }
+        arguments = { .NewId, .Object }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "shell",
+    name = "wl_shell",
     requests = {
       Request{
         name = "get_shell_surface",
-        args = { .NewId, .Object }
+        arguments = { .NewId, .Object }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "shell_surface",
+    name = "wl_shell_surface",
     requests = {
       Request{
         name = "pong",
-        args = { .Uint }
+        arguments = { .Uint }
       },
       Request{
         name = "move",
-        args = { .Object, .Uint }
+        arguments = { .Object, .Uint }
       },
       Request{
         name = "resize",
-        args = { .Object, .Uint, .Uint }
+        arguments = { .Object, .Uint, .Uint }
       },
       Request{
         name = "set_toplevel",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "set_transient",
-        args = { .Object, .Int, .Int, .Uint }
+        arguments = { .Object, .Int, .Int, .Uint }
       },
       Request{
         name = "set_fullscreen",
-        args = { .Uint, .Uint, .Object }
+        arguments = { .Uint, .Uint, .Object }
       },
       Request{
         name = "set_popup",
-        args = { .Object, .Uint, .Object, .Int, .Int, .Uint }
+        arguments = { .Object, .Uint, .Object, .Int, .Int, .Uint }
       },
       Request{
         name = "set_maximized",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "set_title",
-        args = { .String }
+        arguments = { .String }
       },
       Request{
         name = "set_class",
-        args = { .String }
+        arguments = { .String }
       },
       Request{
         name = "ping",
-        args = { .Uint }
+        arguments = { .Uint }
       },
       Request{
         name = "configure",
-        args = { .Uint, .Int, .Int }
+        arguments = { .Uint, .Int, .Int }
       },
       Request{
         name = "popup_done",
-        args = {  }
+        arguments = {  }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "surface",
+    name = "wl_surface",
     requests = {
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "attach",
-        args = { .Object, .Int, .Int }
+        arguments = { .Object, .Int, .Int }
       },
       Request{
         name = "damage",
-        args = { .Int, .Int, .Int, .Int }
+        arguments = { .Int, .Int, .Int, .Int }
       },
       Request{
         name = "frame",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "set_opaque_region",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "set_input_region",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "commit",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "enter",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "leave",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "set_buffer_transform",
-        args = { .Int }
+        arguments = { .Int }
       },
       Request{
         name = "set_buffer_scale",
-        args = { .Int }
+        arguments = { .Int }
       },
       Request{
         name = "damage_buffer",
-        args = { .Int, .Int, .Int, .Int }
+        arguments = { .Int, .Int, .Int, .Int }
       },
       Request{
         name = "offset",
-        args = { .Int, .Int }
+        arguments = { .Int, .Int }
       },
       Request{
         name = "preferred_buffer_scale",
-        args = { .Int }
+        arguments = { .Int }
       },
       Request{
         name = "preferred_buffer_transform",
-        args = { .Uint }
+        arguments = { .Uint }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "seat",
+    name = "wl_seat",
     requests = {
       Request{
         name = "capabilities",
-        args = { .Uint }
+        arguments = { .Uint }
       },
       Request{
         name = "get_pointer",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "get_keyboard",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "get_touch",
-        args = { .NewId }
+        arguments = { .NewId }
       },
       Request{
         name = "name",
-        args = { .String }
+        arguments = { .String }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "pointer",
+    name = "wl_pointer",
     requests = {
       Request{
         name = "set_cursor",
-        args = { .Uint, .Object, .Int, .Int }
+        arguments = { .Uint, .Object, .Int, .Int }
       },
       Request{
         name = "enter",
-        args = { .Uint, .Object, .Fixed, .Fixed }
+        arguments = { .Uint, .Object, .Fixed, .Fixed }
       },
       Request{
         name = "leave",
-        args = { .Uint, .Object }
+        arguments = { .Uint, .Object }
       },
       Request{
         name = "motion",
-        args = { .Uint, .Fixed, .Fixed }
+        arguments = { .Uint, .Fixed, .Fixed }
       },
       Request{
         name = "button",
-        args = { .Uint, .Uint, .Uint, .Uint }
+        arguments = { .Uint, .Uint, .Uint, .Uint }
       },
       Request{
         name = "axis",
-        args = { .Uint, .Uint, .Fixed }
+        arguments = { .Uint, .Uint, .Fixed }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "frame",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "axis_source",
-        args = { .Uint }
+        arguments = { .Uint }
       },
       Request{
         name = "axis_stop",
-        args = { .Uint, .Uint }
+        arguments = { .Uint, .Uint }
       },
       Request{
         name = "axis_discrete",
-        args = { .Uint, .Int }
+        arguments = { .Uint, .Int }
       },
       Request{
         name = "axis_value120",
-        args = { .Uint, .Int }
+        arguments = { .Uint, .Int }
       },
       Request{
         name = "axis_relative_direction",
-        args = { .Uint, .Uint }
+        arguments = { .Uint, .Uint }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "keyboard",
+    name = "wl_keyboard",
     requests = {
       Request{
         name = "keymap",
-        args = { .Uint, .Fd, .Uint }
+        arguments = { .Uint, .Fd, .Uint }
       },
       Request{
         name = "enter",
-        args = { .Uint, .Object, .Array }
+        arguments = { .Uint, .Object, .Array }
       },
       Request{
         name = "leave",
-        args = { .Uint, .Object }
+        arguments = { .Uint, .Object }
       },
       Request{
         name = "key",
-        args = { .Uint, .Uint, .Uint, .Uint }
+        arguments = { .Uint, .Uint, .Uint, .Uint }
       },
       Request{
         name = "modifiers",
-        args = { .Uint, .Uint, .Uint, .Uint, .Uint }
+        arguments = { .Uint, .Uint, .Uint, .Uint, .Uint }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "repeat_info",
-        args = { .Int, .Int }
+        arguments = { .Int, .Int }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "touch",
+    name = "wl_touch",
     requests = {
       Request{
         name = "down",
-        args = { .Uint, .Uint, .Object, .Int, .Fixed, .Fixed }
+        arguments = { .Uint, .Uint, .Object, .Int, .Fixed, .Fixed }
       },
       Request{
         name = "up",
-        args = { .Uint, .Uint, .Int }
+        arguments = { .Uint, .Uint, .Int }
       },
       Request{
         name = "motion",
-        args = { .Uint, .Int, .Fixed, .Fixed }
+        arguments = { .Uint, .Int, .Fixed, .Fixed }
       },
       Request{
         name = "frame",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "cancel",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "shape",
-        args = { .Int, .Fixed, .Fixed }
+        arguments = { .Int, .Fixed, .Fixed }
       },
       Request{
         name = "orientation",
-        args = { .Int, .Fixed }
+        arguments = { .Int, .Fixed }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "output",
+    name = "wl_output",
     requests = {
       Request{
         name = "geometry",
-        args = { .Int, .Int, .Int, .Int, .Int, .String, .String, .Int }
+        arguments = { .Int, .Int, .Int, .Int, .Int, .String, .String, .Int }
       },
       Request{
         name = "mode",
-        args = { .Uint, .Int, .Int, .Int }
+        arguments = { .Uint, .Int, .Int, .Int }
       },
       Request{
         name = "done",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "scale",
-        args = { .Int }
+        arguments = { .Int }
       },
       Request{
         name = "release",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "name",
-        args = { .String }
+        arguments = { .String }
       },
       Request{
         name = "description",
-        args = { .String }
+        arguments = { .String }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "region",
+    name = "wl_region",
     requests = {
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "add",
-        args = { .Int, .Int, .Int, .Int }
+        arguments = { .Int, .Int, .Int, .Int }
       },
       Request{
         name = "subtract",
-        args = { .Int, .Int, .Int, .Int }
+        arguments = { .Int, .Int, .Int, .Int }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "subcompositor",
+    name = "wl_subcompositor",
     requests = {
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "get_subsurface",
-        args = { .NewId, .Object, .Object }
+        arguments = { .NewId, .Object, .Object }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "subsurface",
+    name = "wl_subsurface",
     requests = {
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "set_position",
-        args = { .Int, .Int }
+        arguments = { .Int, .Int }
       },
       Request{
         name = "place_above",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "place_below",
-        args = { .Object }
+        arguments = { .Object }
       },
       Request{
         name = "set_sync",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "set_desync",
-        args = {  }
+        arguments = {  }
       },
     },
     events = {
     },
   },
   Interface{
-    name = "fixes",
+    name = "wl_fixes",
     requests = {
       Request{
         name = "destroy",
-        args = {  }
+        arguments = {  }
       },
       Request{
         name = "destroy_registry",
-        args = { .Object }
+        arguments = { .Object }
       },
     },
     events = {
