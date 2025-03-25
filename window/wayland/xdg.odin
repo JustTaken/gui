@@ -1,5 +1,5 @@
 package protocol
-interfaces := [?]Interface{
+XDG_INTERFACES := [?]Interface{
   Interface{
     name = "xdg_wm_base",
     requests = {

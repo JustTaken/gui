@@ -35,7 +35,7 @@ Connection :: struct {
 
 usage :: proc() {
   fmt.println("Usage:")
-  fmt.println(" ", os.args[0], "{input_path} {output_path} {package name}")
+  fmt.println(" ", os.args[0], "{input_path} {output_path} {interface_slice_name} {package_name}")
 }
 
 main :: proc() {
@@ -48,12 +48,13 @@ main :: proc() {
     package_name := os.args[2]
 
     write_preambule(&output, package_name)
-  } else if l == 4 {
+  } else if l == 5 {
     input_path := os.args[1]
     output_path = os.args[2]
-    package_name := os.args[3]
+    interfaces_name := os.args[3]
+    package_name := os.args[4]
 
-    scan(&output, input_path, package_name, context.allocator)
+    scan(&output, input_path, interfaces_name, package_name, context.allocator)
   } else {
     usage()
     return
@@ -75,7 +76,7 @@ write_preambule :: proc(output: ^[dynamic]u8, package_name: string) {
   copy_type(output, "Fd", "distinct i32")
   copy_type(output, "String", "distinct []u8")
   copy_type(output, "Array", "distinct []u8")
-  copy_composed(output, "UnBoundNewId", "struct", { "id: BoundNewId", "interface: string" })
+  copy_composed(output, "UnBoundNewId", "struct", { "id: BoundNewId", "interface: []u8" })
 
   copy_composed(output, "ArgumentKind", "enum", { "Int", "Uint", "Fixed", "Fd", "Object", "BoundNewId", "UnBoundNewId", "String", "Array" })
   copy_composed(output, "Argument", "union", { "Int", "Uint", "Fixed", "Fd", "Object", "BoundNewId", "UnBoundNewId", "String", "Array" })
@@ -83,11 +84,45 @@ write_preambule :: proc(output: ^[dynamic]u8, package_name: string) {
   copy_composed(output, "Event", "struct", { "name: string", "arguments: []ArgumentKind" })
   copy_composed(output, "Interface", "struct", { "name: string", "requests: []Request", "events: []Event" })
 
-  copy(output, "write :: proc(value: Argument, kind: ArgumentKind) -> []u8 {\n  return nil\n}\n")
-  copy(output, "read :: proc(bytes: []u8, kind: ArgumentKind) -> Argument {\n  return nil\n}\n")
+//  copy(output, "write :: proc(value: Argument, kind: ArgumentKind, output: []u8) -> u32 {\n  return nil\n}\n")
+//  copy(output, "read :: proc(bytes: []u8, kind: ArgumentKind) -> Argument {\n  return nil\n}\n")
+//   write :: proc() {
+//     switch kind {
+//       case .Int:
+//         intrinsics.unaligned_store((^Int)(rawptr(output)), value.(Int))
+//         return size_of(Int)
+//       case .Uint:
+//         intrinsics.unaligned_store((^Uint)(rawptr(output)), value.(Uint))
+//         return size_of(Uint)
+//       case .Fixed:
+//         intrinsics.unaligned_store((^Fixed)(rawptr(output)), value.(Fixed))
+//         return size_of(Fixed)
+//       case .Object:
+//         intrinsics.unaligned_store((^Object)(rawptr(output)), value.(Object))
+//         return size_of(Object)
+//       case .BoundNewId:
+//         intrinsics.unaligned_store((^BoundNewId)(rawptr(output)), value.(BoundNewId))
+//         return size_of(BoundNewId)
+//       case .String:
+//         str := value.(String)
+//         l := len(str)
+//         intrinsics.unaligned_store((^u32)(rawptr(output)), l)
+//         copy(output, str)
+//         copy(output[size_of(u32) + l:size_of(u32) + mem.align_formula(l, size_of(u32))])
+//         return size_of(u32) + l
+//       case .Array:
+//         str := value.(Array)
+//         l := len(str)
+//         intrinsics.unaligned_store((^u32)(rawptr(output)), l)
+//         copy(output, str)
+//         copy(output[size_of(u32) + l:size_of(u32) + mem.align_formula(l, size_of(u32))])
+//         return size_of(u32) + l
+//     }
+//   }
+// }
 }
 
-scan :: proc(output: ^[dynamic]u8, input_path: string, package_name: string, allocator := context.allocator) -> bool {
+scan :: proc(output: ^[dynamic]u8, input_path: string, interfaces_name: string, package_name: string, allocator := context.allocator) -> bool {
   document: ^xml.Document
   err: xml.Error
 
@@ -119,7 +154,8 @@ scan :: proc(output: ^[dynamic]u8, input_path: string, package_name: string, all
   copy(output, package_name)
   copy(output, "\n")
 
-  copy(output, "interfaces := [?]Interface{\n")
+  copy(output, interfaces_name)
+  copy(output, " := [?]Interface{\n")
 
   for value in document.elements[0].value {
     index := value.(u32)

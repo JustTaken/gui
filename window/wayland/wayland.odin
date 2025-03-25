@@ -1,5 +1,5 @@
 package protocol
-interfaces := [?]Interface{
+WAYLAND_INTERFACES := [?]Interface{
   Interface{
     name = "wl_display",
     requests = {
