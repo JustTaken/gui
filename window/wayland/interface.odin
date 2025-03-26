@@ -8,8 +8,9 @@ Fd :: distinct i32
 String :: distinct []u8
 Array :: distinct []u8
 UnBoundNewId :: struct {
+  interface: String,
+  version: Uint,
   id: BoundNewId,
-  interface: []u8,
 }
 ArgumentKind :: enum {
   Int,
