@@ -8,16 +8,10 @@
         odin
         ols
         vulkan-loader
-        glfw
-        shaderc
-        helix
-        wayland
-        wayland.dev
-        wayland-scanner
       ];
 
-      LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib:${pkgs.glfw}/lib:${pkgs.wayland}/lib";
-      C_INCLUDE_PATH = "${pkgs.wayland.dev}/include";
+      LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib";
+      CPLUS_INCLUDE_PATH = "${pkgs.glibc.dev}/include";
     };
   };
 }
