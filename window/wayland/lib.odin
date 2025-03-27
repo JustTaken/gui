@@ -113,46 +113,14 @@ create_shm_pool :: proc(connection: ^Connection, format: u32, size: u32) -> bool
   }
 
   connection.shm_pool = ([^]u8)(posix.mmap(nil, uint(size), { .READ, .WRITE }, { .SHARED }, connection.shm_socket, 0))[0:size]
-
   connection.shm_pool_id = get_id(connection, "wl_shm_pool", {}, WAYLAND_INTERFACES[:], allocator = context.allocator)
   connection.create_shm_pool_opcode = get_request_opcode(connection, "create_pool", connection.shm_id);
 
-  //base: rawptr = raw_data(connection.output_buffer.data[connection.output_buffer.len:])
   start := connection.output_buffer.len
 
   write(connection, { BoundNewId(connection.shm_pool_id), Fd(-1), Int(size) }, connection.shm_id, connection.create_shm_pool_opcode)
 
-  io := posix.iovec {
-    iov_base = raw_data(connection.output_buffer.data),
-    iov_len = uint(connection.output_buffer.len),
-  }
-
-  buf := make([]u8, mem.align_formula(size_of(posix.cmsghdr), size_of(uint)) + mem.align_formula(size_of(posix.FD), size_of(uint)))
-  socket_msg := posix.msghdr {
-    msg_name = nil,
-    msg_namelen = 0,
-    msg_iov = &io,
-    msg_iovlen = 1,
-    msg_control = rawptr(&buf[0]),
-    msg_controllen = len(buf),
-    msg_flags = {},
-  }
-
-  cmsg := (^posix.cmsghdr)(socket_msg.msg_control)
-  cmsg.cmsg_level = posix.SOL_SOCKET
-  cmsg.cmsg_type = posix.SCM_RIGHTS
-  cmsg.cmsg_len = uint(mem.align_formula(size_of(posix.cmsghdr), size_of(uint)) + size_of(posix.FD))
-
-  data := (^posix.FD)(&([^]posix.cmsghdr)(cmsg)[1])
-  data^ = connection.shm_socket
-
-  if posix.sendmsg(connection.socket, &socket_msg, { }) < 0 {
-    return false
-  }
-
-  connection.output_buffer.len = 0
-
-  return true
+  return sendmsg(connection, posix.FD, connection.shm_socket)
 }
 
 write :: proc(connection: ^Connection, arguments: []Argument, object_id: u32, opcode: u32) {
@@ -192,22 +160,13 @@ write :: proc(connection: ^Connection, arguments: []Argument, object_id: u32, op
 }
 
 read :: proc(connection: ^Connection) -> bool {
-  object_id: u32
-  opcode: u16
-  size: u16
-  ok: bool
-
   connection.values.len = 0
   bytes_len: u32 = 0
 
   start := connection.input_buffer.len
-  object_id, ok = vec_read(&connection.input_buffer, u32)
-  opcode, ok = vec_read(&connection.input_buffer, u16)
-  size, ok = vec_read(&connection.input_buffer, u16)
-
-  if !ok {
-    return false
-  }
+  object_id := vec_read(&connection.input_buffer, u32) or_return
+  opcode := vec_read(&connection.input_buffer, u16) or_return
+  size := vec_read(&connection.input_buffer, u16) or_return
 
   object := get_object(connection, object_id)
   event := get_event(object, u32(opcode))
@@ -225,10 +184,7 @@ read :: proc(connection: ^Connection) -> bool {
     }
   }
 
-  if connection.input_buffer.len - start != u32(size) {
-    fmt.println("size read and size announced does not match")
-    return false
-  }
+  if connection.input_buffer.len - start != u32(size) do return false
 
   values := connection.values.data[0:connection.values.len]
   object.callbacks[opcode](connection, values)
@@ -237,26 +193,19 @@ read :: proc(connection: ^Connection) -> bool {
 }
 
 read_and_write :: proc(connection: ^Connection, $T: typeid) -> bool {
-  value: T
-  ok: bool
-  value, ok = vec_read(&connection.input_buffer, T)
+  value := vec_read(&connection.input_buffer, T) or_return
+  vec_append(&connection.values, value)
 
-  if ok {
-    vec_append(&connection.values, value)
-  }
-
-  return ok
+  return true
 }
 
 read_and_write_collection :: proc(connection: ^Connection, $T: typeid, length_ptr: ^u32) -> bool {
   start := length_ptr^
-  length: u32
-  bytes: []u8
-  ok: bool
-  length, ok = vec_read(&connection.input_buffer, u32)
-  bytes = vec_read_n(&connection.input_buffer, u32(mem.align_formula(int(length), size_of(u32))))
 
-  if !ok || bytes == nil {
+  length := vec_read(&connection.input_buffer, u32) or_return
+  bytes := vec_read_n(&connection.input_buffer, u32(mem.align_formula(int(length), size_of(u32))))
+
+  if bytes == nil {
     return false
   }
 
@@ -273,20 +222,68 @@ recv :: proc(connection: ^Connection) {
   connection.input_buffer.len = 0
 }
 
-send :: proc(connection: ^Connection) {
-  if connection.output_buffer.len == 0 {
-    return
-  }
+send :: proc(connection: ^Connection) -> bool {
+  if connection.output_buffer.len == 0 do return true 
 
   fmt.println("sending:", connection.output_buffer.data[0:connection.output_buffer.len])
 
   count := posix.send(connection.socket, raw_data(connection.output_buffer.data), uint(connection.output_buffer.len), { })
 
-  if u32(count) != connection.output_buffer.len {
-    fmt.println("Failed to send every information into the socket, total:", count)
+  for connection.output_buffer.len > 0 {
+    if count < 0 {
+      return false
+    }
+
+    connection.output_buffer.len -= u32(count)
+    count = posix.send(connection.socket, raw_data(connection.output_buffer.data[count:]), uint(connection.output_buffer.len), { })
+  }
+
+  return true
+}
+
+sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
+  if connection.output_buffer.len == 0 {
+    return false
+  }
+
+  io := posix.iovec {
+    iov_base = raw_data(connection.output_buffer.data),
+    iov_len = uint(connection.output_buffer.len),
+  }
+
+  t_size := size_of(T)
+  t_align := mem.align_formula(t_size, size_of(uint))
+  cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
+
+  buf := make([]u8, cmsg_align + t_align)
+  defer free(raw_data(buf))
+
+  socket_msg := posix.msghdr {
+    msg_name = nil,
+    msg_namelen = 0,
+    msg_iov = &io,
+    msg_iovlen = 1,
+    msg_control = rawptr(&buf[0]),
+    msg_controllen = len(buf),
+    msg_flags = {},
+  }
+
+  cmsg := (^posix.cmsghdr)(socket_msg.msg_control)
+  cmsg.cmsg_level = posix.SOL_SOCKET
+  cmsg.cmsg_type = posix.SCM_RIGHTS
+  cmsg.cmsg_len = uint(cmsg_align + t_size)
+
+  data := (^T)(&([^]posix.cmsghdr)(cmsg)[1])
+  data^ = value
+
+  if posix.sendmsg(connection.socket, &socket_msg, { }) < 0 {
+    fmt.println("Failed to send every information into the socket")
+
+    return false
   }
 
   connection.output_buffer.len = 0
+  return true
 }
 
 connection_append :: proc(connection: ^Connection, callbacks: []CallbackConfig, interface: ^Interface, allocator := context.allocator) {
@@ -331,7 +328,6 @@ get_request :: proc(object: InterfaceObject, opcode: u32) -> ^Request {
 }
 
 get_event_opcode :: proc(interface: ^Interface, name: string) -> u32 {
-  fmt.println("getting the event", name, "for", interface.name)
   for event, i in interface.events {
     if event.name == name {
       return u32(i)
@@ -355,7 +351,7 @@ get_request_opcode :: proc(connection: ^Connection, name: string, object_id: u32
   panic("request opcode not found")
 }
 
-callback_config :: proc(name: string, callback: Callback) -> CallbackConfig {
+new_callback :: proc(name: string, callback: Callback) -> CallbackConfig {
   return CallbackConfig {
     name = name,
     function = callback,
