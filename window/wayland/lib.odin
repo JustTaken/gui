@@ -13,8 +13,7 @@ Vector :: struct(T: typeid) {
   len: u32,
 }
 
-
-Callback :: proc(^Connection, []Argument)
+Callback :: proc(^Connection, u32, []Argument)
 CallbackConfig :: struct {
   name: string,
   function: Callback,
@@ -37,18 +36,39 @@ Connection :: struct {
   registry_id: u32,
   shm_id: u32,
   compositor_id: u32,
-  xdg_wm_base: u32,
+  surface_id: u32,
+  xdg_wm_base_id: u32,
+  xdg_surface_id: u32,
+  xdg_toplevel_id: u32,
   shm_pool_id: u32,
+  buffer_id: u32,
 
   get_registry_opcode: u32,
   registry_bind_opcode: u32,
   create_shm_pool_opcode: u32,
+  create_surface_opcode: u32,
+  create_buffer_opcode: u32,
+  surface_attach_opcode: u32,
+  surface_commit_opcode: u32,
+  ack_configure_opcode: u32,
+  get_xdg_surface_opcode: u32,
+  get_toplevel_opcode: u32,
+  pong_opcode: u32,
+  destroy_buffer_opcode: u32,
+
+  format: u32,
 
   shm_socket: posix.FD,
   shm_pool: []u8,
+  buffer: []u8,
+
+  width: u32,
+  height: u32,
+  resize: bool,
+  running: bool,
 }
 
-connect :: proc(allocator := context.allocator) -> (Connection, bool) {
+connect :: proc(width: u32, height: u32, allocator := context.allocator) -> (Connection, bool) {
   connection: Connection
 
   xdg_path := os.get_env("XDG_RUNTIME_DIR", allocator = allocator)
@@ -93,11 +113,14 @@ connect :: proc(allocator := context.allocator) -> (Connection, bool) {
   connection.bytes = make([]u8, 1024)
 
   connection.input_buffer.cap = 0
+  connection.width = width
+  connection.height = height
+  connection.running = true
 
   return connection, true
 }
 
-create_shm_pool :: proc(connection: ^Connection, format: u32, size: u32) -> bool {
+create_shm_pool :: proc(connection: ^Connection, size: u32) -> bool {
   name := cstring("odin_custom_wayland_client")
   connection.shm_socket = posix.shm_open(name, { .RDWR, .EXCL, .CREAT }, { .ISVXT, .IXGRP, .IWGRP, .IXUSR })
   if connection.shm_socket < 0 {
@@ -113,8 +136,6 @@ create_shm_pool :: proc(connection: ^Connection, format: u32, size: u32) -> bool
   }
 
   connection.shm_pool = ([^]u8)(posix.mmap(nil, uint(size), { .READ, .WRITE }, { .SHARED }, connection.shm_socket, 0))[0:size]
-  connection.shm_pool_id = get_id(connection, "wl_shm_pool", {}, WAYLAND_INTERFACES[:], allocator = context.allocator)
-  connection.create_shm_pool_opcode = get_request_opcode(connection, "create_pool", connection.shm_id);
 
   start := connection.output_buffer.len
 
@@ -133,7 +154,7 @@ write :: proc(connection: ^Connection, arguments: []Argument, object_id: u32, op
   vec_append_generic(&connection.output_buffer, u16, u16(opcode))
   total_len := vec_reserve(&connection.output_buffer, u16)
 
-  fmt.println("writing", object_id, opcode, arguments, request.arguments)
+  fmt.println("writing: id(", object_id, ")", "opcode(", opcode, ") ->", request.name, arguments)
 
   for kind, i in request.arguments {
     #partial switch kind {
@@ -187,7 +208,8 @@ read :: proc(connection: ^Connection) -> bool {
   if connection.input_buffer.len - start != u32(size) do return false
 
   values := connection.values.data[0:connection.values.len]
-  object.callbacks[opcode](connection, values)
+  fmt.println("reading: id(", object_id, ")", "opcode(", opcode, ") ->", event.name, values)
+  object.callbacks[opcode](connection, object_id, values)
 
   return true
 }
@@ -224,8 +246,6 @@ recv :: proc(connection: ^Connection) {
 
 send :: proc(connection: ^Connection) -> bool {
   if connection.output_buffer.len == 0 do return true 
-
-  fmt.println("sending:", connection.output_buffer.data[0:connection.output_buffer.len])
 
   count := posix.send(connection.socket, raw_data(connection.output_buffer.data), uint(connection.output_buffer.len), { })
 
@@ -283,6 +303,7 @@ sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
   }
 
   connection.output_buffer.len = 0
+
   return true
 }
 
