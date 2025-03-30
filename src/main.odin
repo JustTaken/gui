@@ -40,6 +40,8 @@ main :: proc() {
 }
 
 init_vulkan :: proc(ctx: ^Context) -> bool {
+  format: vk.Format = .B8G8R8A8_SRGB 
+
   instance := create_instance() or_return
 	defer vk.DestroyInstance(instance, nil)
 
@@ -51,10 +53,12 @@ init_vulkan :: proc(ctx: ^Context) -> bool {
 
   queues := create_queues(device, queue_indices)
 
-  modifiers_array := make([]u64, 20)
-  modifiers := get_drm_modifiers(physical_device, .B8G8R8A8_SRGB, modifiers_array)
+  pipeline := create_pipeline(device, format) or_return
 
-  image, memory := create_image(device, physical_device, .B8G8R8A8_SRGB, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT }, {}, modifiers, 800, 600) or_return
+  modifiers_array := make([]u64, 20)
+  modifiers := get_drm_modifiers(physical_device, format, modifiers_array)
+
+  image, memory := create_image(device, physical_device, format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT }, {}, modifiers, 800, 600) or_return
   defer vk.DestroyImage(device, image, nil)
   defer vk.FreeMemory(device, memory, nil)
 
@@ -287,6 +291,266 @@ create_device :: proc(physical_device: vk.PhysicalDevice, indices: [2]u32) -> (v
   return device, true
 }
 
+create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.Pipeline, ok: bool) {
+  vert_code := os.read_entire_file("assets/shader/vert.spv") or_return
+  frag_code := os.read_entire_file("assets/shader/frag.spv") or_return
+
+  vert_module_info := vk.ShaderModuleCreateInfo {
+    sType = .SHADER_MODULE_CREATE_INFO,
+    codeSize = len(vert_code),
+    pCode = cast([^]u32)(&vert_code[0])
+  }
+
+  frag_module_info := vk.ShaderModuleCreateInfo {
+    sType = .SHADER_MODULE_CREATE_INFO,
+    codeSize = len(frag_code),
+    pCode = cast([^]u32)(&frag_code[0])
+  }
+
+  vert_module: vk.ShaderModule
+  if vk.CreateShaderModule(device, &vert_module_info, nil, &vert_module) != .SUCCESS do return pipeline, false
+  defer vk.DestroyShaderModule(device, vert_module, nil)
+
+  frag_module: vk.ShaderModule
+  if vk.CreateShaderModule(device, &frag_module_info, nil, &frag_module) != .SUCCESS do return pipeline, false
+  defer vk.DestroyShaderModule(device, frag_module, nil)
+
+  stages := [?]vk.PipelineShaderStageCreateInfo {
+    {
+      sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+      stage = {.VERTEX},
+      module = vert_module,
+      pName = cstring("main"),
+    },
+    {
+      sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+      stage = {.FRAGMENT},
+      module = frag_module,
+      pName = cstring("main"),
+    },
+  }
+
+  vertex_binding_descriptions := [?]vk.VertexInputBindingDescription {
+    {
+      binding = 0,
+      stride = size_of(f32) * 3,
+      inputRate = .VERTEX,
+    }
+  }
+
+  vertex_attribute_descriptions := [?]vk.VertexInputAttributeDescription {
+    {
+      location = 0,
+      binding = 0,
+      offset = 0,
+      format = .R32G32B32_SFLOAT,
+    }
+  }
+
+  vert_input_state := vk.PipelineVertexInputStateCreateInfo {
+    sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    vertexBindingDescriptionCount = u32(len(vertex_binding_descriptions)),
+    pVertexBindingDescriptions = &vertex_binding_descriptions[0],
+    vertexAttributeDescriptionCount = u32(len(vertex_attribute_descriptions)),
+    pVertexAttributeDescriptions = &vertex_attribute_descriptions[0],
+  }
+
+  viewports := [?]vk.Viewport {
+    {
+      x = 0,
+      y = 0,
+      width = 200,
+      height = 200,
+      minDepth = 0,
+      maxDepth = 1,
+    }
+  }
+
+  scissors := [?]vk.Rect2D {
+    {
+      offset = vk.Offset2D {
+        x = 0,
+        y = 0,
+      },
+      extent = vk.Extent2D {
+        width = 200,
+        height = 200,
+      }
+    }
+  }
+
+  viewport_state := vk.PipelineViewportStateCreateInfo {
+    sType = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+    viewportCount = u32(len(viewports)),
+    pViewports = &viewports[0],
+    scissorCount = u32(len(scissors)),
+    pScissors = &scissors[0],
+  }
+
+  multisample_state := vk.PipelineMultisampleStateCreateInfo {
+    sType = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+    rasterizationSamples = {._1 },
+    sampleShadingEnable = false,
+    alphaToOneEnable = false,
+    alphaToCoverageEnable = false,
+    minSampleShading = 1.0,
+  }
+
+  depth_stencil_stage := vk.PipelineDepthStencilStateCreateInfo {
+    sType = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+    depthTestEnable = false,
+    depthWriteEnable = false,
+    depthCompareOp = .LESS,
+    depthBoundsTestEnable = false,
+    stencilTestEnable = false,
+    minDepthBounds = 0.0,
+    maxDepthBounds = 1.0,
+  }
+
+  color_blend_attachments := [?]vk.PipelineColorBlendAttachmentState {
+    {
+      blendEnable = false,
+      srcColorBlendFactor = .ONE,
+      dstColorBlendFactor = .ZERO,
+      colorBlendOp = .ADD,
+      srcAlphaBlendFactor = .ONE,
+      dstAlphaBlendFactor = .ZERO,
+      alphaBlendOp = .ADD,
+      colorWriteMask = { .R, .G, .B, .A },
+    }
+  }
+
+  color_blend_state := vk.PipelineColorBlendStateCreateInfo {
+    sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+    logicOpEnable = false,
+    attachmentCount = u32(len(color_blend_attachments)),
+    pAttachments = &color_blend_attachments[0],
+    blendConstants = { 0, 0, 0, 0 },
+  }
+
+  rasterization_state := vk.PipelineRasterizationStateCreateInfo {
+    sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+    depthClampEnable = false,
+    rasterizerDiscardEnable = false,
+    polygonMode = .FILL,
+    cullMode = { .FRONT },
+    frontFace = .CLOCKWISE,
+    depthBiasEnable = false,
+    depthBiasClamp = 0.0,
+    depthBiasConstantFactor = 0.0,
+    depthBiasSlopeFactor = 0.0,
+    lineWidth = 1,
+  }
+
+  dynamic_states := [?]vk.DynamicState { .VIEWPORT, .SCISSOR }
+
+  dynamic_state := vk.PipelineDynamicStateCreateInfo {
+    sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+    dynamicStateCount = u32(len(dynamic_states)),
+    pDynamicStates = &dynamic_states[0],
+  }
+
+  render_pass_attachments := [?]vk.AttachmentDescription {
+    {
+      format = format,
+      samples = { ._1 },
+      loadOp = .CLEAR,
+      storeOp = .STORE,
+      finalLayout = .PRESENT_SRC_KHR,
+      stencilLoadOp = .DONT_CARE,
+      stencilStoreOp = .DONT_CARE,
+    }
+  }
+
+  subpass_color_attachments := [?]vk.AttachmentReference {
+    {
+      attachment = 0,
+      layout = .ATTACHMENT_OPTIMAL,
+    }
+  }
+
+  render_pass_subpass := [?]vk.SubpassDescription {
+    {
+      pipelineBindPoint = .GRAPHICS,
+      colorAttachmentCount = u32(len(subpass_color_attachments)),
+      pColorAttachments = &subpass_color_attachments[0],
+      pDepthStencilAttachment = nil,
+    }
+  }
+
+  render_pass_dependencies := [?]vk.SubpassDependency {
+    {
+      srcSubpass = vk.SUBPASS_EXTERNAL,
+      dstSubpass = vk.SUBPASS_EXTERNAL,
+      srcAccessMask = { .INDIRECT_COMMAND_READ },
+      srcStageMask = { .COLOR_ATTACHMENT_OUTPUT, .EARLY_FRAGMENT_TESTS },
+      dstStageMask = { .COLOR_ATTACHMENT_OUTPUT, .EARLY_FRAGMENT_TESTS },
+      dstAccessMask = { .COLOR_ATTACHMENT_WRITE, .DEPTH_STENCIL_ATTACHMENT_WRITE },
+    }
+  }
+
+  render_pass_info := vk.RenderPassCreateInfo {
+    attachmentCount = u32(len(render_pass_attachments)),
+    pAttachments = &render_pass_attachments[0],
+    subpassCount = u32(len(render_pass_subpass)),
+    pSubpasses = &render_pass_subpass[0],
+    dependencyCount = u32(len(render_pass_dependencies)),
+    pDependencies = &render_pass_dependencies[0],
+  }
+
+  render_pass: vk.RenderPass
+  if vk.CreateRenderPass(device, &render_pass_info, nil, &render_pass) != .SUCCESS do return pipeline, false
+
+  set_layout_bindings := [?]vk.DescriptorSetLayoutBinding {
+    {
+      binding = 0,
+      stageFlags = { .VERTEX },
+      descriptorType = .UNIFORM_BUFFER,
+      descriptorCount = 1,
+    }
+  }
+
+  set_layout_infos := [?]vk.DescriptorSetLayoutCreateInfo {
+    {
+      sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      bindingCount = u32(len(set_layout_bindings)),
+      pBindings = &set_layout_bindings[0],
+    }
+  }
+
+  set_layouts: [1]vk.DescriptorSetLayout
+  for i in 0..<len(set_layouts) {
+    if vk.CreateDescriptorSetLayout(device, &set_layout_infos[i], nil, &set_layouts[i]) != .SUCCESS do return pipeline, false
+  }
+
+  layout_info := vk.PipelineLayoutCreateInfo {
+    sType = .PIPELINE_LAYOUT_CREATE_INFO,
+    setLayoutCount = u32(len(set_layouts)),
+    pSetLayouts = &set_layouts[0],
+  }
+  
+  layout: vk.PipelineLayout
+  if vk.CreatePipelineLayout(device, &layout_info, nil, &layout) != .SUCCESS do return pipeline, false
+
+  info := vk.GraphicsPipelineCreateInfo {
+    sType = .GRAPHICS_PIPELINE_CREATE_INFO,
+    stageCount = u32(len(stages)),
+    pStages = &stages[0],
+    pViewportState = &viewport_state,
+    pVertexInputState = &vert_input_state,
+    pMultisampleState = &multisample_state,
+    pDepthStencilState = &depth_stencil_stage,
+    pColorBlendState = &color_blend_state,
+    pRasterizationState = &rasterization_state,
+    pDynamicState = &dynamic_state,
+    renderPass = render_pass,
+    layout = layout,
+  }
+
+  if vk.CreateGraphicsPipelines(device, 0, 1, &info, nil, &pipeline) != .SUCCESS do return pipeline, false
+  return pipeline, true
+}
+
 create_queues :: proc(device: vk.Device, queue_indices: [2]u32) -> [2]vk.Queue {
   queues: [2]vk.Queue
 
@@ -319,19 +583,6 @@ find_queue_indices :: proc(physical_device: vk.PhysicalDevice) -> ([2]u32, bool)
   }
 
   return indices, true
-}
-
-create_shader_module :: proc(device: vk.Device, code: []u8) -> (vk.ShaderModule, bool) {
-	create_info := vk.ShaderModuleCreateInfo {
-    sType = .SHADER_MODULE_CREATE_INFO,
-    codeSize = len(code),
-    pCode = cast(^u32)raw_data(code),
-  }
-	
-	shader: vk.ShaderModule
-	if res := vk.CreateShaderModule(device, &create_info, nil, &shader); res != .SUCCESS do return shader, false
-	
-	return shader, true
 }
 
 create_image :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, modifiers: []u64, width: u32, height: u32) -> (image: vk.Image, memory: vk.DeviceMemory, ok: bool) {
@@ -415,6 +666,19 @@ allcate_command_buffers :: proc(device: vk.Device, command_pool: vk.CommandPool,
 	if res := vk.AllocateCommandBuffers(device, &alloc_info, &command_buffers[0]); res != .SUCCESS do return command_buffers, false
 
   return command_buffers, true
+}
+
+create_shader_module :: proc(device: vk.Device, code: []u8) -> (vk.ShaderModule, bool) {
+	create_info := vk.ShaderModuleCreateInfo {
+    sType = .SHADER_MODULE_CREATE_INFO,
+    codeSize = len(code),
+    pCode = cast(^u32)raw_data(code),
+  }
+	
+	shader: vk.ShaderModule
+	if res := vk.CreateShaderModule(device, &create_info, nil, &shader); res != .SUCCESS do return shader, false
+	
+	return shader, true
 }
 
 find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, bool) {
