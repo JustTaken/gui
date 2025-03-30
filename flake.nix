@@ -11,8 +11,7 @@
         vulkan-validation-layers
       ];
 
-      LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib:${pkgs.vulkan-validation-layers}/lib";
-      CPLUS_INCLUDE_PATH = "${pkgs.glibc.dev}/include";
+      LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib:${pkgs.vulkan-validation-layers}";
     };
   };
 }
