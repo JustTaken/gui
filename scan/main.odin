@@ -4,7 +4,6 @@ package window
 
 import "core:os"
 import xml "core:encoding/xml"
-import fmt "core:fmt"
 import "core:mem"
 import "core:strconv"
 
@@ -33,10 +32,10 @@ Connection :: struct {
   interfaces: []Interface,
 }
 
-usage :: proc() {
-  fmt.println("Usage:")
-  fmt.println(" ", os.args[0], "{input_path} {output_path} {interface_slice_name} {package_name}")
-}
+//usage :: proc() {
+//  fmt.println("Usage:")
+//  fmt.println(" ", os.args[0], "{input_path} {output_path} {interface_slice_name} {package_name}")
+//}
 
 main :: proc() {
   l := len(os.args)
@@ -56,7 +55,7 @@ main :: proc() {
 
     scan(&output, input_path, interfaces_name, package_name, context.allocator)
   } else {
-    usage()
+    //usage()
     return
   }
 
@@ -129,21 +128,18 @@ scan :: proc(output: ^[dynamic]u8, input_path: string, interfaces_name: string, 
   content, ok := os.read_entire_file(input_path, allocator = allocator)
 
   if !ok {
-    fmt.println("Failed to open wayland xml")
     return false
   }
 
   document, err = xml.parse_bytes(content, allocator = allocator)
 
   if err != nil {
-    fmt.println("Failed to parse xml document")
     return false
   }
 
   document, err = xml.parse_bytes(content, allocator = allocator)
 
   if err != nil {
-    fmt.println("Failed to parse xml document")
     return false
   }
 

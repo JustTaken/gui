@@ -2,7 +2,7 @@ package main
 
 import vk "vendor:vulkan"
 import "core:os"
-import "core:fmt"
+//import "core:fmt"
 import "core:dynlib"
 
 library: dynlib.Library
@@ -29,7 +29,6 @@ main :: proc() {
 
   ok: bool
   if library, ok = dynlib.load_library("libvulkan.so"); !ok {
-      fmt.println("Failed to load vulkan library")
       return
   }
 
@@ -46,7 +45,6 @@ init_vulkan :: proc(ctx: ^Context) -> bool {
 	defer vk.DestroyInstance(instance, nil)
 
 	physical_device := find_physical_device(instance, { check_physical_device_ext_support }) or_return
-  fmt.println("selected", physical_device)
   queue_indices := find_queue_indices(physical_device) or_return
 
   device := create_device(physical_device, queue_indices) or_return
@@ -105,7 +103,6 @@ create_instance :: proc() -> (vk.Instance, bool) {
 	
 	if vk.CreateInstance(&create_info, nil, &instance) != .SUCCESS do return instance, false
 	
-  fmt.println("Instance Created")
   vk.load_proc_addresses_instance(instance)
 
   return instance, true
@@ -152,7 +149,6 @@ create_device :: proc(physical_device: vk.PhysicalDevice, indices: [2]u32) -> (v
   device: vk.Device
 	if vk.CreateDevice(physical_device, &device_create_info, nil, &device) != .SUCCESS do return device, false
 
-  fmt.println("Device Created")
   vk.load_proc_addresses_device(device)
 
   return device, true
@@ -521,8 +517,6 @@ check_physical_device_ext_support :: proc(physical_device: vk.PhysicalDevice) ->
   check :: proc(e: cstring, availables: []vk.ExtensionProperties) -> bool {
     for &available in availables do if e == cstring(&available.extensionName[0]) do return true
 
-    fmt.println("extension", e, "not available")
-
     return false
   }
 
@@ -552,8 +546,6 @@ find_physical_device :: proc(instance: vk.Instance, checks: []proc(vk.PhysicalDe
 		score: u32 = 10
 		if props.deviceType == .DISCRETE_GPU do score += 1000
 
-    fmt.println(dev, cstring(&props.deviceName[0]))
-
     for check in checks do if !check(dev) do return 0
 
 		return score + props.limits.maxImageDimension2D
@@ -579,8 +571,6 @@ create_queues :: proc(device: vk.Device, queue_indices: [2]u32) -> [2]vk.Queue {
 	for &q, i in &queues {
 		vk.GetDeviceQueue(device, u32(queue_indices[i]), 0, &q)
 	}
-
-  fmt.println("Queues Created")
 
   return queues
 }
@@ -639,11 +629,8 @@ create_image :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, form
   }
 
   if res := vk.CreateImage(device, &info, nil, &image); res != .SUCCESS {
-    fmt.println(res)
     return image, memory, false
   }
-
-  fmt.println("Image Created")
 
   requirements: vk.MemoryRequirements
   vk.GetImageMemoryRequirements(device, image, &requirements)
@@ -658,8 +645,6 @@ create_image :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, form
 
   vk.BindImageMemory(device, image, memory, vk.DeviceSize(0))
 
-  fmt.println("Image Bound")
-
   return image, memory, true
 }
 
@@ -671,8 +656,6 @@ create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandP
 	
   command_pool: vk.CommandPool
 	if res := vk.CreateCommandPool(device, &pool_info, nil, &command_pool); res != .SUCCESS do return command_pool, false
-
-  fmt.println("CommandPool created")
 
   return command_pool, true
 }
@@ -763,7 +746,6 @@ create_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, req
 	
 	if res := vk.AllocateMemory(device, &alloc_info, nil, &memory); res != .SUCCESS do return memory, false
 
-  fmt.println("Memory Created")
   return memory, true
 }
 

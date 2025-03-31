@@ -1,6 +1,5 @@
 package main
 
-import "core:fmt"
 import "core:mem"
 import wl "wayland"
 
@@ -11,7 +10,6 @@ main :: proc() {
   context.allocator = mem.arena_allocator(&arena)
 
   if !handle() {
-    fmt.println("Failed to handle connection")
     return
   }
 }
@@ -35,7 +33,6 @@ handle :: proc() -> bool {
 }
 
 read :: proc(connection: ^wl.Connection) -> bool {
-  fmt.println()
   wl.recv(connection)
 
   for wl.read(connection) { }

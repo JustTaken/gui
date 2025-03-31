@@ -1,7 +1,6 @@
 package protocol
 
 import "core:os"
-import "core:fmt"
 import "core:mem"
 import "core:sys/posix"
 import "core:path/filepath"
@@ -75,7 +74,6 @@ connect :: proc(width: u32, height: u32, allocator := context.allocator) -> (Con
   wayland_path := os.get_env("WAYLAND_DISPLAY", allocator = allocator)
 
   if len(xdg_path) == 0 || len(wayland_path) == 0 {
-    fmt.println("Failed to get env variables")
     return connection, false
   }
 
@@ -83,7 +81,6 @@ connect :: proc(width: u32, height: u32, allocator := context.allocator) -> (Con
   connection.socket = posix.socket(.UNIX, .STREAM)
 
   if connection.socket < 0 {
-    fmt.println("Failed to create unix socket")
     return connection, false
   }
 
@@ -100,7 +97,6 @@ connect :: proc(width: u32, height: u32, allocator := context.allocator) -> (Con
   result := posix.connect(connection.socket, (^posix.sockaddr)(&sockaddr), posix.socklen_t(size_of(posix.sockaddr_un)))
 
   if result == .FAIL {
-    fmt.println("Failed to connect to compositor socket")
     return connection, false
   }
 
@@ -154,7 +150,7 @@ write :: proc(connection: ^Connection, arguments: []Argument, object_id: u32, op
   vec_append_generic(&connection.output_buffer, u16, u16(opcode))
   total_len := vec_reserve(&connection.output_buffer, u16)
 
-  fmt.println("writing: id(", object_id, ")", "opcode(", opcode, ") ->", request.name, arguments)
+  //fmt.println("writing: id(", object_id, ")", "opcode(", opcode, ") ->", request.name, arguments)
 
   for kind, i in request.arguments {
     #partial switch kind {
@@ -173,7 +169,6 @@ write :: proc(connection: ^Connection, arguments: []Argument, object_id: u32, op
       vec_append_generic(&connection.output_buffer, BoundNewId, value.id)
     case .Fd:
     case:
-      fmt.println("getting non registred value type")
     }
   }
 
@@ -208,7 +203,7 @@ read :: proc(connection: ^Connection) -> bool {
   if connection.input_buffer.len - start != u32(size) do return false
 
   values := connection.values.data[0:connection.values.len]
-  fmt.println("reading: id(", object_id, ")", "opcode(", opcode, ") ->", event.name, values)
+  //fmt.println("reading: id(", object_id, ")", "opcode(", opcode, ") ->", event.name, values)
   object.callbacks[opcode](connection, object_id, values)
 
   return true
@@ -297,8 +292,6 @@ sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
   data^ = value
 
   if posix.sendmsg(connection.socket, &socket_msg, { }) < 0 {
-    fmt.println("Failed to send every information into the socket")
-
     return false
   }
 
@@ -309,7 +302,7 @@ sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
 
 connection_append :: proc(connection: ^Connection, callbacks: []CallbackConfig, interface: ^Interface, allocator := context.allocator) {
   if len(callbacks) != len(interface.events) {
-    fmt.println("registering the wrong number of callbacks into", interface.name)
+    //fmt.println("registering the wrong number of callbacks into", interface.name)
   }
 
   object: InterfaceObject
@@ -336,7 +329,6 @@ get_id :: proc(connection: ^Connection, name: string, callbacks: []CallbackConfi
     }
   }
 
-  fmt.println(name)
   panic("interface id  not found")
 }
 
@@ -355,7 +347,6 @@ get_event_opcode :: proc(interface: ^Interface, name: string) -> u32 {
     }
   }
 
-  fmt.println(name)
   panic("event  opcode not found")
 }
 
@@ -368,7 +359,6 @@ get_request_opcode :: proc(connection: ^Connection, name: string, object_id: u32
     }
   }
   
-  fmt.println(name)
   panic("request opcode not found")
 }
 
