@@ -1,9 +1,10 @@
 # Generate wayland interfaces
 ```bash
-odin run scan -- <output-path.odin> <odin-output-package-name>
-odin run scan -- <path-to-wayland.xml> <output-path.odin> <wayland-interface-array-name> <odin-output-package-name>
-odin run scan -- <path-to-xdg-shell.xml> <output-path.odin> <xdg-interface-array-name> <odin-output-package-name>
+odin run scan -- <types-output-path.odin> <odin-output-package-name>
+odin run scan -- <path-to-wayland.xml> <wayland-interfaces-output-path.odin> <wayland-interface-array-name> <odin-output-package-name>
+odin run scan -- <path-to-xdg-shell.xml> <xdg-interfaces-output-path.odin> <xdg-interface-array-name> <odin-output-package-name>
 ```
+
 ## Examples
 This is the command used to generate `window/wayland/wayland.odin`
 ```bash
@@ -18,3 +19,8 @@ odin run scan -- window/wayland/interface.odin protocol
 ```bash
 odin run src
 ```
+
+# Dependencies
+ - odin
+ - vulkan-loader
+ - vulkan-validation-layers (mandatory for now)
