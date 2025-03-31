@@ -32,11 +32,6 @@ Connection :: struct {
   interfaces: []Interface,
 }
 
-//usage :: proc() {
-//  fmt.println("Usage:")
-//  fmt.println(" ", os.args[0], "{input_path} {output_path} {interface_slice_name} {package_name}")
-//}
-
 main :: proc() {
   l := len(os.args)
   output := make([dynamic]u8, 0, 1024 * 64)
@@ -55,8 +50,7 @@ main :: proc() {
 
     scan(&output, input_path, interfaces_name, package_name, context.allocator)
   } else {
-    //usage()
-    return
+    panic("incorrect usage")
   }
 
   os.write_entire_file(output_path, output[:])

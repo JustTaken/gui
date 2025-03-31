@@ -150,8 +150,6 @@ write :: proc(connection: ^Connection, arguments: []Argument, object_id: u32, op
   vec_append_generic(&connection.output_buffer, u16, u16(opcode))
   total_len := vec_reserve(&connection.output_buffer, u16)
 
-  //fmt.println("writing: id(", object_id, ")", "opcode(", opcode, ") ->", request.name, arguments)
-
   for kind, i in request.arguments {
     #partial switch kind {
     case .BoundNewId: vec_append_generic(&connection.output_buffer, BoundNewId, arguments[i].(BoundNewId))
@@ -203,7 +201,6 @@ read :: proc(connection: ^Connection) -> bool {
   if connection.input_buffer.len - start != u32(size) do return false
 
   values := connection.values.data[0:connection.values.len]
-  //fmt.println("reading: id(", object_id, ")", "opcode(", opcode, ") ->", event.name, values)
   object.callbacks[opcode](connection, object_id, values)
 
   return true
@@ -302,7 +299,7 @@ sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
 
 connection_append :: proc(connection: ^Connection, callbacks: []CallbackConfig, interface: ^Interface, allocator := context.allocator) {
   if len(callbacks) != len(interface.events) {
-    //fmt.println("registering the wrong number of callbacks into", interface.name)
+    panic("Incorrect callback length")
   }
 
   object: InterfaceObject

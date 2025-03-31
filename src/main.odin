@@ -2,7 +2,6 @@ package main
 
 import vk "vendor:vulkan"
 import "core:os"
-//import "core:fmt"
 import "core:dynlib"
 
 library: dynlib.Library
