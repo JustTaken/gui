@@ -15,9 +15,9 @@ Context :: struct {
 }
 
 DEVICE_EXTENSIONS := [?]cstring{
-  "VK_EXT_image_drm_format_modifier",
   "VK_KHR_external_memory_fd",
-  //"VK_EXT_external_memory_dma_buf",
+  "VK_EXT_external_memory_dma_buf",
+  "VK_EXT_image_drm_format_modifier",
 }
 
 VALIDATION_LAYERS := [?]cstring{
@@ -46,6 +46,7 @@ init_vulkan :: proc(ctx: ^Context) -> bool {
 	defer vk.DestroyInstance(instance, nil)
 
 	physical_device := find_physical_device(instance, { check_physical_device_ext_support }) or_return
+  fmt.println("selected", physical_device)
   queue_indices := find_queue_indices(physical_device) or_return
 
   device := create_device(physical_device, queue_indices) or_return
@@ -53,7 +54,13 @@ init_vulkan :: proc(ctx: ^Context) -> bool {
 
   queues := create_queues(device, queue_indices)
 
-  pipeline := create_pipeline(device, format) or_return
+  render_pass := create_render_pass(device, format) or_return
+  defer vk.DestroyRenderPass(device, render_pass, nil)
+
+  pipeline, layout, set_layouts := create_pipeline(device, render_pass) or_return
+  defer vk.DestroyPipeline(device, pipeline, nil)
+  defer vk.DestroyPipelineLayout(device, layout, nil)
+  defer for set_layout in set_layouts do vk.DestroyDescriptorSetLayout(device, set_layout, nil)
 
   modifiers_array := make([]u64, 20)
   modifiers := get_drm_modifiers(physical_device, format, modifiers_array)
@@ -85,7 +92,7 @@ create_instance :: proc() -> (vk.Instance, bool) {
     pApplicationName = "Hello Triangle",
     applicationVersion = vk.MAKE_VERSION(0, 0, 1),
     pEngineName = "No Engine",
-    engineVersion = vk.MAKE_VERSION(1, 0, 0),
+    engineVersion = vk.MAKE_VERSION(0, 0, 1),
     apiVersion = vk.API_VERSION_1_4,
   }
 
@@ -105,7 +112,6 @@ create_instance :: proc() -> (vk.Instance, bool) {
 }
 
 create_device :: proc(physical_device: vk.PhysicalDevice, indices: [2]u32) -> (vk.Device, bool) {
-	
 	queue_priority := f32(1.0)
 
 	unique_indices: [10]u32 = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
@@ -126,9 +132,15 @@ create_device :: proc(physical_device: vk.PhysicalDevice, indices: [2]u32) -> (v
 
 		append(&queue_create_infos, queue_create_info)
 	}
+
+  feature_info := vk.PhysicalDeviceVulkan13Features {
+    sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    synchronization2 = true
+  }
 	
 	device_create_info := vk.DeviceCreateInfo {
     sType = .DEVICE_CREATE_INFO,
+    pNext = &feature_info,
     enabledExtensionCount = u32(len(DEVICE_EXTENSIONS)),
     ppEnabledExtensionNames = &DEVICE_EXTENSIONS[0],
     pQueueCreateInfos = &queue_create_infos[0],
@@ -146,9 +158,9 @@ create_device :: proc(physical_device: vk.PhysicalDevice, indices: [2]u32) -> (v
   return device, true
 }
 
-create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.Pipeline, ok: bool) {
-  vert_code := os.read_entire_file("assets/shader/vert.spv") or_return
-  frag_code := os.read_entire_file("assets/shader/frag.spv") or_return
+create_pipeline :: proc(device: vk.Device, render_pass: vk.RenderPass) -> (pipeline: vk.Pipeline, layout: vk.PipelineLayout, set_layouts: [1]vk.DescriptorSetLayout, ok: bool) {
+  vert_code := os.read_entire_file("assets/output/vert.spv") or_return
+  frag_code := os.read_entire_file("assets/output/frag.spv") or_return
 
   vert_module_info := vk.ShaderModuleCreateInfo {
     sType = .SHADER_MODULE_CREATE_INFO,
@@ -163,11 +175,11 @@ create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.P
   }
 
   vert_module: vk.ShaderModule
-  if vk.CreateShaderModule(device, &vert_module_info, nil, &vert_module) != .SUCCESS do return pipeline, false
+  if vk.CreateShaderModule(device, &vert_module_info, nil, &vert_module) != .SUCCESS do return pipeline, layout, set_layouts, false
   defer vk.DestroyShaderModule(device, vert_module, nil)
 
   frag_module: vk.ShaderModule
-  if vk.CreateShaderModule(device, &frag_module_info, nil, &frag_module) != .SUCCESS do return pipeline, false
+  if vk.CreateShaderModule(device, &frag_module_info, nil, &frag_module) != .SUCCESS do return pipeline, layout, set_layouts, false
   defer vk.DestroyShaderModule(device, frag_module, nil)
 
   stages := [?]vk.PipelineShaderStageCreateInfo {
@@ -303,6 +315,11 @@ create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.P
     lineWidth = 1,
   }
 
+  input_assembly_state := vk.PipelineInputAssemblyStateCreateInfo {
+    sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+    topology = .TRIANGLE_FAN,
+  }
+
   dynamic_states := [?]vk.DynamicState { .VIEWPORT, .SCISSOR }
 
   dynamic_state := vk.PipelineDynamicStateCreateInfo {
@@ -310,59 +327,6 @@ create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.P
     dynamicStateCount = u32(len(dynamic_states)),
     pDynamicStates = &dynamic_states[0],
   }
-
-  render_pass_attachments := [?]vk.AttachmentDescription {
-    {
-      format = format,
-      samples = { ._1 },
-      loadOp = .CLEAR,
-      storeOp = .STORE,
-      initialLayout = .UNDEFINED,
-      finalLayout = .TRANSFER_SRC_OPTIMAL,
-      stencilLoadOp = .DONT_CARE,
-      stencilStoreOp = .DONT_CARE,
-    }
-  }
-
-  subpass_color_attachments := [?]vk.AttachmentReference {
-    {
-      attachment = 0,
-      layout = .ATTACHMENT_OPTIMAL_KHR,
-    }
-  }
-
-  render_pass_subpass := [?]vk.SubpassDescription {
-    {
-      pipelineBindPoint = .GRAPHICS,
-      colorAttachmentCount = u32(len(subpass_color_attachments)),
-      pColorAttachments = &subpass_color_attachments[0],
-      pDepthStencilAttachment = nil,
-    }
-  }
-
-  render_pass_dependencies := [?]vk.SubpassDependency {
-    {
-      srcSubpass = vk.SUBPASS_EXTERNAL,
-      dstSubpass = vk.SUBPASS_EXTERNAL,
-      srcAccessMask = { .COLOR_ATTACHMENT_READ },
-      srcStageMask = { .COLOR_ATTACHMENT_OUTPUT, .EARLY_FRAGMENT_TESTS },
-      dstStageMask = { .COLOR_ATTACHMENT_OUTPUT, .EARLY_FRAGMENT_TESTS },
-      dstAccessMask = { .COLOR_ATTACHMENT_WRITE, .DEPTH_STENCIL_ATTACHMENT_WRITE },
-    }
-  }
-
-  render_pass_info := vk.RenderPassCreateInfo {
-    sType = .RENDER_PASS_CREATE_INFO, 
-    attachmentCount = u32(len(render_pass_attachments)),
-    pAttachments = &render_pass_attachments[0],
-    subpassCount = u32(len(render_pass_subpass)),
-    pSubpasses = &render_pass_subpass[0],
-    dependencyCount = u32(len(render_pass_dependencies)),
-    pDependencies = &render_pass_dependencies[0],
-  }
-
-  render_pass: vk.RenderPass
-  if vk.CreateRenderPass(device, &render_pass_info, nil, &render_pass) != .SUCCESS do return pipeline, false
 
   set_layout_bindings := [?]vk.DescriptorSetLayoutBinding {
     {
@@ -381,9 +345,8 @@ create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.P
     }
   }
 
-  set_layouts: [1]vk.DescriptorSetLayout
   for i in 0..<len(set_layouts) {
-    if vk.CreateDescriptorSetLayout(device, &set_layout_infos[i], nil, &set_layouts[i]) != .SUCCESS do return pipeline, false
+    if vk.CreateDescriptorSetLayout(device, &set_layout_infos[i], nil, &set_layouts[i]) != .SUCCESS do return pipeline, layout, set_layouts, false
   }
 
   layout_info := vk.PipelineLayoutCreateInfo {
@@ -392,8 +355,7 @@ create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.P
     pSetLayouts = &set_layouts[0],
   }
   
-  layout: vk.PipelineLayout
-  if vk.CreatePipelineLayout(device, &layout_info, nil, &layout) != .SUCCESS do return pipeline, false
+  if vk.CreatePipelineLayout(device, &layout_info, nil, &layout) != .SUCCESS do return pipeline, layout, set_layouts, false
 
   info := vk.GraphicsPipelineCreateInfo {
     sType = .GRAPHICS_PIPELINE_CREATE_INFO,
@@ -405,14 +367,72 @@ create_pipeline :: proc(device: vk.Device, format: vk.Format) -> (pipeline: vk.P
     pDepthStencilState = &depth_stencil_stage,
     pColorBlendState = &color_blend_state,
     pRasterizationState = &rasterization_state,
+    pInputAssemblyState = &input_assembly_state,
     pDynamicState = &dynamic_state,
     renderPass = render_pass,
     layout = layout,
   }
 
-  if vk.CreateGraphicsPipelines(device, 0, 1, &info, nil, &pipeline) != .SUCCESS do return pipeline, false
+  if vk.CreateGraphicsPipelines(device, 0, 1, &info, nil, &pipeline) != .SUCCESS do return pipeline, layout, set_layouts, false
 
-  return pipeline, true
+  return pipeline, layout, set_layouts, true
+}
+
+create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPass, bool) {
+  render_pass_attachments := [?]vk.AttachmentDescription {
+    {
+      format = format,
+      samples = { ._1 },
+      loadOp = .CLEAR,
+      storeOp = .STORE,
+      initialLayout = .GENERAL,
+      finalLayout = .GENERAL,
+      stencilLoadOp = .DONT_CARE,
+      stencilStoreOp = .DONT_CARE,
+    }
+  }
+
+  subpass_color_attachments := [?]vk.AttachmentReference {
+    {
+      attachment = 0,
+      layout = .ATTACHMENT_OPTIMAL,
+    }
+  }
+
+  render_pass_subpass := [?]vk.SubpassDescription {
+    {
+      pipelineBindPoint = .GRAPHICS,
+      colorAttachmentCount = u32(len(subpass_color_attachments)),
+      pColorAttachments = &subpass_color_attachments[0],
+      pDepthStencilAttachment = nil,
+    }
+  }
+
+  render_pass_dependencies := [?]vk.SubpassDependency {
+    {
+      srcSubpass = 0,
+      dstSubpass = vk.SUBPASS_EXTERNAL,
+      srcAccessMask = { .COLOR_ATTACHMENT_WRITE },
+      dstAccessMask = { .TRANSFER_READ },
+      srcStageMask = { .COLOR_ATTACHMENT_OUTPUT },
+      dstStageMask = { .TRANSFER, .HOST },
+    }
+  }
+
+  render_pass_info := vk.RenderPassCreateInfo {
+    sType = .RENDER_PASS_CREATE_INFO, 
+    attachmentCount = u32(len(render_pass_attachments)),
+    pAttachments = &render_pass_attachments[0],
+    subpassCount = u32(len(render_pass_subpass)),
+    pSubpasses = &render_pass_subpass[0],
+    dependencyCount = u32(len(render_pass_dependencies)),
+    pDependencies = &render_pass_dependencies[0],
+  }
+
+  render_pass: vk.RenderPass
+  if vk.CreateRenderPass(device, &render_pass_info, nil, &render_pass) != .SUCCESS do return render_pass, false
+
+  return render_pass, true
 }
 
 get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format, modifiers: []u64) -> []u64 {
@@ -532,7 +552,7 @@ find_physical_device :: proc(instance: vk.Instance, checks: []proc(vk.PhysicalDe
 		score: u32 = 10
 		if props.deviceType == .DISCRETE_GPU do score += 1000
 
-    fmt.println(cstring(&props.deviceName[0]))
+    fmt.println(dev, cstring(&props.deviceName[0]))
 
     for check in checks do if !check(dev) do return 0
 
