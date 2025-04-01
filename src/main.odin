@@ -50,7 +50,7 @@ main :: proc() {
   defer _ = dynlib.unload_library(library)
   vk.load_proc_addresses_custom(load_fn)
 
-  bytes = make([]u8, 1024 * 1024)
+  if bytes = make([]u8, 1024 * 1024); bytes == nil do return
   defer delete(bytes)
 
   if !init(&ctx, bytes) do panic("Failed to initialize vulkan")
