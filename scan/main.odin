@@ -1,11 +1,9 @@
-#+build linux
-#+private
-package window
+package scan
 
 import "core:os"
-import xml "core:encoding/xml"
 import "core:mem"
 import "core:strconv"
+import xml "core:encoding/xml"
 
 ArgumentKind :: enum {
   Int, Uint, Fixed, Object, NewId, Fd, String, Array,
@@ -49,9 +47,7 @@ main :: proc() {
     package_name := os.args[4]
 
     scan(&output, input_path, interfaces_name, package_name, context.allocator)
-  } else {
-    panic("incorrect usage")
-  }
+  } else do panic("incorrect usage")
 
   os.write_entire_file(output_path, output[:])
 }
@@ -76,43 +72,6 @@ write_preambule :: proc(output: ^[dynamic]u8, package_name: string) {
   copy_composed(output, "Request", "struct", { "name: string", "arguments: []ArgumentKind" })
   copy_composed(output, "Event", "struct", { "name: string", "arguments: []ArgumentKind" })
   copy_composed(output, "Interface", "struct", { "name: string", "requests: []Request", "events: []Event" })
-
-//  copy(output, "write :: proc(value: Argument, kind: ArgumentKind, output: []u8) -> u32 {\n  return nil\n}\n")
-//  copy(output, "read :: proc(bytes: []u8, kind: ArgumentKind) -> Argument {\n  return nil\n}\n")
-//   write :: proc() {
-//     switch kind {
-//       case .Int:
-//         intrinsics.unaligned_store((^Int)(rawptr(output)), value.(Int))
-//         return size_of(Int)
-//       case .Uint:
-//         intrinsics.unaligned_store((^Uint)(rawptr(output)), value.(Uint))
-//         return size_of(Uint)
-//       case .Fixed:
-//         intrinsics.unaligned_store((^Fixed)(rawptr(output)), value.(Fixed))
-//         return size_of(Fixed)
-//       case .Object:
-//         intrinsics.unaligned_store((^Object)(rawptr(output)), value.(Object))
-//         return size_of(Object)
-//       case .BoundNewId:
-//         intrinsics.unaligned_store((^BoundNewId)(rawptr(output)), value.(BoundNewId))
-//         return size_of(BoundNewId)
-//       case .String:
-//         str := value.(String)
-//         l := len(str)
-//         intrinsics.unaligned_store((^u32)(rawptr(output)), l)
-//         copy(output, str)
-//         copy(output[size_of(u32) + l:size_of(u32) + mem.align_formula(l, size_of(u32))])
-//         return size_of(u32) + l
-//       case .Array:
-//         str := value.(Array)
-//         l := len(str)
-//         intrinsics.unaligned_store((^u32)(rawptr(output)), l)
-//         copy(output, str)
-//         copy(output[size_of(u32) + l:size_of(u32) + mem.align_formula(l, size_of(u32))])
-//         return size_of(u32) + l
-//     }
-//   }
-// }
 }
 
 scan :: proc(output: ^[dynamic]u8, input_path: string, interfaces_name: string, package_name: string, allocator := context.allocator) -> bool {
@@ -242,7 +201,7 @@ write_arguments :: proc(output: ^[dynamic]u8, element: ^xml.Element, elements: [
 
 write_kind :: proc(output: ^[dynamic]u8, attribs: []xml.Attribute) {
   switch attribs[1].val {
-    case "new_id": 
+    case "new_id":
       if attribs[2].key == "interface" {
         copy(output, ".BoundNewId")
       } else {
@@ -280,7 +239,6 @@ copy_composed :: proc(dst: ^[dynamic]u8, name: string, kind: string, values: []s
   copy(dst, "}\n")
 }
 
-@(private)
 copy_type :: proc(dst: ^[dynamic]u8, name: string, value: string) {
   copy(dst, name)
   copy(dst, " :: ")
