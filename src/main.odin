@@ -19,6 +19,10 @@ DEVICE_EXTENSIONS := [?]cstring{
   "VK_EXT_image_drm_format_modifier",
 }
 
+Vertex :: struct {
+  position: [3]f32,
+}
+
 Context :: struct {
   instance: vk.Instance,
   device:   vk.Device,
@@ -31,8 +35,27 @@ Context :: struct {
   render_pass: vk.RenderPass,
   command_pool: vk.CommandPool,
   command_buffers: []vk.CommandBuffer,
+
+  uniform_buffer: vk.Buffer,
+  uniform_buffer_memory: vk.DeviceMemory,
+  descriptor_pool: vk.DescriptorPool,
+  descriptor_sets: []vk.DescriptorSet,
+
   image: vk.Image,
   memory: vk.DeviceMemory,
+  image_view: vk.ImageView,
+
+  framebuffer: vk.Framebuffer,
+
+  vertex_buffer: vk.Buffer,
+  vertex_buffer_memory: vk.DeviceMemory,
+
+  fence: vk.Fence,
+  semaphore: vk.Semaphore,
+
+  width: u32,
+  height: u32,
+  format: vk.Format,
 
   arena: mem.Arena,
   allocator: runtime.Allocator,
@@ -50,11 +73,14 @@ main :: proc() {
   defer _ = dynlib.unload_library(library)
   vk.load_proc_addresses_custom(load_fn)
 
-  if bytes = make([]u8, 1024 * 1024); bytes == nil do return
+  if bytes = make([]u8, 1024 * 1024 * 100); bytes == nil do return
   defer delete(bytes)
 
   if !init(&ctx, bytes) do panic("Failed to initialize vulkan")
   defer deinit(&ctx)
+
+  if !draw(&ctx) do panic("Failed to draw frame")
+  if !write_image(&ctx) do panic("Failed to write image")
 }
 
 init :: proc(ctx: ^Context, bytes: []u8) -> bool {
@@ -62,11 +88,14 @@ init :: proc(ctx: ^Context, bytes: []u8) -> bool {
   ctx.allocator = mem.arena_allocator(&ctx.arena)
   context.allocator = ctx.allocator
 
-  mem.arena_init(&ctx.tmp_arena, make([]u8, 100 * 1024, ctx.allocator))
+  mem.arena_init(&ctx.tmp_arena, make([]u8, 1024 * 1024 * 50, ctx.allocator))
   ctx.tmp_allocator = mem.arena_allocator(&ctx.tmp_arena)
   context.temp_allocator = ctx.tmp_allocator
 
-  format: vk.Format = .B8G8R8A8_SRGB 
+  //ctx.format = .B8G8R8A8_SRGB 
+  ctx.format = .R8G8B8A8_SRGB 
+  ctx.width = 800
+  ctx.height = 400
 
   mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
   defer mem.end_arena_temp_memory(mark)
@@ -75,26 +104,63 @@ init :: proc(ctx: ^Context, bytes: []u8) -> bool {
   ctx.physical_device = find_physical_device(ctx.instance, ctx.tmp_allocator) or_return
   ctx.queue_indices = find_queue_indices(ctx.physical_device, ctx.tmp_allocator) or_return
   ctx.device = create_device(ctx.physical_device, ctx.queue_indices[:], ctx.tmp_allocator) or_return
-  ctx.render_pass = create_render_pass(ctx.device, format) or_return
+  ctx.render_pass = create_render_pass(ctx.device, ctx.format) or_return
   ctx.set_layouts = create_set_layouts(ctx.device, ctx.allocator) or_return
+  ctx.uniform_buffer = create_buffer(ctx.device, size_of([3]f32), { .UNIFORM_BUFFER }) or_return
+  ctx.uniform_buffer_memory = create_buffer_memory(ctx.device, ctx.physical_device, ctx.uniform_buffer, { .HOST_COHERENT, .HOST_VISIBLE }) or_return
+  ctx.descriptor_pool = create_descriptor_pool(ctx.device) or_return
+  ctx.descriptor_sets = allocate_descriptor_sets(ctx.device, ctx.set_layouts, ctx.descriptor_pool, ctx.uniform_buffer, 0, ctx.allocator) or_return
   ctx.layout = create_layout(ctx.device, ctx.set_layouts) or_return
-  ctx.pipeline = create_pipeline(ctx.device, ctx.layout, ctx.render_pass) or_return
+  ctx.pipeline = create_pipeline(ctx.device, ctx.layout, ctx.render_pass, ctx.width, ctx.height, ctx.tmp_allocator) or_return
   ctx.queues = create_queues(ctx.device, ctx.queue_indices[:], ctx.allocator) or_return
   ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
   ctx.command_buffers = allocate_command_buffers(ctx.device, ctx.command_pool, 1, ctx.allocator) or_return
 
-  modifiers := get_drm_modifiers(ctx.physical_device, format, ctx.tmp_allocator)
-  ctx.image = create_image(ctx.device, format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT }, {}, modifiers, 800, 600) or_return
+  modifiers := get_drm_modifiers(ctx.physical_device, ctx.format, ctx.tmp_allocator)
+  ctx.image = create_image(ctx.device, ctx.format, .D2, .OPTIMAL, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, modifiers, ctx.width, ctx.height) or_return
   ctx.memory = create_image_memory(ctx.device, ctx.physical_device, ctx.image) or_return
+  ctx.image_view = create_image_view(ctx.device, ctx.image, ctx.format) or_return
+  ctx.framebuffer = create_framebuffer(ctx.device, ctx.render_pass, &ctx.image_view, ctx.width, ctx.height) or_return
+  ctx.fence = create_fence(ctx.device) or_return
+  ctx.semaphore = create_semaphore(ctx.device) or_return
+
+  vertices := [?]Vertex {
+    { position = { -1.0, -1.0, 0.0 } },
+    { position = { -1.0, -0.5, 0.0 } },
+    { position = { -0.5, -1.0, 0.0 } },
+
+    { position = {  1.0, -1.0, 0.0 } },
+    { position = {  0.5, -0.5, 0.0 } },
+    { position = {  1.0, -0.5, 0.0 } },
+  }
+
+  ctx.vertex_buffer = create_buffer(ctx.device, size_of(Vertex) * len(vertices), { .VERTEX_BUFFER }) or_return
+  ctx.vertex_buffer_memory = create_buffer_memory(ctx.device, ctx.physical_device, ctx.vertex_buffer, { .HOST_COHERENT, .HOST_VISIBLE, .DEVICE_LOCAL }) or_return
+
+  copy_data(Vertex, ctx.device, ctx.vertex_buffer_memory, vertices[:])
+//  buffer: [^]Vertex
+//  vk.MapMemory(ctx.device, ctx.vertex_buffer_memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, (^rawptr)(&buffer))
+//
+//  for i in 0..<len(vertices) {
+//    fmt.println(buffer[i])
+//  }
 
   return true
 }
 
 deinit :: proc(ctx: ^Context) {
+  vk.DestroyBuffer(ctx.device, ctx.uniform_buffer, nil)
+  vk.FreeMemory(ctx.device, ctx.uniform_buffer_memory, nil)
+  vk.DestroyBuffer(ctx.device, ctx.vertex_buffer, nil)
+  vk.FreeMemory(ctx.device, ctx.vertex_buffer_memory, nil)
+  vk.DestroySemaphore(ctx.device, ctx.semaphore, nil)
+  vk.DestroyFence(ctx.device, ctx.fence, nil)
+  vk.DestroyFramebuffer(ctx.device, ctx.framebuffer, nil)
+  vk.DestroyImageView(ctx.device, ctx.image_view, nil)
   vk.FreeMemory(ctx.device, ctx.memory, nil)
   vk.DestroyImage(ctx.device, ctx.image, nil)
-
   vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
+  vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
   vk.DestroyPipeline(ctx.device, ctx.pipeline, nil)
   vk.DestroyPipelineLayout(ctx.device, ctx.layout, nil)
 
@@ -105,6 +171,86 @@ deinit :: proc(ctx: ^Context) {
   vk.DestroyRenderPass(ctx.device, ctx.render_pass, nil)
   vk.DestroyDevice(ctx.device, nil)
   vk.DestroyInstance(ctx.instance, nil)
+}
+
+draw :: proc(ctx: ^Context) -> bool {
+  cmd := ctx.command_buffers[0]
+
+  vertex_buffers := [?]vk.Buffer{ ctx.vertex_buffer }
+  vertex_offsets := [?]vk.DeviceSize{ 0 * size_of(Vertex) }
+
+  area := vk.Rect2D {
+    offset = vk.Offset2D {
+      x = 0,
+      y = 0,
+    },
+
+    extent = vk.Extent2D {
+      width = ctx.width,
+      height = ctx.height,
+    }
+  }
+
+  clear_values := [?]vk.ClearValue {
+    {
+      color = vk.ClearColorValue {
+        float32 = { 1, 0, 0, 1 },
+      }
+    }
+  }
+
+  viewport := vk.Viewport  {
+    width = f32(ctx.width),
+    height = f32(ctx.height),
+    minDepth = 0,
+    maxDepth = 1,
+  }
+
+  begin_info := vk.CommandBufferBeginInfo {
+    sType = .COMMAND_BUFFER_BEGIN_INFO,
+    flags = { .ONE_TIME_SUBMIT },
+  }
+
+  render_pass_info := vk.RenderPassBeginInfo {
+    sType = .RENDER_PASS_BEGIN_INFO,
+    renderPass = ctx.render_pass,
+    framebuffer = ctx.framebuffer,
+    renderArea = area, 
+    clearValueCount = u32(len(clear_values)),
+    pClearValues = &clear_values[0],
+  }
+
+  if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return false
+
+  vk.CmdBeginRenderPass(cmd, &render_pass_info, .INLINE)
+  vk.CmdBindPipeline(cmd, .GRAPHICS, ctx.pipeline)
+  vk.CmdSetViewport(cmd, 0, 1, &viewport)
+  vk.CmdSetScissor(cmd, 0, 1, &area)
+  vk.CmdBindVertexBuffers(cmd, 0, u32(len(vertex_buffers)), &vertex_buffers[0], &vertex_offsets[0])
+  //vk.CmdBindDescriptorSets(cmd, .GRAPHICS, ctx.layout, 0, u32(len(ctx.descriptor_sets)), &ctx.descriptor_sets[0], 0, nil)
+  vk.CmdDraw(cmd, 6, 1, 0, 0)
+  vk.CmdEndRenderPass(cmd)
+
+  if vk.EndCommandBuffer(cmd) != .SUCCESS do return false
+
+  wait_stage := vk.PipelineStageFlags { .COLOR_ATTACHMENT_OUTPUT }
+
+  submit_info := vk.SubmitInfo {
+    sType = .SUBMIT_INFO,
+    commandBufferCount = 1,
+    pCommandBuffers = &cmd,
+    waitSemaphoreCount = 0,
+    pWaitSemaphores = nil,
+    pWaitDstStageMask = &wait_stage,
+    signalSemaphoreCount = 1,
+    pSignalSemaphores = &ctx.semaphore,
+  }
+
+  vk.ResetFences(ctx.device, 1, &ctx.fence)
+  if vk.QueueSubmit(ctx.queues[0], 1, &submit_info, ctx.fence) != .SUCCESS do return false
+  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
+
+  return true
 }
 
 create_instance :: proc(allocator: runtime.Allocator) -> (vk.Instance, bool) {
@@ -122,9 +268,9 @@ create_instance :: proc(allocator: runtime.Allocator) -> (vk.Instance, bool) {
 
     return false
   }
-  
+
   for name in VALIDATION_LAYERS do if !check(name, layers) do return instance, false
-  
+
   app_info := vk.ApplicationInfo {
     sType = .APPLICATION_INFO,
     pApplicationName = "Hello Triangle",
@@ -235,28 +381,11 @@ create_layout :: proc(device: vk.Device, set_layouts: []vk.DescriptorSetLayout) 
 }
 
 
-create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pass: vk.RenderPass) -> (pipeline: vk.Pipeline, ok: bool) {
-  vert_code := os.read_entire_file("assets/output/vert.spv") or_return
-  frag_code := os.read_entire_file("assets/output/frag.spv") or_return
-
-  vert_module_info := vk.ShaderModuleCreateInfo {
-    sType = .SHADER_MODULE_CREATE_INFO,
-    codeSize = len(vert_code),
-    pCode = cast([^]u32)(&vert_code[0])
-  }
-
-  frag_module_info := vk.ShaderModuleCreateInfo {
-    sType = .SHADER_MODULE_CREATE_INFO,
-    codeSize = len(frag_code),
-    pCode = cast([^]u32)(&frag_code[0])
-  }
-
-  vert_module: vk.ShaderModule
-  if vk.CreateShaderModule(device, &vert_module_info, nil, &vert_module) != .SUCCESS do return pipeline, false
+create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32, allocator: runtime.Allocator) -> (pipeline: vk.Pipeline, ok: bool) {
+  vert_module := create_shader_module(device, "assets/output/vert.spv", allocator) or_return
   defer vk.DestroyShaderModule(device, vert_module, nil)
 
-  frag_module: vk.ShaderModule
-  if vk.CreateShaderModule(device, &frag_module_info, nil, &frag_module) != .SUCCESS do return pipeline, false
+  frag_module := create_shader_module(device, "assets/output/frag.spv", allocator) or_return
   defer vk.DestroyShaderModule(device, frag_module, nil)
 
   stages := [?]vk.PipelineShaderStageCreateInfo {
@@ -277,7 +406,7 @@ create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pas
   vertex_binding_descriptions := [?]vk.VertexInputBindingDescription {
     {
       binding = 0,
-      stride = size_of(f32) * 5,
+      stride = size_of(Vertex),
       inputRate = .VERTEX,
     }
   }
@@ -287,14 +416,8 @@ create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pas
       location = 0,
       binding = 0,
       offset = 0,
-      format = .R32G32_SFLOAT,
-    },
-    {
-      location = 1,
-      binding = 0,
-      offset = size_of(f32) * 2,
       format = .R32G32B32_SFLOAT,
-    }
+    },
   }
 
   vert_input_state := vk.PipelineVertexInputStateCreateInfo {
@@ -309,8 +432,8 @@ create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pas
     {
       x = 0,
       y = 0,
-      width = 200,
-      height = 200,
+      width = f32(width),
+      height = f32(height),
       minDepth = 0,
       maxDepth = 1,
     }
@@ -323,8 +446,8 @@ create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pas
         y = 0,
       },
       extent = vk.Extent2D {
-        width = 200,
-        height = 200,
+        width = height,
+        height = height,
       }
     }
   }
@@ -394,7 +517,7 @@ create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pas
 
   input_assembly_state := vk.PipelineInputAssemblyStateCreateInfo {
     sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-    topology = .TRIANGLE_FAN,
+    topology = .TRIANGLE_LIST,
   }
 
   dynamic_states := [?]vk.DynamicState { .VIEWPORT, .SCISSOR }
@@ -433,8 +556,8 @@ create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPa
       samples = { ._1 },
       loadOp = .CLEAR,
       storeOp = .STORE,
-      initialLayout = .GENERAL,
-      finalLayout = .GENERAL,
+      initialLayout = .UNDEFINED,
+      finalLayout = .TRANSFER_SRC_OPTIMAL,
       stencilLoadOp = .DONT_CARE,
       stencilStoreOp = .DONT_CARE,
     }
@@ -443,7 +566,7 @@ create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPa
   subpass_color_attachments := [?]vk.AttachmentReference {
     {
       attachment = 0,
-      layout = .ATTACHMENT_OPTIMAL,
+      layout = .COLOR_ATTACHMENT_OPTIMAL,
     }
   }
 
@@ -452,18 +575,18 @@ create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPa
       pipelineBindPoint = .GRAPHICS,
       colorAttachmentCount = u32(len(subpass_color_attachments)),
       pColorAttachments = &subpass_color_attachments[0],
-      pDepthStencilAttachment = nil,
     }
   }
 
   render_pass_dependencies := [?]vk.SubpassDependency {
     {
-      srcSubpass = 0,
-      dstSubpass = vk.SUBPASS_EXTERNAL,
-      srcAccessMask = { .COLOR_ATTACHMENT_WRITE },
-      dstAccessMask = { .TRANSFER_READ },
-      srcStageMask = { .COLOR_ATTACHMENT_OUTPUT },
-      dstStageMask = { .TRANSFER, .HOST },
+      srcSubpass = vk.SUBPASS_EXTERNAL,
+      dstSubpass = 0,
+      srcAccessMask = { .MEMORY_READ },
+      dstAccessMask = { .COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE },
+      srcStageMask = { .BOTTOM_OF_PIPE },
+      dstStageMask = { .COLOR_ATTACHMENT_OUTPUT },
+      dependencyFlags = { .BY_REGION },
     }
   }
 
@@ -656,19 +779,24 @@ find_queue_indices :: proc(physical_device: vk.PhysicalDevice, allocator: runtim
   return indices, true
 }
 
-create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, modifiers: []u64, width: u32, height: u32) -> (image: vk.Image, ok: bool) {
+create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, modifiers: []u64, width: u32, height: u32) -> (image: vk.Image, ok: bool) {
 
-  list_info := vk.ImageDrmFormatModifierListCreateInfoEXT {
-    sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
-    pNext = nil,
-    drmFormatModifierCount = u32(len(modifiers)),
-    pDrmFormatModifiers = &modifiers[0],
-  }
-
+//  mem_info := vk.ExternalMemoryImageCreateInfo {
+//    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+//    handleTypes = { .DMA_BUF_EXT },
+//  }
+//
+//  list_info := vk.ImageDrmFormatModifierListCreateInfoEXT {
+//    sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+//    pNext = &mem_info,
+//    drmFormatModifierCount = u32(len(modifiers)),
+//    pDrmFormatModifiers = &modifiers[0],
+//  }
+//flags = {.DRM_FORMAT_MODIFIER_EXT}
   info := vk.ImageCreateInfo {
     sType = .IMAGE_CREATE_INFO,
-    pNext = &list_info,
-    flags = flags,
+    pNext = nil,
+    flags = {},
     imageType = type,
     format = format,
     mipLevels = 1,
@@ -698,23 +826,207 @@ create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevic
   requirements: vk.MemoryRequirements
   vk.GetImageMemoryRequirements(device, image, &requirements)
 
-  import_info := vk.ExportMemoryAllocateInfo {
-    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
+//  import_info := vk.ExportMemoryAllocateInfo {
+//    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
+//    pNext = nil,
+//    handleTypes = { .DMA_BUF_EXT },
+//  }
+
+  alloc_info := vk.MemoryAllocateInfo{
+    sType = .MEMORY_ALLOCATE_INFO,
     pNext = nil,
-    handleTypes = { .DMA_BUF_EXT },
+    allocationSize = requirements.size,
+    memoryTypeIndex = find_memory_type(physical_device, requirements.memoryTypeBits, { .HOST_VISIBLE, .HOST_COHERENT }) or_return
   }
 
-  memory = create_memory(device, physical_device, requirements, { .HOST_VISIBLE, .HOST_COHERENT }, nil) or_return
+  if vk.AllocateMemory(device, &alloc_info, nil, &memory) != .SUCCESS do return memory, false
 
   vk.BindImageMemory(device, image, memory, vk.DeviceSize(0))
 
   return memory, true
 }
 
+create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format) -> (vk.ImageView, bool) {
+  components := vk.ComponentMapping {
+    r = .R,
+    g = .G,
+    b = .B,
+    a = .A,
+  }
+
+  range := vk.ImageSubresourceRange {
+    levelCount = 1,
+    layerCount = 1,
+    aspectMask = { .COLOR },
+    baseMipLevel = 0,
+    baseArrayLayer = 0,
+  }
+
+  info := vk.ImageViewCreateInfo {
+    sType = .IMAGE_VIEW_CREATE_INFO,
+    image = image,
+    viewType = .D2,
+    format = format,
+    components = components,
+    subresourceRange = range,
+  }
+
+  view: vk.ImageView
+  if vk.CreateImageView(device, &info, nil, &view) != .SUCCESS do return view, false
+
+  return view, true
+}
+
+write_image :: proc(ctx: ^Context) -> bool {
+  cmd := ctx.command_buffers[0]
+
+  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, nil, ctx.width, ctx.height) or_return
+  defer vk.DestroyImage(ctx.device, out_image, nil)
+
+  out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image) or_return
+  defer vk.FreeMemory(ctx.device, out_memory, nil)
+
+  begin_info := vk.CommandBufferBeginInfo {
+    sType = .COMMAND_BUFFER_BEGIN_INFO,
+    flags = { .ONE_TIME_SUBMIT },
+  }
+
+  range := vk.ImageSubresourceRange {
+    aspectMask = { .COLOR },
+    baseMipLevel = 0,
+    levelCount = 1,
+    baseArrayLayer = 0,
+    layerCount = 1,
+  }
+
+  image_barrier_1_info := vk.ImageMemoryBarrier {
+    sType = .IMAGE_MEMORY_BARRIER,
+    image = out_image,
+    srcAccessMask = { },
+    dstAccessMask = { .TRANSFER_WRITE },
+    oldLayout = .UNDEFINED,
+    newLayout = .TRANSFER_DST_OPTIMAL,
+    subresourceRange = range,
+  }
+
+  image_barrier_2_info := vk.ImageMemoryBarrier {
+    sType = .IMAGE_MEMORY_BARRIER,
+    image = out_image,
+    srcAccessMask = { .TRANSFER_WRITE },
+    dstAccessMask = { .MEMORY_READ },
+    oldLayout = .TRANSFER_DST_OPTIMAL,
+    newLayout = .GENERAL,
+    subresourceRange = range,
+  }
+
+  resource := vk.ImageSubresourceLayers {
+    aspectMask = { .COLOR },
+    baseArrayLayer = 0,
+    layerCount = 1,
+    mipLevel = 0,
+  }
+
+  offset := vk.Offset3D {
+    x = 0,
+    y = 0,
+    z = 0,
+  }
+
+  extent := vk.Extent3D {
+    width = ctx.width,
+    height = ctx.height,
+    depth = 1,
+  }
+
+  copy_info := vk.ImageCopy {
+    srcSubresource = resource,
+    dstSubresource = resource,
+    srcOffset = offset,
+    dstOffset = offset,
+    extent = extent,
+  }
+
+  if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return false
+
+  vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_1_info)
+  vk.CmdCopyImage(cmd, ctx.image, .TRANSFER_SRC_OPTIMAL, out_image, .TRANSFER_DST_OPTIMAL, 1, &copy_info)
+  vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_2_info)
+
+  if vk.EndCommandBuffer(cmd) != .SUCCESS do return false
+
+  submit_info := vk.SubmitInfo {
+    sType = .SUBMIT_INFO,
+    commandBufferCount = 1,
+    pCommandBuffers = &cmd,
+  }
+
+  vk.ResetFences(ctx.device, 1, &ctx.fence)
+  if vk.QueueSubmit(ctx.queues[0], 1, &submit_info, ctx.fence) != .SUCCESS do return false
+  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
+
+  image_resource := vk.ImageSubresource {
+    aspectMask = { .COLOR },
+  }
+
+  layout: vk.SubresourceLayout
+  vk.GetImageSubresourceLayout(ctx.device, out_image, &image_resource, &layout)
+
+  out: [^]u8
+  vk.MapMemory(ctx.device, out_memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, (^rawptr)(&out))
+  defer vk.UnmapMemory(ctx.device, out_memory)
+
+  mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
+  defer mem.end_arena_temp_memory(mark)
+
+  buffer: []u8
+  err: mem.Allocator_Error
+
+  if buffer, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
+
+  header := fmt.bprintf(buffer, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
+  count := u32(len(header))
+
+  fmt.println("writing to file, width: {:d}, height: {:d}", ctx.width, ctx.height)
+  for i in 0..<ctx.height {
+    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
+
+    for j in 0..<ctx.width {
+      off := out[line + j * size_of(u32):]
+      //fmt.println("hello buf 2")
+      cont := fmt.bprintf(buffer[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
+      //fmt.println(cont)
+      count += u32(len(cont))
+    }
+  }
+
+  if !os.write_entire_file("assets/out.ppm", buffer[0:count]) do return false
+
+  fmt.println(layout)
+
+  return true
+}
+
+create_framebuffer :: proc(device: vk.Device, render_pass: vk.RenderPass, view: ^vk.ImageView, width: u32, height: u32) -> (vk.Framebuffer, bool) {
+  info := vk.FramebufferCreateInfo {
+    sType = .FRAMEBUFFER_CREATE_INFO,
+    renderPass = render_pass,
+    attachmentCount = 1,
+    pAttachments = view,
+    width = width,
+    height = height,
+    layers = 1,
+  }
+
+  buffer: vk.Framebuffer
+  if vk.CreateFramebuffer(device, &info, nil, &buffer) != .SUCCESS do return buffer, false
+
+  return buffer, true
+}
+
 create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandPool, bool) {
   pool_info: vk.CommandPoolCreateInfo
   pool_info.sType = .COMMAND_POOL_CREATE_INFO
-  pool_info.flags = {.RESET_COMMAND_BUFFER}
+  pool_info.flags = { .RESET_COMMAND_BUFFER }
   pool_info.queueFamilyIndex = queue_index
 
   command_pool: vk.CommandPool
@@ -738,17 +1050,127 @@ allocate_command_buffers :: proc(device: vk.Device, command_pool: vk.CommandPool
   return command_buffers, true
 }
 
-create_shader_module :: proc(device: vk.Device, code: []u8) -> (vk.ShaderModule, bool) {
-  create_info := vk.ShaderModuleCreateInfo {
-    sType = .SHADER_MODULE_CREATE_INFO,
-    codeSize = len(code),
-    pCode = cast(^u32)raw_data(code),
+create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, bool) {
+  sizes := [?]vk.DescriptorPoolSize {
+    {
+      type = .UNIFORM_BUFFER,
+      descriptorCount = 10, }
   }
 
-  shader: vk.ShaderModule
-  if res := vk.CreateShaderModule(device, &create_info, nil, &shader); res != .SUCCESS do return shader, false
+  info := vk.DescriptorPoolCreateInfo {
+    sType = .DESCRIPTOR_POOL_CREATE_INFO,
+    poolSizeCount = u32(len(sizes)),
+    pPoolSizes = &sizes[0],
+    maxSets = 2,
+  }
 
-  return shader, true
+  pool: vk.DescriptorPool
+  if vk.CreateDescriptorPool(device, &info, nil, &pool) != nil do return pool, false
+
+  return pool, true
+}
+
+allocate_descriptor_sets :: proc(device: vk.Device, layouts: []vk.DescriptorSetLayout, pool: vk.DescriptorPool, buffer: vk.Buffer, binding: u32, allocator: runtime.Allocator) -> ([]vk.DescriptorSet, bool) {
+  count := u32(len(layouts))
+  info := vk.DescriptorSetAllocateInfo {
+    sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+    descriptorPool = pool,
+    descriptorSetCount = count,
+    pSetLayouts = &layouts[0],
+  }
+
+  sets: []vk.DescriptorSet
+  err: mem.Allocator_Error
+
+  if sets, err = make([]vk.DescriptorSet, count, allocator); err != nil do return sets, false
+  if vk.AllocateDescriptorSets(device, &info, &sets[0]) != .SUCCESS do return sets, false
+
+//WriteDescriptorSet :: struct {
+//	sType:            StructureType,
+//	pNext:            rawptr,
+//	dstSet:           DescriptorSet,
+//	dstBinding:       u32,
+//	dstArrayElement:  u32,
+//	descriptorCount:  u32,
+//	descriptorType:   DescriptorType,
+//	pImageInfo:       ^DescriptorImageInfo,
+//	pBufferInfo:      ^DescriptorBufferInfo,
+//	pTexelBufferView: ^BufferView,
+//}
+  buffer_info := vk.DescriptorBufferInfo {
+    buffer = buffer,
+    offset = 0,
+    range = size_of(Vertex),
+  }
+
+  writes := [?]vk.WriteDescriptorSet {
+    {
+      sType = .WRITE_DESCRIPTOR_SET,
+      dstSet = sets[0],
+      dstBinding = binding,
+      dstArrayElement = 0,
+      descriptorCount = 1,
+      descriptorType = .UNIFORM_BUFFER,
+      pBufferInfo = &buffer_info,
+    }
+  }
+
+  vk.UpdateDescriptorSets(device, u32(len(writes)), &writes[0], 0, nil)
+
+  return sets, true
+}
+
+create_fence :: proc(device: vk.Device) -> (vk.Fence, bool) {
+  info := vk.FenceCreateInfo {
+    sType = .FENCE_CREATE_INFO,
+    flags = { .SIGNALED },
+  }
+
+  fence: vk.Fence
+  if vk.CreateFence(device, &info, nil, &fence) != .SUCCESS do return fence, false
+
+  return fence, true
+}
+
+create_semaphore :: proc(device: vk.Device) -> (vk.Semaphore, bool) {
+  info := vk.SemaphoreCreateInfo {
+    sType = .SEMAPHORE_CREATE_INFO,
+  }
+
+  semaphore: vk.Semaphore
+  if vk.CreateSemaphore(device, &info, nil, &semaphore) != .SUCCESS do return semaphore, false
+  return semaphore, true
+}
+
+create_shader_module :: proc(device: vk.Device, path: string, allocator: runtime.Allocator) -> (vk.ShaderModule, bool) {
+  module: vk.ShaderModule
+
+  err: os.Error
+  file: os.Handle
+  size: i64
+
+  if file, err = os.open(path); err != nil do return module, false
+  defer os.close(file)
+
+  if size, err = os.file_size(file); err != nil do return module, false
+
+  buf: []u8
+  if buf, err = make([]u8, size, allocator); err != nil do return module, false
+
+  l: int
+  if l, err = os.read(file, buf); err != nil do return module, false
+  if int(size) != l do return module, false
+
+  info := vk.ShaderModuleCreateInfo {
+    sType = .SHADER_MODULE_CREATE_INFO,
+    codeSize = int(size),
+    pCode = cast([^]u32)(&buf[0])
+  }
+
+  frag_module: vk.ShaderModule
+  if vk.CreateShaderModule(device, &info, nil, &module) != .SUCCESS do return module, false
+
+  return module, true
 }
 
 find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, bool) {
@@ -762,59 +1184,50 @@ find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, p
   return 0, false
 }
 
-create_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, requirements: vk.MemoryRequirements, properties: vk.MemoryPropertyFlags, pNext: rawptr) -> (memory: vk.DeviceMemory, ok: bool) {
+create_buffer :: proc(device: vk.Device, size: vk.DeviceSize, usage: vk.BufferUsageFlags) -> (vk.Buffer, bool) {
+  buf_info := vk.BufferCreateInfo {
+    sType = .BUFFER_CREATE_INFO,
+    pNext = nil,
+    size = size,
+    usage = usage,
+    flags = {},
+    sharingMode = .EXCLUSIVE,
+  }
+
+  buffer: vk.Buffer
+  if vk.CreateBuffer(device, &buf_info, nil, &buffer) != .SUCCESS do return buffer, false
+
+  return buffer, true
+}
+
+create_buffer_memory :: proc(device: vk.Device , physical_device: vk.PhysicalDevice, buffer: vk.Buffer, properties: vk.MemoryPropertyFlags) -> (memory: vk.DeviceMemory, ok: bool) {
+  requirements: vk.MemoryRequirements
+  vk.GetBufferMemoryRequirements(device, buffer, &requirements)
+
   alloc_info := vk.MemoryAllocateInfo{
     sType = .MEMORY_ALLOCATE_INFO,
-    pNext = pNext,
+    pNext = nil,
     allocationSize = requirements.size,
     memoryTypeIndex = find_memory_type(physical_device, requirements.memoryTypeBits, properties) or_return
   }
 
-  if res := vk.AllocateMemory(device, &alloc_info, nil, &memory); res != .SUCCESS do return memory, false
+  if vk.AllocateMemory(device, &alloc_info, nil, &memory) != .SUCCESS do return memory, false
+
+  vk.BindBufferMemory(device, buffer, memory, 0)
 
   return memory, true
+}
+
+copy_data :: proc($T: typeid, device: vk.Device, memory: vk.DeviceMemory, data: []T) {
+  out: [^]T
+
+  l := len(data)
+  vk.MapMemory(device, memory, 0, vk.DeviceSize(l * size_of(T)), {}, (^rawptr)(&out))
+  copy(out[0:l], data)
+  vk.UnmapMemory(device, memory)
 }
 
 load_fn :: proc(ptr: rawptr, name: cstring) {
     (cast(^rawptr)ptr)^ = dynlib.symbol_address(library, string(name))
 }
-
-//create_buffer :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) -> (buffer: vk.Buffer, memory: vk.DeviceMemory, ok: bool) {
-//  buf_mem_info := vk.ExternalMemoryBufferCreateInfo {
-//    sType = .EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
-//    pNext = nil,
-//    handleTypes = { .DMA_BUF_EXT },
-//  }
-//
-//  buf_info := vk.BufferCreateInfo {
-//    sType = .BUFFER_CREATE_INFO,
-//    pNext = &buf_mem_info,
-//    size = size,
-//    usage = usage,
-//    flags = {},
-//    sharingMode = .EXCLUSIVE,
-//  }
-//
-//  if vk.CreateBuffer(device, &buf_info, nil, &buffer) != .SUCCESS do return buffer, memory, false
-//
-//  requirements: vk.MemoryRequirements
-//  vk.GetBufferMemoryRequirements(device, buffer, &requirements)
-//
-//  ded_info := vk.MemoryDedicatedAllocateInfo {
-//    sType = .MEMORY_DEDICATED_ALLOCATE_INFO,
-//    buffer = buffer
-//  }
-//
-//  export_info := vk.ExportMemoryAllocateInfo {
-//    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
-//    pNext = &ded_info,
-//    handleTypes = { .DMA_BUF_EXT },
-//  }
-//
-//  memory = create_memory(device, physical_device, requirements, properties, &export_info) or_return
-//
-//  vk.BindBufferMemory(device, buffer, memory, 0)
-//
-//  return buffer, memory, true
-//}
 

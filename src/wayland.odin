@@ -3,16 +3,16 @@ package main
 import "core:mem"
 import wl "wayland"
 
-main :: proc() {
-  arena: mem.Arena
-  bytes := make([]u8, 1024 * 1024 * 1)
-  mem.arena_init(&arena, bytes)
-  context.allocator = mem.arena_allocator(&arena)
-
-  if !handle() {
-    return
-  }
-}
+//main :: proc() {
+//  arena: mem.Arena
+//  bytes := make([]u8, 1024 * 1024 * 1)
+//  mem.arena_init(&arena, bytes)
+//  context.allocator = mem.arena_allocator(&arena)
+//
+//  if !handle() {
+//    return
+//  }
+//}
 
 handle :: proc() -> bool {
   connection := wl.connect(600, 400, context.allocator) or_return
