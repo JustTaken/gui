@@ -5,6 +5,7 @@ import "core:mem"
 import "core:sys/posix"
 import "core:path/filepath"
 import "base:intrinsics"
+import "base:runtime"
 
 Vector :: struct(T: typeid) {
   data: []T,
@@ -65,23 +66,27 @@ Connection :: struct {
   height: u32,
   resize: bool,
   running: bool,
+
+  arena: ^mem.Arena,
+  allocator: runtime.Allocator,
+
+  tmp_arena: ^mem.Arena,
+  tmp_allocator: runtime.Allocator,
 }
 
-connect :: proc(width: u32, height: u32, allocator := context.allocator) -> (Connection, bool) {
-  connection: Connection
-
+connect :: proc(connection: ^Connection, width: u32, height: u32, allocator: runtime.Allocator) -> bool {
   xdg_path := os.get_env("XDG_RUNTIME_DIR", allocator = allocator)
   wayland_path := os.get_env("WAYLAND_DISPLAY", allocator = allocator)
 
   if len(xdg_path) == 0 || len(wayland_path) == 0 {
-    return connection, false
+    return false
   }
 
   path := filepath.join({ xdg_path, wayland_path }, allocator)
   connection.socket = posix.socket(.UNIX, .STREAM)
 
   if connection.socket < 0 {
-    return connection, false
+    return false
   }
 
   sockaddr := posix.sockaddr_un {
@@ -94,26 +99,20 @@ connect :: proc(width: u32, height: u32, allocator := context.allocator) -> (Con
     count += 1
   }
 
-  result := posix.connect(connection.socket, (^posix.sockaddr)(&sockaddr), posix.socklen_t(size_of(posix.sockaddr_un)))
+  if posix.connect(connection.socket, (^posix.sockaddr)(&sockaddr), posix.socklen_t(size_of(posix.sockaddr_un))) == .FAIL do return false
 
-  if result == .FAIL {
-    return connection, false
-  }
-
-  err: mem.Allocator_Error
-
-  connection.values = new_vec(Argument, 40)
-  connection.objects = new_vec(InterfaceObject, 40)
-  connection.output_buffer = new_vec(u8, 4096)
-  connection.input_buffer = new_vec(u8, 4096)
-  connection.bytes = make([]u8, 1024)
+  connection.values = new_vec(Argument, 40, allocator)
+  connection.objects = new_vec(InterfaceObject, 40, allocator)
+  connection.output_buffer = new_vec(u8, 4096, allocator)
+  connection.input_buffer = new_vec(u8, 4096, allocator)
+  connection.bytes = make([]u8, 1024, allocator)
 
   connection.input_buffer.cap = 0
   connection.width = width
   connection.height = height
   connection.running = true
 
-  return connection, true
+  return true
 }
 
 create_shm_pool :: proc(connection: ^Connection, size: u32) -> bool {
@@ -267,7 +266,7 @@ sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
   t_align := mem.align_formula(t_size, size_of(uint))
   cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
 
-  buf := make([]u8, cmsg_align + t_align)
+  buf := make([]u8, cmsg_align + t_align, connection.tmp_allocator)
   defer free(raw_data(buf))
 
   socket_msg := posix.msghdr {
@@ -297,14 +296,14 @@ sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
   return true
 }
 
-connection_append :: proc(connection: ^Connection, callbacks: []CallbackConfig, interface: ^Interface, allocator := context.allocator) {
+connection_append :: proc(connection: ^Connection, callbacks: []CallbackConfig, interface: ^Interface) {
   if len(callbacks) != len(interface.events) {
     panic("Incorrect callback length")
   }
 
   object: InterfaceObject
   object.interface = interface
-  object.callbacks = make([]Callback, len(callbacks), allocator)
+  object.callbacks = make([]Callback, len(callbacks), connection.allocator)
 
   for callback in callbacks {
     opcode := get_event_opcode(interface, callback.name)
@@ -318,10 +317,10 @@ get_object :: proc(connection: ^Connection, id: u32) -> InterfaceObject {
   return connection.objects.data[id - 1]
 }
 
-get_id :: proc(connection: ^Connection, name: string, callbacks: []CallbackConfig, interfaces: []Interface, allocator := context.allocator) -> u32 {
+get_id :: proc(connection: ^Connection, name: string, callbacks: []CallbackConfig, interfaces: []Interface) -> u32 {
   for &inter in interfaces {
     if inter.name == name {
-      defer connection_append(connection, callbacks, &inter, allocator)
+      defer connection_append(connection, callbacks, &inter)
       return connection.objects.len + 1
     }
   }
@@ -366,9 +365,9 @@ new_callback :: proc(name: string, callback: Callback) -> CallbackConfig {
   }
 }
 
-new_vec :: proc($T: typeid, cap: u32, allocator := context.allocator) -> Vector(T) {
+new_vec :: proc($T: typeid, cap: u32, allocator: runtime.Allocator) -> Vector(T) {
   vec: Vector(T)
-  vec.data = make([]T, cap)
+  vec.data = make([]T, cap, allocator)
   vec.cap = cap
   vec.len = 0
 
