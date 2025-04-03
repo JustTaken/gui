@@ -79,7 +79,6 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
   ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
   ctx.format = .B8G8R8A8_SRGB 
-  //ctx.format = .R8G8B8A8_SRGB 
   ctx.width = width
   ctx.height = height
 
@@ -88,6 +87,7 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
 
   ctx.instance = create_instance(ctx.tmp_allocator) or_return
   ctx.physical_device = find_physical_device(ctx.instance, ctx.tmp_allocator) or_return
+  ctx.modifiers = get_drm_modifiers(ctx.physical_device, ctx.format, ctx.allocator)
   ctx.queue_indices = find_queue_indices(ctx.physical_device, ctx.tmp_allocator) or_return
   ctx.device = create_device(ctx.physical_device, ctx.queue_indices[:], ctx.tmp_allocator) or_return
   ctx.render_pass = create_render_pass(ctx.device, ctx.format) or_return
@@ -101,8 +101,6 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
   ctx.queues = create_queues(ctx.device, ctx.queue_indices[:], ctx.allocator) or_return
   ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
   ctx.command_buffers = allocate_command_buffers(ctx.device, ctx.command_pool, 1, ctx.allocator) or_return
-
-  ctx.modifiers = get_drm_modifiers(ctx.physical_device, ctx.format, ctx.allocator)
 
   init_frame(ctx) or_return
 
@@ -166,7 +164,6 @@ init_frame :: proc(ctx: ^VulkanContext) -> bool {
     drmFormatModifierCount = u32(len(ctx.modifiers)),
     pDrmFormatModifiers = &ctx.modifiers[0],
   }
-//flags = {.DRM_FORMAT_MODIFIER_EXT}
 
   import_info := vk.ExportMemoryAllocateInfo {
     sType = .EXPORT_MEMORY_ALLOCATE_INFO,
@@ -401,7 +398,6 @@ create_layout :: proc(device: vk.Device, set_layouts: []vk.DescriptorSetLayout) 
 
   return layout, true
 }
-
 
 create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32, allocator: runtime.Allocator) -> (pipeline: vk.Pipeline, ok: bool) {
   vert_module := create_shader_module(device, "assets/output/vert.spv", allocator) or_return
@@ -967,7 +963,7 @@ write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) 
   }
 
   vk.ResetFences(ctx.device, 1, &ctx.fence)
-  if vk.QueueSubmit(ctx.queues[0], 1, &submit_info, ctx.fence) != .SUCCESS do return false
+  if vk.QueueSubmit(ctx.queues[1], 1, &submit_info, ctx.fence) != .SUCCESS do return false
   if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
 
   image_resource := vk.ImageSubresource {
@@ -984,31 +980,6 @@ write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) 
   for i in 0..<ctx.height {
     copy(buffer[i * width * 4:], out[i * u32(layout.rowPitch):][0:ctx.width * 4])
   }
-
-//  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
-//  defer mem.end_arena_temp_memory(mark)
-//
-//  buffer: []u8
-//  err: mem.Allocator_Error
-//
-//  if buffer, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
-//
-//  header := fmt.bprintf(buffer, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
-//  count := u32(len(header))
-//
-//  for i in 0..<ctx.height {
-//    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
-//
-//    for j in 0..<ctx.width {
-//      off := out[line + j * size_of(u32):]
-//      cont := fmt.bprintf(buffer[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
-//      count += u32(len(cont))
-//    }
-//  }
-//
-//  if !os.write_entire_file("assets/out.ppm", buffer[0:count]) do return false
-//
-//  fmt.println("wrote to file assets/out.ppm")
 
   return true
 }
