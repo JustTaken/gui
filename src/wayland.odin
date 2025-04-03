@@ -8,13 +8,15 @@ import "core:path/filepath"
 import "base:intrinsics"
 import "base:runtime"
 
+import "core:fmt"
+
 Vector :: struct(T: typeid) {
   data: []T,
   cap: u32,
   len: u32,
 }
 
-Callback :: proc(^Connection, u32, []wl.Argument)
+Callback :: proc(^WaylandContext, u32, []wl.Argument)
 CallbackConfig :: struct {
   name: string,
   function: Callback,
@@ -25,7 +27,15 @@ InterfaceObject :: struct {
   callbacks: []Callback,
 }
 
-Connection :: struct {
+Buffer :: struct {
+  data: []u8,
+  id: u32,
+  offset: u32,
+  update: bool,
+  released: bool,
+}
+
+WaylandContext :: struct {
   socket: posix.FD,
   objects: Vector(InterfaceObject),
   output_buffer: Vector(u8),
@@ -42,7 +52,6 @@ Connection :: struct {
   xdg_surface_id: u32,
   xdg_toplevel_id: u32,
   shm_pool_id: u32,
-  buffer_id: u32,
 
   get_registry_opcode: u32,
   registry_bind_opcode: u32,
@@ -61,12 +70,19 @@ Connection :: struct {
 
   shm_socket: posix.FD,
   shm_pool: []u8,
-  buffer: []u8,
+  buffers: [2]Buffer,
+
+  back_buffer: ^Buffer,
+  front_buffer: ^Buffer,
 
   width: u32,
   height: u32,
   resize: bool,
   running: bool,
+
+  //resize_callback: proc(rawptr, u32, u32),
+  //ptr: rawptr,
+  vk: ^VulkanContext,
 
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
@@ -75,18 +91,46 @@ Connection :: struct {
   tmp_allocator: runtime.Allocator,
 }
 
-connect :: proc(connection: ^Connection, width: u32, height: u32, allocator: runtime.Allocator) -> bool {
-  xdg_path := os.get_env("XDG_RUNTIME_DIR", allocator = allocator)
-  wayland_path := os.get_env("WAYLAND_DISPLAY", allocator = allocator)
+init_wayland :: proc(ctx: ^WaylandContext, width: u32, height: u32, vk: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
+  ctx.arena = arena
+  ctx.allocator = mem.arena_allocator(arena)
+  ctx.tmp_arena = tmp_arena
+  ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
+
+  ctx.vk = vk
+
+  connect(ctx, width, height) or_return
+
+  ctx.display_id = get_id(ctx, "wl_display", { new_callback("error", error_callback), new_callback("delete_id", delete_callback) }, wl.WAYLAND_INTERFACES[:])
+  ctx.registry_id = get_id(ctx, "wl_registry", { new_callback("global", global_callback), new_callback("global_remove", global_remove_callback) }, wl.WAYLAND_INTERFACES[:])
+  ctx.get_registry_opcode = get_request_opcode(ctx, "get_registry", ctx.display_id)
+
+  write(ctx, { wl.BoundNewId(ctx.registry_id) }, ctx.display_id, ctx.get_registry_opcode)
+  send(ctx) or_return
+
+  roundtrip(ctx)
+  roundtrip(ctx)
+
+  //for ctx.running && roundtrip(ctx) {}
+
+  return true
+}
+
+connect :: proc(ctx: ^WaylandContext, width: u32, height: u32) -> bool {
+  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
+  defer mem.end_arena_temp_memory(mark)
+
+  xdg_path := os.get_env("XDG_RUNTIME_DIR", allocator = ctx.tmp_allocator)
+  wayland_path := os.get_env("WAYLAND_DISPLAY", allocator = ctx.tmp_allocator)
 
   if len(xdg_path) == 0 || len(wayland_path) == 0 {
     return false
   }
 
-  path := filepath.join({ xdg_path, wayland_path }, allocator)
-  connection.socket = posix.socket(.UNIX, .STREAM)
+  path := filepath.join({ xdg_path, wayland_path }, ctx.tmp_allocator)
+  ctx.socket = posix.socket(.UNIX, .STREAM)
 
-  if connection.socket < 0 {
+  if ctx.socket < 0 {
     return false
   }
 
@@ -100,94 +144,74 @@ connect :: proc(connection: ^Connection, width: u32, height: u32, allocator: run
     count += 1
   }
 
-  if posix.connect(connection.socket, (^posix.sockaddr)(&sockaddr), posix.socklen_t(size_of(posix.sockaddr_un))) == .FAIL do return false
+  if posix.connect(ctx.socket, (^posix.sockaddr)(&sockaddr), posix.socklen_t(size_of(posix.sockaddr_un))) == .FAIL do return false
 
-  connection.values = new_vec(wl.Argument, 40, allocator)
-  connection.objects = new_vec(InterfaceObject, 40, allocator)
-  connection.output_buffer = new_vec(u8, 4096, allocator)
-  connection.input_buffer = new_vec(u8, 4096, allocator)
-  connection.bytes = make([]u8, 1024, allocator)
+  ctx.values = new_vec(wl.Argument, 40, ctx.tmp_allocator)
+  ctx.objects = new_vec(InterfaceObject, 40, ctx.tmp_allocator)
+  ctx.output_buffer = new_vec(u8, 4096, ctx.tmp_allocator)
+  ctx.input_buffer = new_vec(u8, 4096, ctx.tmp_allocator)
+  ctx.bytes = make([]u8, 1024, ctx.tmp_allocator)
 
-  connection.input_buffer.cap = 0
-  connection.width = width
-  connection.height = height
-  connection.running = true
-
-  return true
-}
-
-init_wayland :: proc(arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
-  connection: Connection
-
-  connection.arena = arena
-  connection.allocator = mem.arena_allocator(arena)
-  connection.tmp_arena = tmp_arena
-  connection.tmp_allocator = mem.arena_allocator(tmp_arena)
-
-  connect(&connection, 600, 400, context.allocator) or_return
-
-  connection.display_id = get_id(&connection, "wl_display", { new_callback("error", error_callback), new_callback("delete_id", delete_callback) }, wl.WAYLAND_INTERFACES[:])
-  connection.registry_id = get_id(&connection, "wl_registry", { new_callback("global", global_callback), new_callback("global_remove", global_remove_callback) }, wl.WAYLAND_INTERFACES[:])
-  connection.get_registry_opcode = get_request_opcode(&connection, "get_registry", connection.display_id)
-
-  write(&connection, { wl.BoundNewId(connection.registry_id) }, connection.display_id, connection.get_registry_opcode)
-  send(&connection) or_return
-
-  roundtrip(&connection)
-  roundtrip(&connection)
-
-  for connection.running && roundtrip(&connection) {}
+  ctx.input_buffer.cap = 0
+  ctx.width = width
+  ctx.height = height
+  ctx.running = true
+  ctx.buffers = [2]Buffer {}
+  ctx.front_buffer = &ctx.buffers[0]
+  ctx.back_buffer = &ctx.buffers[1]
 
   return true
 }
 
-roundtrip :: proc(connection: ^Connection) -> bool {
-  recv(connection)
-
-  for read(connection) { }
-  return send(connection)
+update :: proc(ctx: ^WaylandContext, buffer: []u8) {
+  copy(ctx.shm_pool, buffer)
 }
 
-commit :: proc(connection: ^Connection) {
-  write(connection, { }, connection.surface_id, connection.surface_commit_opcode)
+roundtrip :: proc(ctx: ^WaylandContext) -> bool {
+  recv(ctx)
+
+  for read(ctx) { }
+  return ctx.running && send(ctx)
 }
 
-create_surface :: proc(connection: ^Connection) {
-  connection.surface_id = get_id(connection, "wl_surface", { new_callback("enter", enter_callback), new_callback("leave", leave_callback), new_callback("preferred_buffer_scale", preferred_buffer_scale_callback), new_callback("preferred_buffer_transform", preferred_buffer_transform_callback) }, wl.WAYLAND_INTERFACES[:])
-  connection.surface_attach_opcode = get_request_opcode(connection, "attach", connection.surface_id)
-  connection.surface_commit_opcode = get_request_opcode(connection, "commit", connection.surface_id)
+create_surface :: proc(ctx: ^WaylandContext) {
+  ctx.surface_id = get_id(ctx, "wl_surface", { new_callback("enter", enter_callback), new_callback("leave", leave_callback), new_callback("preferred_buffer_scale", preferred_buffer_scale_callback), new_callback("preferred_buffer_transform", preferred_buffer_transform_callback) }, wl.WAYLAND_INTERFACES[:])
+  ctx.surface_attach_opcode = get_request_opcode(ctx, "attach", ctx.surface_id)
+  ctx.surface_commit_opcode = get_request_opcode(ctx, "commit", ctx.surface_id)
 
-  write(connection, { wl.BoundNewId(connection.surface_id) }, connection.compositor_id, connection.create_surface_opcode)
+  write(ctx, { wl.BoundNewId(ctx.surface_id) }, ctx.compositor_id, ctx.create_surface_opcode)
 }
 
-create_xdg_surface :: proc(connection: ^Connection) {
-  connection.xdg_surface_id = get_id(connection, "xdg_surface", { new_callback("configure", configure_callback) }, wl.XDG_INTERFACES[:])
-  connection.get_toplevel_opcode = get_request_opcode(connection, "get_toplevel", connection.xdg_surface_id)
-  connection.ack_configure_opcode = get_request_opcode(connection, "ack_configure", connection.xdg_surface_id)
-  connection.xdg_toplevel_id = get_id(connection, "xdg_toplevel", { new_callback("configure", toplevel_configure_callback), new_callback("close", toplevel_close_callback), new_callback("configure_bounds", toplevel_configure_bounds_callback), new_callback("wm_capabilities", toplevel_wm_capabilities_callback) }, wl.XDG_INTERFACES[:])
+create_xdg_surface :: proc(ctx: ^WaylandContext) {
+  ctx.xdg_surface_id = get_id(ctx, "xdg_surface", { new_callback("configure", configure_callback) }, wl.XDG_INTERFACES[:])
+  ctx.get_toplevel_opcode = get_request_opcode(ctx, "get_toplevel", ctx.xdg_surface_id)
+  ctx.ack_configure_opcode = get_request_opcode(ctx, "ack_configure", ctx.xdg_surface_id)
+  ctx.xdg_toplevel_id = get_id(ctx, "xdg_toplevel", { new_callback("configure", toplevel_configure_callback), new_callback("close", toplevel_close_callback), new_callback("configure_bounds", toplevel_configure_bounds_callback), new_callback("wm_capabilities", toplevel_wm_capabilities_callback) }, wl.XDG_INTERFACES[:])
 
-  write(connection, { wl.BoundNewId(connection.xdg_surface_id), wl.Object(connection.surface_id) }, connection.xdg_wm_base_id, connection.get_xdg_surface_opcode)
-  write(connection, { wl.BoundNewId(connection.xdg_toplevel_id) }, connection.xdg_surface_id, connection.get_toplevel_opcode)
+  write(ctx, { wl.BoundNewId(ctx.xdg_surface_id), wl.Object(ctx.surface_id) }, ctx.xdg_wm_base_id, ctx.get_xdg_surface_opcode)
+  write(ctx, { wl.BoundNewId(ctx.xdg_toplevel_id) }, ctx.xdg_surface_id, ctx.get_toplevel_opcode)
 
-  if !create_shm_pool(connection, 1920, 1080) do panic("Failed to create shm pool")
+  if !create_shm_pool(ctx, 1920, 1080) do panic("Failed to create shm pool")
 
-  commit(connection)
+  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
 }
 
-create_shm_pool :: proc(connection: ^Connection, max_width: u32, max_height: u32) -> bool {
+create_shm_pool :: proc(ctx: ^WaylandContext, max_width: u32, max_height: u32) -> bool {
   color_channels: u32 = 4
 
-  connection.shm_pool_id = get_id(connection, "wl_shm_pool", {}, wl.WAYLAND_INTERFACES[:])
-  connection.create_buffer_opcode = get_request_opcode(connection, "create_buffer", connection.shm_pool_id)
+  ctx.shm_pool_id = get_id(ctx, "wl_shm_pool", {}, wl.WAYLAND_INTERFACES[:])
+  ctx.create_buffer_opcode = get_request_opcode(ctx, "create_buffer", ctx.shm_pool_id)
 
-  connection.buffer_id = get_id(connection, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
-  connection.destroy_buffer_opcode = get_request_opcode(connection, "destroy", connection.buffer_id)
+  ctx.front_buffer.id = get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
+  ctx.back_buffer.id = copy_id(ctx, ctx.front_buffer.id)
 
-  size := max_width * max_height * color_channels
+  ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", ctx.front_buffer.id)
+
+  size := max_width * max_height * color_channels * 2
 
   name := cstring("odin_custom_wayland_client")
-  connection.shm_socket = posix.shm_open(name, { .RDWR, .EXCL, .CREAT }, { .ISVXT, .IXGRP, .IWGRP, .IXUSR })
-  if connection.shm_socket < 0 {
+  ctx.shm_socket = posix.shm_open(name, { .RDWR, .EXCL, .CREAT }, { .ISVXT, .IXGRP, .IWGRP, .IXUSR })
+  if ctx.shm_socket < 0 {
     return false
   }
 
@@ -195,157 +219,171 @@ create_shm_pool :: proc(connection: ^Connection, max_width: u32, max_height: u32
     return false
   }
 
-  if posix.ftruncate(connection.shm_socket, posix.off_t(size)) == .FAIL {
+  if posix.ftruncate(ctx.shm_socket, posix.off_t(size)) == .FAIL {
     return false
   }
 
-  connection.shm_pool = ([^]u8)(posix.mmap(nil, uint(size), { .READ, .WRITE }, { .SHARED }, connection.shm_socket, 0))[0:size]
+  ctx.shm_pool = ([^]u8)(posix.mmap(nil, uint(size), { .READ, .WRITE }, { .SHARED }, ctx.shm_socket, 0))[0:size]
 
-  start := connection.output_buffer.len
+  if ctx.shm_pool == nil do return false
 
-  write(connection, { wl.BoundNewId(connection.shm_pool_id), wl.Fd(-1), wl.Int(size) }, connection.shm_id, connection.create_shm_pool_opcode)
+  start := ctx.output_buffer.len
 
-  if !sendmsg(connection, posix.FD, connection.shm_socket) do return false
+  write(ctx, { wl.BoundNewId(ctx.shm_pool_id), wl.Fd(-1), wl.Int(size) }, ctx.shm_id, ctx.create_shm_pool_opcode)
 
-  write(connection, { wl.BoundNewId(connection.buffer_id), wl.Int(0), wl.Int(connection.width), wl.Int(connection.height), wl.Int(color_channels * connection.width), wl.Uint(connection.format) }, connection.shm_pool_id, connection.create_buffer_opcode)
+  if !sendmsg(ctx, posix.FD, ctx.shm_socket) do return false
 
-  l := connection.width * connection.height * color_channels
-  connection.buffer = connection.shm_pool[0:l]
+  l := max_width * max_height * color_channels
+
+  ctx.front_buffer.data = ctx.shm_pool[0:l]
+  ctx.front_buffer.offset = 0
+  ctx.front_buffer.released = true
+
+  ctx.back_buffer.data = ctx.shm_pool[l:2*l]
+  ctx.back_buffer.offset = l
+  ctx.back_buffer.released = true
+
   for i in 0..<l {
-    connection.buffer[i] = 255
+    ctx.front_buffer.data[i] = 255
+    ctx.back_buffer.data[i] = 255
   }
+
+  write(ctx, { wl.BoundNewId(ctx.front_buffer.id), wl.Int(ctx.front_buffer.offset), wl.Int(ctx.width), wl.Int(ctx.height), wl.Int(color_channels * ctx.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
+  write(ctx, { wl.BoundNewId(ctx.back_buffer.id), wl.Int(ctx.back_buffer.offset), wl.Int(ctx.width), wl.Int(ctx.height), wl.Int(color_channels * ctx.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
 
   return true
 }
 
-write :: proc(connection: ^Connection, arguments: []wl.Argument, object_id: u32, opcode: u32) {
-  object := get_object(connection, object_id)
+write :: proc(ctx: ^WaylandContext, arguments: []wl.Argument, object_id: u32, opcode: u32) {
+  object := get_object(ctx, object_id)
   request := get_request(object, opcode)
 
-  start: = connection.output_buffer.len
+  start: = ctx.output_buffer.len
 
-  vec_append_generic(&connection.output_buffer, u32, object_id)
-  vec_append_generic(&connection.output_buffer, u16, u16(opcode))
-  total_len := vec_reserve(&connection.output_buffer, u16)
+  vec_append_generic(&ctx.output_buffer, u32, object_id)
+  vec_append_generic(&ctx.output_buffer, u16, u16(opcode))
+  total_len := vec_reserve(&ctx.output_buffer, u16)
+  //fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
 
   for kind, i in request.arguments {
     #partial switch kind {
-    case .BoundNewId: vec_append_generic(&connection.output_buffer, wl.BoundNewId, arguments[i].(wl.BoundNewId))
-    case .Uint: vec_append_generic(&connection.output_buffer, wl.Uint, arguments[i].(wl.Uint))
-    case .Int: vec_append_generic(&connection.output_buffer, wl.Int, arguments[i].(wl.Int))
-    case .Fixed: vec_append_generic(&connection.output_buffer, wl.Fixed, arguments[i].(wl.Fixed))
-    case .Object: vec_append_generic(&connection.output_buffer, wl.Object, arguments[i].(wl.Object))
+    case .BoundNewId: vec_append_generic(&ctx.output_buffer, wl.BoundNewId, arguments[i].(wl.BoundNewId))
+    case .Uint: vec_append_generic(&ctx.output_buffer, wl.Uint, arguments[i].(wl.Uint))
+    case .Int: vec_append_generic(&ctx.output_buffer, wl.Int, arguments[i].(wl.Int))
+    case .Fixed: vec_append_generic(&ctx.output_buffer, wl.Fixed, arguments[i].(wl.Fixed))
+    case .Object: vec_append_generic(&ctx.output_buffer, wl.Object, arguments[i].(wl.Object))
     case .UnBoundNewId: 
       value := arguments[i].(wl.UnBoundNewId)
       l := len(value.interface)
-      vec_append_generic(&connection.output_buffer, u32, u32(l))
-      vec_append_n(&connection.output_buffer, ([]u8)(value.interface))
-      vec_add_n(&connection.output_buffer, u32(mem.align_formula(l, size_of(u32)) - l))
-      vec_append_generic(&connection.output_buffer, wl.Uint, value.version)
-      vec_append_generic(&connection.output_buffer, wl.BoundNewId, value.id)
+      vec_append_generic(&ctx.output_buffer, u32, u32(l))
+      vec_append_n(&ctx.output_buffer, ([]u8)(value.interface))
+      vec_add_n(&ctx.output_buffer, u32(mem.align_formula(l, size_of(u32)) - l))
+      vec_append_generic(&ctx.output_buffer, wl.Uint, value.version)
+      vec_append_generic(&ctx.output_buffer, wl.BoundNewId, value.id)
     case .Fd:
     case:
     }
   }
 
-  intrinsics.unaligned_store(total_len, u16(connection.output_buffer.len - start))
+  intrinsics.unaligned_store(total_len, u16(ctx.output_buffer.len - start))
 }
 
-read :: proc(connection: ^Connection) -> bool {
-  connection.values.len = 0
+read :: proc(ctx: ^WaylandContext) -> bool {
+  ctx.values.len = 0
   bytes_len: u32 = 0
 
-  start := connection.input_buffer.len
-  object_id := vec_read(&connection.input_buffer, u32) or_return
-  opcode := vec_read(&connection.input_buffer, u16) or_return
-  size := vec_read(&connection.input_buffer, u16) or_return
+  start := ctx.input_buffer.len
+  object_id := vec_read(&ctx.input_buffer, u32) or_return
+  opcode := vec_read(&ctx.input_buffer, u16) or_return
+  size := vec_read(&ctx.input_buffer, u16) or_return
 
-  object := get_object(connection, object_id)
+  object := get_object(ctx, object_id)
   event := get_event(object, u32(opcode))
 
   for kind in event.arguments {
     #partial switch kind {
-      case .Object: if !read_and_write(connection, wl.Object) do return false
-      case .Uint: if !read_and_write(connection, wl.Uint) do return false
-      case .Int: if !read_and_write(connection, wl.Int) do return false
-      case .Fixed: if !read_and_write(connection, wl.Fixed) do return false
-      case .BoundNewId: if !read_and_write(connection, wl.BoundNewId) do return false
-      case .String: if !read_and_write_collection(connection, wl.String, &bytes_len) do return false
-      case .Array: if !read_and_write_collection(connection, wl.Array, &bytes_len) do return false
+      case .Object: if !read_and_write(ctx, wl.Object) do return false
+      case .Uint: if !read_and_write(ctx, wl.Uint) do return false
+      case .Int: if !read_and_write(ctx, wl.Int) do return false
+      case .Fixed: if !read_and_write(ctx, wl.Fixed) do return false
+      case .BoundNewId: if !read_and_write(ctx, wl.BoundNewId) do return false
+      case .String: if !read_and_write_collection(ctx, wl.String, &bytes_len) do return false
+      case .Array: if !read_and_write_collection(ctx, wl.Array, &bytes_len) do return false
       case: return false
     }
   }
 
-  if connection.input_buffer.len - start != u32(size) do return false
+  if ctx.input_buffer.len - start != u32(size) do return false
 
-  values := connection.values.data[0:connection.values.len]
-  object.callbacks[opcode](connection, object_id, values)
-
-  return true
-}
-
-read_and_write :: proc(connection: ^Connection, $T: typeid) -> bool {
-  value := vec_read(&connection.input_buffer, T) or_return
-  vec_append(&connection.values, value)
+  values := ctx.values.data[0:ctx.values.len]
+  //fmt.println("<-", object.interface.name, object_id, opcode, event.name, values)
+  object.callbacks[opcode](ctx, object_id, values)
 
   return true
 }
 
-read_and_write_collection :: proc(connection: ^Connection, $T: typeid, length_ptr: ^u32) -> bool {
+read_and_write :: proc(ctx: ^WaylandContext, $T: typeid) -> bool {
+  value := vec_read(&ctx.input_buffer, T) or_return
+  vec_append(&ctx.values, value)
+
+  return true
+}
+
+read_and_write_collection :: proc(ctx: ^WaylandContext, $T: typeid, length_ptr: ^u32) -> bool {
   start := length_ptr^
 
-  length := vec_read(&connection.input_buffer, u32) or_return
-  bytes := vec_read_n(&connection.input_buffer, u32(mem.align_formula(int(length), size_of(u32))))
+  length := vec_read(&ctx.input_buffer, u32) or_return
+  bytes := vec_read_n(&ctx.input_buffer, u32(mem.align_formula(int(length), size_of(u32))))
 
   if bytes == nil {
     return false
   }
 
-  copy(connection.bytes[start:], bytes)
-  vec_append(&connection.values, T(connection.bytes[start:length]))
+  copy(ctx.bytes[start:], bytes)
+  vec_append(&ctx.values, T(ctx.bytes[start:length]))
   length_ptr^ += length
 
   return true
 }
 
-recv :: proc(connection: ^Connection) {
-  count := posix.recv(connection.socket, raw_data(connection.input_buffer.data), 4096, { })
-  connection.input_buffer.cap = u32(count)
-  connection.input_buffer.len = 0
+recv :: proc(ctx: ^WaylandContext) {
+  count := posix.recv(ctx.socket, raw_data(ctx.input_buffer.data), 4096, { })
+  ctx.input_buffer.cap = u32(count)
+  ctx.input_buffer.len = 0
 }
 
-send :: proc(connection: ^Connection) -> bool {
-  if connection.output_buffer.len == 0 do return true 
+send :: proc(ctx: ^WaylandContext) -> bool {
+  if ctx.output_buffer.len == 0 do return true 
 
-  count := posix.send(connection.socket, raw_data(connection.output_buffer.data), uint(connection.output_buffer.len), { })
+  count := posix.send(ctx.socket, raw_data(ctx.output_buffer.data), uint(ctx.output_buffer.len), { })
 
-  for connection.output_buffer.len > 0 {
+  for ctx.output_buffer.len > 0 {
     if count < 0 {
       return false
     }
 
-    connection.output_buffer.len -= u32(count)
-    count = posix.send(connection.socket, raw_data(connection.output_buffer.data[count:]), uint(connection.output_buffer.len), { })
+    ctx.output_buffer.len -= u32(count)
+    count = posix.send(ctx.socket, raw_data(ctx.output_buffer.data[count:]), uint(ctx.output_buffer.len), { })
   }
 
   return true
 }
 
-sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
-  if connection.output_buffer.len == 0 {
+sendmsg :: proc(ctx: ^WaylandContext, $T: typeid, value: T) -> bool {
+  if ctx.output_buffer.len == 0 {
     return false
   }
 
   io := posix.iovec {
-    iov_base = raw_data(connection.output_buffer.data),
-    iov_len = uint(connection.output_buffer.len),
+    iov_base = raw_data(ctx.output_buffer.data),
+    iov_len = uint(ctx.output_buffer.len),
   }
 
   t_size := size_of(T)
   t_align := mem.align_formula(t_size, size_of(uint))
   cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
 
-  buf := make([]u8, cmsg_align + t_align, connection.tmp_allocator)
+  buf := make([]u8, cmsg_align + t_align, ctx.tmp_allocator)
   defer free(raw_data(buf))
 
   socket_msg := posix.msghdr {
@@ -366,45 +404,50 @@ sendmsg :: proc(connection: ^Connection, $T: typeid, value: T) -> bool {
   data := (^T)(&([^]posix.cmsghdr)(cmsg)[1])
   data^ = value
 
-  if posix.sendmsg(connection.socket, &socket_msg, { }) < 0 {
+  if posix.sendmsg(ctx.socket, &socket_msg, { }) < 0 {
     return false
   }
 
-  connection.output_buffer.len = 0
+  ctx.output_buffer.len = 0
 
   return true
 }
 
-connection_append :: proc(connection: ^Connection, callbacks: []CallbackConfig, interface: ^wl.Interface) {
+ctx_append :: proc(ctx: ^WaylandContext, callbacks: []CallbackConfig, interface: ^wl.Interface) {
   if len(callbacks) != len(interface.events) {
     panic("Incorrect callback length")
   }
 
   object: InterfaceObject
   object.interface = interface
-  object.callbacks = make([]Callback, len(callbacks), connection.allocator)
+  object.callbacks = make([]Callback, len(callbacks), ctx.allocator)
 
   for callback in callbacks {
     opcode := get_event_opcode(interface, callback.name)
     object.callbacks[opcode] = callback.function
   }
 
-  vec_append(&connection.objects, object)
+  vec_append(&ctx.objects, object)
 }
 
-get_object :: proc(connection: ^Connection, id: u32) -> InterfaceObject {
-  return connection.objects.data[id - 1]
+get_object :: proc(ctx: ^WaylandContext, id: u32) -> InterfaceObject {
+  return ctx.objects.data[id - 1]
 }
 
-get_id :: proc(connection: ^Connection, name: string, callbacks: []CallbackConfig, interfaces: []wl.Interface) -> u32 {
+get_id :: proc(ctx: ^WaylandContext, name: string, callbacks: []CallbackConfig, interfaces: []wl.Interface) -> u32 {
   for &inter in interfaces {
     if inter.name == name {
-      defer connection_append(connection, callbacks, &inter)
-      return connection.objects.len + 1
+      defer ctx_append(ctx, callbacks, &inter)
+      return ctx.objects.len + 1
     }
   }
 
   panic("interface id  not found")
+}
+
+copy_id :: proc(ctx: ^WaylandContext, id: u32) -> u32 {
+  defer vec_append(&ctx.objects, get_object(ctx, id))
+  return ctx.objects.len + 1
 }
 
 get_event :: proc(object: InterfaceObject, opcode: u32) -> ^wl.Event {
@@ -425,8 +468,8 @@ get_event_opcode :: proc(interface: ^wl.Interface, name: string) -> u32 {
   panic("event  opcode not found")
 }
 
-get_request_opcode :: proc(connection: ^Connection, name: string, object_id: u32) -> u32 {
-  requests := get_object(connection, object_id).interface.requests
+get_request_opcode :: proc(ctx: ^WaylandContext, name: string, object_id: u32) -> u32 {
+  requests := get_object(ctx, object_id).interface.requests
 
   for request, i in requests {
     if request.name == name {
@@ -518,108 +561,121 @@ vec_reserve :: proc(vec: ^Vector(u8), $T: typeid) -> ^T {
   return (^T)(raw_data(vec.data[vec.len:]))
 }
 
-format_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
   format := u32(arguments[0].(wl.Uint))
 
   if format != 0 do return
 
-  connection.format = format
+  ctx.format = format
 }
 
-global_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
   str := arguments[1].(wl.String)
   version := arguments[2].(wl.Uint)
   interface_name := string(str[0:len(str) - 1])
 
   switch interface_name {
   case "wl_shm":
-    connection.shm_id = get_id(connection, interface_name, { new_callback("format", format_callback) } , wl.WAYLAND_INTERFACES[:])
-    connection.create_shm_pool_opcode = get_request_opcode(connection, "create_pool", connection.shm_id);
+    ctx.shm_id = get_id(ctx, interface_name, { new_callback("format", format_callback) } , wl.WAYLAND_INTERFACES[:])
+    ctx.create_shm_pool_opcode = get_request_opcode(ctx, "create_pool", ctx.shm_id);
 
-    write(connection, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(connection.shm_id), interface = str, version = version }}, connection.registry_id, connection.registry_bind_opcode)
+    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.shm_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
   case "xdg_wm_base":
-    connection.xdg_wm_base_id = get_id(connection, interface_name, { new_callback("ping", ping_callback) }, wl.XDG_INTERFACES[:])
-    connection.pong_opcode = get_request_opcode(connection, "pong", connection.xdg_wm_base_id)
-    connection.get_xdg_surface_opcode = get_request_opcode(connection, "get_xdg_surface", connection.xdg_wm_base_id)
+    ctx.xdg_wm_base_id = get_id(ctx, interface_name, { new_callback("ping", ping_callback) }, wl.XDG_INTERFACES[:])
+    ctx.pong_opcode = get_request_opcode(ctx, "pong", ctx.xdg_wm_base_id)
+    ctx.get_xdg_surface_opcode = get_request_opcode(ctx, "get_xdg_surface", ctx.xdg_wm_base_id)
 
-    write(connection, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(connection.xdg_wm_base_id), interface = str, version = version }}, connection.registry_id, connection.registry_bind_opcode)
-    create_xdg_surface(connection)
+    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.xdg_wm_base_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
+    create_xdg_surface(ctx)
   case "wl_compositor":
-    connection.compositor_id = get_id( connection, interface_name, { } , wl.WAYLAND_INTERFACES[:])
-    connection.create_surface_opcode = get_request_opcode(connection, "create_surface", connection.compositor_id)
+    ctx.compositor_id = get_id( ctx, interface_name, { } , wl.WAYLAND_INTERFACES[:])
+    ctx.create_surface_opcode = get_request_opcode(ctx, "create_surface", ctx.compositor_id)
 
-    write(connection, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(connection.compositor_id), interface = str, version = version }}, connection.registry_id, connection.registry_bind_opcode)
-    create_surface(connection)
+    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.compositor_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
+    create_surface(ctx)
   }
 }
 
-global_remove_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+global_remove_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
 
-configure_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
-  write(connection, { arguments[0] }, id, connection.ack_configure_opcode)
-  write(connection, { wl.Object(connection.buffer_id), wl.Int(0), wl.Int(0) }, connection.surface_id, connection.surface_attach_opcode)
-  commit(connection)
+configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  if !ctx.front_buffer.released {
+    write(ctx, { arguments[0] }, id, ctx.ack_configure_opcode)
+    return
+  }
+
+  if !ctx.front_buffer.update {
+    defer ctx.front_buffer.update = true
+
+    write(ctx, {}, ctx.front_buffer.id, ctx.destroy_buffer_opcode)
+
+    write(ctx, { wl.BoundNewId(ctx.front_buffer.id), wl.Int(ctx.front_buffer.offset), wl.Int(ctx.width), wl.Int(ctx.height), wl.Int(4 * ctx.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
+
+    write_image(ctx.vk, ctx.width, ctx.height, ctx.front_buffer.data)
+  }
+
+  ctx.front_buffer.released = false
+
+  write(ctx, { arguments[0] }, id, ctx.ack_configure_opcode)
+  write(ctx, { wl.Object(ctx.front_buffer.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
+  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
+
+  ctx.front_buffer, ctx.back_buffer = ctx.back_buffer, ctx.front_buffer
 }
 
-ping_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
-  write(connection, { arguments[0] }, connection.xdg_wm_base_id, connection.pong_opcode)
+ping_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  write(ctx, { arguments[0] }, ctx.xdg_wm_base_id, ctx.pong_opcode)
 }
 
-toplevel_configure_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+toplevel_configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
   width := u32(arguments[0].(wl.Int))
   height := u32(arguments[1].(wl.Int))
 
   if width == 0 || height == 0 do return
-  if width == connection.width && height == connection.height do return
+  if width == ctx.width && height == ctx.height do return
 
-  connection.width = width
-  connection.height = height
-  connection.resize = true
+  ctx.width = width
+  ctx.height = height
+
+  ctx.front_buffer.update = false
+  ctx.back_buffer.update = false
+
+  if !resize_renderer(ctx.vk, width, height) do panic("failed to resize renderer")
+
+  ctx.resize = true
 }
 
-toplevel_close_callback :: proc(connection: ^Connection, id: u32, arugments: []wl.Argument) {
-  connection.running = false
+toplevel_close_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {
+  ctx.running = false
 }
 
-toplevel_configure_bounds_callback :: proc(connection: ^Connection, id: u32, arugments: []wl.Argument) {
+toplevel_configure_bounds_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {
 }
 
-toplevel_wm_capabilities_callback :: proc(connection: ^Connection, id: u32, arugments: []wl.Argument) {
+toplevel_wm_capabilities_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {
 }
 
-buffer_release_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
-  if connection.resize {
-    write(connection, {}, id, connection.destroy_buffer_opcode)
-    write(connection, { wl.BoundNewId(id), wl.Int(0), wl.Int(connection.width), wl.Int(connection.height), wl.Int(4 * connection.width), wl.Uint(connection.format) }, connection.shm_pool_id, connection.create_buffer_opcode)
- 
-    l := connection.width * connection.height * 4
-    connection.buffer = connection.shm_pool[0:l]
-    for i in 0..<l {
-      connection.buffer[i] = 255
-    }
-   
-    connection.resize = false
-    write(connection, { wl.Object(connection.buffer_id), wl.Int(0), wl.Int(0) }, connection.surface_id, connection.surface_attach_opcode)
-    commit(connection)
-  }
+buffer_release_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  ctx.front_buffer.released = true
 }
 
-enter_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
 
-leave_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
 
-preferred_buffer_scale_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+preferred_buffer_scale_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
 
-preferred_buffer_transform_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+preferred_buffer_transform_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
 
-delete_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+delete_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
 
-error_callback :: proc(connection: ^Connection, id: u32, arguments: []wl.Argument) {
+error_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  fmt.println("error:", string(arguments[2].(wl.String)))
 }
 

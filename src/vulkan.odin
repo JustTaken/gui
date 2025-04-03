@@ -57,6 +57,8 @@ VulkanContext :: struct {
   height: u32,
   format: vk.Format,
 
+  modifiers: []u64,
+
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
 
@@ -64,7 +66,7 @@ VulkanContext :: struct {
   tmp_allocator: runtime.Allocator,
 }
 
-init_vulkan :: proc(ctx: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
+init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
   {
     ok: bool
     if library, ok = dynlib.load_library("libvulkan.so"); !ok do return false
@@ -78,8 +80,8 @@ init_vulkan :: proc(ctx: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Aren
 
   ctx.format = .B8G8R8A8_SRGB 
   //ctx.format = .R8G8B8A8_SRGB 
-  ctx.width = 800
-  ctx.height = 400
+  ctx.width = width
+  ctx.height = height
 
   mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
   defer mem.end_arena_temp_memory(mark)
@@ -100,31 +102,10 @@ init_vulkan :: proc(ctx: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Aren
   ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
   ctx.command_buffers = allocate_command_buffers(ctx.device, ctx.command_pool, 1, ctx.allocator) or_return
 
-  modifiers := get_drm_modifiers(ctx.physical_device, ctx.format, ctx.tmp_allocator)
+  ctx.modifiers = get_drm_modifiers(ctx.physical_device, ctx.format, ctx.allocator)
 
-  mem_info := vk.ExternalMemoryImageCreateInfo {
-    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-    handleTypes = { .DMA_BUF_EXT },
-  }
+  init_frame(ctx) or_return
 
-  list_info := vk.ImageDrmFormatModifierListCreateInfoEXT {
-    sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
-    pNext = &mem_info,
-    drmFormatModifierCount = u32(len(modifiers)),
-    pDrmFormatModifiers = &modifiers[0],
-  }
-//flags = {.DRM_FORMAT_MODIFIER_EXT}
-
-  import_info := vk.ExportMemoryAllocateInfo {
-    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
-    pNext = nil,
-    handleTypes = { .DMA_BUF_EXT },
-  }
-
-  ctx.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, {  }, &list_info, modifiers, ctx.width, ctx.height) or_return
-  ctx.memory = create_image_memory(ctx.device, ctx.physical_device, ctx.image, &import_info) or_return
-  ctx.image_view = create_image_view(ctx.device, ctx.image, ctx.format) or_return
-  ctx.framebuffer = create_framebuffer(ctx.device, ctx.render_pass, &ctx.image_view, ctx.width, ctx.height) or_return
   ctx.fence = create_fence(ctx.device) or_return
   ctx.semaphore = create_semaphore(ctx.device) or_return
 
@@ -134,7 +115,7 @@ init_vulkan :: proc(ctx: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Aren
     { position = { -0.5, -1.0 } },
 
     { position = {  1.0, -1.0 } },
-    { position = {  -1.0, 1.0 } },
+    { position = {  0.0, 1.0 } },
     { position = {  1.0, 1.0 } },
   }
 
@@ -171,6 +152,49 @@ deinit_vulkan :: proc(ctx: ^VulkanContext) {
   vk.DestroyInstance(ctx.instance, nil)
 
    _ = dynlib.unload_library(library)
+}
+
+init_frame :: proc(ctx: ^VulkanContext) -> bool {
+  mem_info := vk.ExternalMemoryImageCreateInfo {
+    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+    handleTypes = { .DMA_BUF_EXT },
+  }
+
+  list_info := vk.ImageDrmFormatModifierListCreateInfoEXT {
+    sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+    pNext = &mem_info,
+    drmFormatModifierCount = u32(len(ctx.modifiers)),
+    pDrmFormatModifiers = &ctx.modifiers[0],
+  }
+//flags = {.DRM_FORMAT_MODIFIER_EXT}
+
+  import_info := vk.ExportMemoryAllocateInfo {
+    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
+    pNext = nil,
+    handleTypes = { .DMA_BUF_EXT },
+  }
+
+  ctx.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, {  }, &list_info, ctx.modifiers, ctx.width, ctx.height) or_return
+  ctx.memory = create_image_memory(ctx.device, ctx.physical_device, ctx.image, &import_info) or_return
+  ctx.image_view = create_image_view(ctx.device, ctx.image, ctx.format) or_return
+  ctx.framebuffer = create_framebuffer(ctx.device, ctx.render_pass, &ctx.image_view, ctx.width, ctx.height) or_return
+
+  return true
+}
+
+resize_renderer :: proc(ctx: ^VulkanContext, width: u32, height: u32) -> bool {
+  ctx.width = width
+  ctx.height = height
+
+  vk.DestroyFramebuffer(ctx.device, ctx.framebuffer, nil)
+  vk.DestroyImageView(ctx.device, ctx.image_view, nil)
+  vk.FreeMemory(ctx.device, ctx.memory, nil)
+  vk.DestroyImage(ctx.device, ctx.image, nil)
+
+  init_frame(ctx) or_return
+  draw(ctx) or_return
+
+  return true
 }
 
 draw :: proc(ctx: ^VulkanContext) -> bool {
@@ -239,11 +263,9 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
     sType = .SUBMIT_INFO,
     commandBufferCount = 1,
     pCommandBuffers = &cmd,
-    waitSemaphoreCount = 0,
-    pWaitSemaphores = nil,
     pWaitDstStageMask = &wait_stage,
-    signalSemaphoreCount = 1,
-    pSignalSemaphores = &ctx.semaphore,
+    //signalSemaphoreCount = 1,
+    //pSignalSemaphores = &ctx.semaphore,
   }
 
   vk.ResetFences(ctx.device, 1, &ctx.fence)
@@ -859,10 +881,10 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format)
   return view, true
 }
 
-write_image :: proc(ctx: ^VulkanContext) -> bool {
+write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) -> bool {
   cmd := ctx.command_buffers[0]
 
-  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, nil, ctx.width, ctx.height) or_return
+  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, nil, width, height) or_return
   defer vk.DestroyImage(ctx.device, out_image, nil)
 
   out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image, nil) or_return
@@ -908,23 +930,25 @@ write_image :: proc(ctx: ^VulkanContext) -> bool {
     mipLevel = 0,
   }
 
-  offset := vk.Offset3D {
-    x = 0,
-    y = 0,
-    z = 0,
+  srcOffset: vk.Offset3D
+  dstOffset: vk.Offset3D
+  extent := vk.Extent3D { width = ctx.width, height = ctx.height, depth = 1 }
+
+  if ctx.width > width {
+    srcOffset.x = i32(ctx.width - width)
+    extent.width = width - u32(srcOffset.x)
   }
 
-  extent := vk.Extent3D {
-    width = ctx.width,
-    height = ctx.height,
-    depth = 1,
+  if ctx.height > height {
+    srcOffset.y = i32(ctx.height - height)
+    extent.height = height - u32(srcOffset.y)
   }
 
   copy_info := vk.ImageCopy {
     srcSubresource = resource,
     dstSubresource = resource,
-    srcOffset = offset,
-    dstOffset = offset,
+    srcOffset = srcOffset,
+    dstOffset = dstOffset,
     extent = extent,
   }
 
@@ -957,30 +981,34 @@ write_image :: proc(ctx: ^VulkanContext) -> bool {
   vk.MapMemory(ctx.device, out_memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, (^rawptr)(&out))
   defer vk.UnmapMemory(ctx.device, out_memory)
 
-  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
-  defer mem.end_arena_temp_memory(mark)
-
-  buffer: []u8
-  err: mem.Allocator_Error
-
-  if buffer, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
-
-  header := fmt.bprintf(buffer, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
-  count := u32(len(header))
-
   for i in 0..<ctx.height {
-    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
-
-    for j in 0..<ctx.width {
-      off := out[line + j * size_of(u32):]
-      cont := fmt.bprintf(buffer[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
-      count += u32(len(cont))
-    }
+    copy(buffer[i * width * 4:], out[i * u32(layout.rowPitch):][0:ctx.width * 4])
   }
 
-  if !os.write_entire_file("assets/out.ppm", buffer[0:count]) do return false
-
-  fmt.println("wrote to file assets/out.ppm")
+//  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
+//  defer mem.end_arena_temp_memory(mark)
+//
+//  buffer: []u8
+//  err: mem.Allocator_Error
+//
+//  if buffer, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
+//
+//  header := fmt.bprintf(buffer, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
+//  count := u32(len(header))
+//
+//  for i in 0..<ctx.height {
+//    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
+//
+//    for j in 0..<ctx.width {
+//      off := out[line + j * size_of(u32):]
+//      cont := fmt.bprintf(buffer[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
+//      count += u32(len(cont))
+//    }
+//  }
+//
+//  if !os.write_entire_file("assets/out.ppm", buffer[0:count]) do return false
+//
+//  fmt.println("wrote to file assets/out.ppm")
 
   return true
 }

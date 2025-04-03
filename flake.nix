@@ -11,6 +11,7 @@
         vulkan-validation-layers
         shaderc
         feh
+        gdb
       ];
 
       LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib:${pkgs.vulkan-validation-layers}";
