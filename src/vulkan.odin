@@ -25,7 +25,7 @@ Vertex :: struct {
 
 VulkanContext :: struct {
   instance: vk.Instance,
-  device:   vk.Device,
+  device: vk.Device,
   physical_device: vk.PhysicalDevice,
   queues: []vk.Queue,
   queue_indices: [2]u32,
@@ -76,8 +76,8 @@ init_vulkan :: proc(ctx: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Aren
   ctx.allocator = mem.arena_allocator(arena)
   ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
-  //ctx.format = .B8G8R8A8_SRGB 
-  ctx.format = .R8G8B8A8_SRGB 
+  ctx.format = .B8G8R8A8_SRGB 
+  //ctx.format = .R8G8B8A8_SRGB 
   ctx.width = 800
   ctx.height = 400
 
@@ -101,8 +101,28 @@ init_vulkan :: proc(ctx: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Aren
   ctx.command_buffers = allocate_command_buffers(ctx.device, ctx.command_pool, 1, ctx.allocator) or_return
 
   modifiers := get_drm_modifiers(ctx.physical_device, ctx.format, ctx.tmp_allocator)
-  ctx.image = create_image(ctx.device, ctx.format, .D2, .OPTIMAL, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, modifiers, ctx.width, ctx.height) or_return
-  ctx.memory = create_image_memory(ctx.device, ctx.physical_device, ctx.image) or_return
+
+  mem_info := vk.ExternalMemoryImageCreateInfo {
+    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+    handleTypes = { .DMA_BUF_EXT },
+  }
+
+  list_info := vk.ImageDrmFormatModifierListCreateInfoEXT {
+    sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+    pNext = &mem_info,
+    drmFormatModifierCount = u32(len(modifiers)),
+    pDrmFormatModifiers = &modifiers[0],
+  }
+//flags = {.DRM_FORMAT_MODIFIER_EXT}
+
+  import_info := vk.ExportMemoryAllocateInfo {
+    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
+    pNext = nil,
+    handleTypes = { .DMA_BUF_EXT },
+  }
+
+  ctx.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, {  }, &list_info, modifiers, ctx.width, ctx.height) or_return
+  ctx.memory = create_image_memory(ctx.device, ctx.physical_device, ctx.image, &import_info) or_return
   ctx.image_view = create_image_view(ctx.device, ctx.image, ctx.format) or_return
   ctx.framebuffer = create_framebuffer(ctx.device, ctx.render_pass, &ctx.image_view, ctx.width, ctx.height) or_return
   ctx.fence = create_fence(ctx.device) or_return
@@ -114,8 +134,8 @@ init_vulkan :: proc(ctx: ^VulkanContext, arena: ^mem.Arena, tmp_arena: ^mem.Aren
     { position = { -0.5, -1.0 } },
 
     { position = {  1.0, -1.0 } },
-    { position = {  0.5, -0.5 } },
-    { position = {  1.0, -0.5 } },
+    { position = {  -1.0, 1.0 } },
+    { position = {  1.0, 1.0 } },
   }
 
   ctx.vertex_buffer = create_buffer(ctx.device, size_of(Vertex) * len(vertices), { .VERTEX_BUFFER }) or_return
@@ -759,24 +779,12 @@ find_queue_indices :: proc(physical_device: vk.PhysicalDevice, allocator: runtim
   return indices, true
 }
 
-create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, modifiers: []u64, width: u32, height: u32) -> (image: vk.Image, ok: bool) {
+create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, pNext: rawptr, modifiers: []u64, width: u32, height: u32) -> (image: vk.Image, ok: bool) {
 
-//  mem_info := vk.ExternalMemoryImageCreateInfo {
-//    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-//    handleTypes = { .DMA_BUF_EXT },
-//  }
-//
-//  list_info := vk.ImageDrmFormatModifierListCreateInfoEXT {
-//    sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
-//    pNext = &mem_info,
-//    drmFormatModifierCount = u32(len(modifiers)),
-//    pDrmFormatModifiers = &modifiers[0],
-//  }
-//flags = {.DRM_FORMAT_MODIFIER_EXT}
   info := vk.ImageCreateInfo {
     sType = .IMAGE_CREATE_INFO,
-    pNext = nil,
-    flags = {},
+    pNext = pNext,
+    flags = flags,
     imageType = type,
     format = format,
     mipLevels = 1,
@@ -802,19 +810,13 @@ create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, t
   return image, true
 }
 
-create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, image: vk.Image) -> (memory: vk.DeviceMemory, ok: bool) {
+create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, image: vk.Image, pNext: rawptr) -> (memory: vk.DeviceMemory, ok: bool) {
   requirements: vk.MemoryRequirements
   vk.GetImageMemoryRequirements(device, image, &requirements)
 
-//  import_info := vk.ExportMemoryAllocateInfo {
-//    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
-//    pNext = nil,
-//    handleTypes = { .DMA_BUF_EXT },
-//  }
-
   alloc_info := vk.MemoryAllocateInfo{
     sType = .MEMORY_ALLOCATE_INFO,
-    pNext = nil,
+    pNext = pNext,
     allocationSize = requirements.size,
     memoryTypeIndex = find_memory_type(physical_device, requirements.memoryTypeBits, { .HOST_VISIBLE, .HOST_COHERENT }) or_return
   }
@@ -860,10 +862,10 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format)
 write_image :: proc(ctx: ^VulkanContext) -> bool {
   cmd := ctx.command_buffers[0]
 
-  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, nil, ctx.width, ctx.height) or_return
+  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, nil, ctx.width, ctx.height) or_return
   defer vk.DestroyImage(ctx.device, out_image, nil)
 
-  out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image) or_return
+  out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image, nil) or_return
   defer vk.FreeMemory(ctx.device, out_memory, nil)
 
   begin_info := vk.CommandBufferBeginInfo {
@@ -1062,18 +1064,6 @@ allocate_descriptor_sets :: proc(device: vk.Device, layouts: []vk.DescriptorSetL
   if sets, err = make([]vk.DescriptorSet, count, allocator); err != nil do return sets, false
   if vk.AllocateDescriptorSets(device, &info, &sets[0]) != .SUCCESS do return sets, false
 
-//WriteDescriptorSet :: struct {
-//	sType:            StructureType,
-//	pNext:            rawptr,
-//	dstSet:           DescriptorSet,
-//	dstBinding:       u32,
-//	dstArrayElement:  u32,
-//	descriptorCount:  u32,
-//	descriptorType:   DescriptorType,
-//	pImageInfo:       ^DescriptorImageInfo,
-//	pBufferInfo:      ^DescriptorBufferInfo,
-//	pTexelBufferView: ^BufferView,
-//}
   buffer_info := vk.DescriptorBufferInfo {
     buffer = buffer,
     offset = 0,
