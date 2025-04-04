@@ -57,7 +57,10 @@ VulkanContext :: struct {
   height: u32,
   format: vk.Format,
 
-  modifiers: []u64,
+  plane_layouts: []vk.SubresourceLayout,
+  modifiers: []vk.DrmFormatModifierPropertiesEXT,
+  modifier: vk.DrmFormatModifierPropertiesEXT,
+  fd: i32,
 
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
@@ -74,8 +77,9 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
   }
 
   ctx.arena = arena
-  ctx.tmp_arena = tmp_arena
   ctx.allocator = mem.arena_allocator(arena)
+
+  ctx.tmp_arena = tmp_arena
   ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
   ctx.format = .B8G8R8A8_SRGB 
@@ -153,6 +157,12 @@ deinit_vulkan :: proc(ctx: ^VulkanContext) {
 }
 
 init_frame :: proc(ctx: ^VulkanContext) -> bool {
+  modifiers := make([]u64, len(ctx.modifiers))
+
+  for modifier, i in ctx.modifiers {
+    modifiers[i] = modifier.drmFormatModifier
+  }
+
   mem_info := vk.ExternalMemoryImageCreateInfo {
     sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
     handleTypes = { .DMA_BUF_EXT },
@@ -162,7 +172,7 @@ init_frame :: proc(ctx: ^VulkanContext) -> bool {
     sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
     pNext = &mem_info,
     drmFormatModifierCount = u32(len(ctx.modifiers)),
-    pDrmFormatModifiers = &ctx.modifiers[0],
+    pDrmFormatModifiers = &modifiers[0],
   }
 
   import_info := vk.ExportMemoryAllocateInfo {
@@ -171,10 +181,55 @@ init_frame :: proc(ctx: ^VulkanContext) -> bool {
     handleTypes = { .DMA_BUF_EXT },
   }
 
-  ctx.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, {  }, &list_info, ctx.modifiers, ctx.width, ctx.height) or_return
+  ctx.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, {  }, &list_info, ctx.width, ctx.height) or_return
   ctx.memory = create_image_memory(ctx.device, ctx.physical_device, ctx.image, &import_info) or_return
   ctx.image_view = create_image_view(ctx.device, ctx.image, ctx.format) or_return
   ctx.framebuffer = create_framebuffer(ctx.device, ctx.render_pass, &ctx.image_view, ctx.width, ctx.height) or_return
+
+  properties := vk.ImageDrmFormatModifierPropertiesEXT {
+    sType = .IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
+  }
+
+  if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device, ctx.image, &properties) != .SUCCESS do return false
+
+  for modifier in ctx.modifiers {
+    if modifier.drmFormatModifier == properties.drmFormatModifier {
+      ctx.modifier = modifier
+      break
+    }
+  }
+
+  plane_indices := [?]vk.ImageAspectFlag {
+    .MEMORY_PLANE_0_EXT,
+    .MEMORY_PLANE_1_EXT,
+    .MEMORY_PLANE_2_EXT,
+    .MEMORY_PLANE_3_EXT,
+  }
+
+  ctx.plane_layouts = make([]vk.SubresourceLayout, ctx.modifier.drmFormatModifierPlaneCount, ctx.allocator)
+
+  for i in 0..<ctx.modifier.drmFormatModifierPlaneCount {
+    image_resource := vk.ImageSubresource {
+      aspectMask = { plane_indices[i] },
+    }
+
+    vk.GetImageSubresourceLayout(ctx.device, ctx.image, &image_resource, &ctx.plane_layouts[i])
+  }
+
+//MemoryGetFdInfoKHR :: struct {
+//	sType:      StructureType,
+//	pNext:      rawptr,
+//	memory:     DeviceMemory,
+//	handleType: ExternalMemoryHandleTypeFlags,
+//}
+
+  memory_info := vk.MemoryGetFdInfoKHR {
+    sType = .MEMORY_GET_FD_INFO_KHR,
+    memory = ctx.memory,
+    handleType = { .DMA_BUF_EXT },
+  }
+
+  if vk.GetMemoryFdKHR(ctx.device, &memory_info, &ctx.fd) != .SUCCESS do return false
 
   return true
 }
@@ -624,7 +679,7 @@ create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPa
   return render_pass, true
 }
 
-get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format, allocator: runtime.Allocator) -> []u64 {
+get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format, allocator: runtime.Allocator) -> []vk.DrmFormatModifierPropertiesEXT {
   l: u32 = 0
   render_features: vk.FormatFeatureFlags = { .COLOR_ATTACHMENT, .COLOR_ATTACHMENT_BLEND }
   texture_features: vk.FormatFeatureFlags = { .SAMPLED_IMAGE, .SAMPLED_IMAGE_FILTER_LINEAR }
@@ -641,7 +696,7 @@ get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format,
   vk.GetPhysicalDeviceFormatProperties2(physical_device, format, &properties)
   count := modifier_properties_list.drmFormatModifierCount
 
-  modifiers := make([]u64, count, allocator)
+  modifiers := make([]vk.DrmFormatModifierPropertiesEXT, count, allocator)
   drmFormatModifierProperties := make([]vk.DrmFormatModifierPropertiesEXT, count, allocator)
   modifier_properties_list.pDrmFormatModifierProperties = &drmFormatModifierProperties[0]
 
@@ -694,7 +749,7 @@ get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format,
     if vk.GetPhysicalDeviceImageFormatProperties2(physical_device, &image_info, &image_properties) != .SUCCESS do continue
     if emp.externalMemoryFeatures < { .IMPORTABLE, .EXPORTABLE } do continue
 
-    modifiers[l] = modifier_properties.drmFormatModifier
+    modifiers[l] = modifier_properties
     l += 1
   }
 
@@ -764,7 +819,7 @@ find_physical_device :: proc(instance: vk.Instance, allocator: runtime.Allocator
 create_queues :: proc(device: vk.Device, queue_indices: []u32, allocator: runtime.Allocator) -> ([]vk.Queue, bool) {
   queues: []vk.Queue
   err: mem.Allocator_Error
-  if queues, err = make([]vk.Queue, len(queue_indices)); err != nil do return queues, false
+  if queues, err = make([]vk.Queue, len(queue_indices), allocator); err != nil do return queues, false
 
   for &q, i in &queues {
     vk.GetDeviceQueue(device, u32(queue_indices[i]), 0, &q)
@@ -797,7 +852,7 @@ find_queue_indices :: proc(physical_device: vk.PhysicalDevice, allocator: runtim
   return indices, true
 }
 
-create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, pNext: rawptr, modifiers: []u64, width: u32, height: u32) -> (image: vk.Image, ok: bool) {
+create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, pNext: rawptr, width: u32, height: u32) -> (image: vk.Image, ok: bool) {
 
   info := vk.ImageCreateInfo {
     sType = .IMAGE_CREATE_INFO,
@@ -880,7 +935,7 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format)
 write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) -> bool {
   cmd := ctx.command_buffers[0]
 
-  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, nil, width, height) or_return
+  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, width, height) or_return
   defer vk.DestroyImage(ctx.device, out_image, nil)
 
   out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image, nil) or_return
@@ -977,9 +1032,36 @@ write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) 
   vk.MapMemory(ctx.device, out_memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, (^rawptr)(&out))
   defer vk.UnmapMemory(ctx.device, out_memory)
 
+  fmt.println("WRITING IMAGE", width, height, ctx.width, ctx.height)
   for i in 0..<ctx.height {
     copy(buffer[i * width * 4:], out[i * u32(layout.rowPitch):][0:ctx.width * 4])
   }
+
+//  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
+//  defer mem.end_arena_temp_memory(mark)
+//
+//  file_output: []u8
+//  err: mem.Allocator_Error
+//
+//  if file_output, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
+//  if file_output == nil do return false
+//
+//  header := fmt.bprintf(file_output, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
+//  count := u32(len(header))
+//
+//  for i in 0..<ctx.height {
+//    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
+//
+//    for j in 0..<ctx.width {
+//      off := out[line + j * size_of(u32):]
+//      cont := fmt.bprintf(file_output[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
+//      count += u32(len(cont))
+//    }
+//  }
+// 
+//  if !os.write_entire_file("assets/out.ppm", file_output[0:count]) do return false
+// 
+//  fmt.println("wrote to file assets/out.ppm")
 
   return true
 }
@@ -1191,6 +1273,15 @@ copy_data :: proc($T: typeid, device: vk.Device, memory: vk.DeviceMemory, data: 
   vk.MapMemory(device, memory, 0, vk.DeviceSize(l * size_of(T)), {}, (^rawptr)(&out))
   copy(out[0:l], data)
   vk.UnmapMemory(device, memory)
+}
+
+drm_format :: proc(format: vk.Format) -> u32 {
+  #partial switch format {
+  case .B8G8R8A8_SRGB:
+    return (u32(u8('B')) << 24) | (u32(u8('A')) << 16) | (u32(u8('2')) << 8) | u32(u8('4'))
+  }
+
+  return 0
 }
 
 load_fn :: proc(ptr: rawptr, name: cstring) {

@@ -9,6 +9,7 @@ import "base:intrinsics"
 import "base:runtime"
 
 import "core:fmt"
+import "core:time"
 
 Vector :: struct(T: typeid) {
   data: []T,
@@ -31,8 +32,15 @@ Buffer :: struct {
   data: []u8,
   id: u32,
   offset: u32,
+  width: u32,
+  height: u32,
   update: bool,
   released: bool,
+}
+
+Modifier :: struct {
+  format: u32,
+  modifier: u64,
 }
 
 WaylandContext :: struct {
@@ -43,6 +51,8 @@ WaylandContext :: struct {
   values: Vector(wl.Argument),
   bytes: []u8,
 
+  modifiers: Vector(Modifier),
+
   display_id: u32,
   registry_id: u32,
   shm_id: u32,
@@ -52,6 +62,9 @@ WaylandContext :: struct {
   xdg_surface_id: u32,
   xdg_toplevel_id: u32,
   shm_pool_id: u32,
+  dma_id: u32,
+  dma_feedback_id: u32,
+  dma_params_id: u32,
 
   get_registry_opcode: u32,
   registry_bind_opcode: u32,
@@ -65,23 +78,34 @@ WaylandContext :: struct {
   get_toplevel_opcode: u32,
   pong_opcode: u32,
   destroy_buffer_opcode: u32,
+  dma_destroy_opcode: u32,
+  dma_create_param_opcode: u32,
+  dma_surface_feedback_opcode: u32,
+  dma_params_create_opcode: u32,
+  dma_params_add_opcode: u32,
+  dma_params_destroy_opcode: u32,
+
+  dma_main_device: u64,
 
   format: u32,
 
   shm_socket: posix.FD,
   shm_pool: []u8,
-  buffers: [2]Buffer,
+  //buffers: [2]Buffer,
+  last_fd: posix.FD,
 
-  back_buffer: ^Buffer,
-  front_buffer: ^Buffer,
+  dma_buf: Buffer,
+
+  //back_buffer: ^Buffer,
+  //front_buffer: ^Buffer,
 
   width: u32,
   height: u32,
-  resize: bool,
   running: bool,
 
-  //resize_callback: proc(rawptr, u32, u32),
-  //ptr: rawptr,
+  resizing: bool,
+  last_resize: time.Tick,
+
   vk: ^VulkanContext,
 
   arena: ^mem.Arena,
@@ -108,10 +132,11 @@ init_wayland :: proc(ctx: ^WaylandContext, width: u32, height: u32, vk: ^VulkanC
   write(ctx, { wl.BoundNewId(ctx.registry_id) }, ctx.display_id, ctx.get_registry_opcode)
   send(ctx) or_return
 
-  roundtrip(ctx)
-  roundtrip(ctx)
-
-  //for ctx.running && roundtrip(ctx) {}
+  roundtrip(ctx) or_return
+  send(ctx) or_return
+  roundtrip(ctx) or_return
+  send(ctx) or_return
+  roundtrip(ctx) or_return
 
   return true
 }
@@ -146,32 +171,88 @@ connect :: proc(ctx: ^WaylandContext, width: u32, height: u32) -> bool {
 
   if posix.connect(ctx.socket, (^posix.sockaddr)(&sockaddr), posix.socklen_t(size_of(posix.sockaddr_un))) == .FAIL do return false
 
-  ctx.values = new_vec(wl.Argument, 40, ctx.tmp_allocator)
-  ctx.objects = new_vec(InterfaceObject, 40, ctx.tmp_allocator)
-  ctx.output_buffer = new_vec(u8, 4096, ctx.tmp_allocator)
-  ctx.input_buffer = new_vec(u8, 4096, ctx.tmp_allocator)
-  ctx.bytes = make([]u8, 1024, ctx.tmp_allocator)
+  ctx.values = new_vec(wl.Argument, 40, ctx.allocator)
+  ctx.objects = new_vec(InterfaceObject, 40, ctx.allocator)
+  ctx.output_buffer = new_vec(u8, 4096, ctx.allocator)
+  ctx.input_buffer = new_vec(u8, 4096, ctx.allocator)
+  ctx.modifiers = new_vec(Modifier, 512, ctx.allocator)
+  ctx.bytes = make([]u8, 1024, ctx.allocator)
 
   ctx.input_buffer.cap = 0
   ctx.width = width
   ctx.height = height
   ctx.running = true
-  ctx.buffers = [2]Buffer {}
-  ctx.front_buffer = &ctx.buffers[0]
-  ctx.back_buffer = &ctx.buffers[1]
+  //ctx.buffers = [2]Buffer {}
+  //ctx.front_buffer = &ctx.buffers[0]
+  //ctx.back_buffer = &ctx.buffers[1]
+  ctx.last_fd = -1
 
   return true
 }
 
-update :: proc(ctx: ^WaylandContext, buffer: []u8) {
-  copy(ctx.shm_pool, buffer)
-}
-
 roundtrip :: proc(ctx: ^WaylandContext) -> bool {
   recv(ctx)
-
   for read(ctx) { }
-  return ctx.running && send(ctx)
+
+  return ctx.running
+}
+
+render :: proc(ctx: ^WaylandContext) -> bool {
+  time.sleep(time.Millisecond * 30)
+
+  roundtrip(ctx) or_return
+
+  //if ctx.back_buffer.update do return true
+  //if !ctx.front_buffer.released do return true
+
+  update(ctx)
+
+  //write(ctx, { wl.Object(ctx.front_buffer.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
+  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
+
+  //ctx.front_buffer.released = false
+  //ctx.front_buffer, ctx.back_buffer = ctx.back_buffer, ctx.front_buffer
+
+  return true
+}
+
+update :: proc(ctx: ^WaylandContext) {
+  //buffer := ctx.dma_buf
+  //change := buffer.width != ctx.width || buffer.height != ctx.height 
+
+  //if change {
+    //buffer.width = ctx.width
+    //buffer.height = ctx.height
+
+    //write(ctx, {}, ctx.front_buffer.id, ctx.destroy_buffer_opcode)
+    //write(ctx, { wl.BoundNewId(ctx.front_buffer.id), wl.Int(ctx.front_buffer.offset), wl.Int(buffer.width), wl.Int(buffer.height), wl.Int(4 * buffer.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
+  //}
+
+  if ctx.resizing  {
+//    if time.Millisecond * 200 >= time.tick_since(ctx.last_resize) {
+//      time.sleep(time.Millisecond * 30)
+//      return
+//    }
+//
+      resize_renderer(ctx.vk, ctx.width, ctx.height)
+  }
+
+  ctx.resizing = false
+
+  //fmt.print(buffer.id, "")
+  //if change || !buffer.update do write_image(ctx.vk, ctx.width, ctx.height, buffer.data)
+  //write_image(ctx.vk, ctx.width, ctx.height, buffer.data)
+  //buffer.update = true
+}
+
+resize :: proc(ctx: ^WaylandContext, width: u32, height: u32) {
+  ctx.width = width
+  ctx.height = height
+
+  ctx.dma_buf.update = false
+  //ctx.back_buffer.update = false
+  ctx.resizing = true
+  ctx.last_resize = time.tick_now()
 }
 
 create_surface :: proc(ctx: ^WaylandContext) {
@@ -180,6 +261,7 @@ create_surface :: proc(ctx: ^WaylandContext) {
   ctx.surface_commit_opcode = get_request_opcode(ctx, "commit", ctx.surface_id)
 
   write(ctx, { wl.BoundNewId(ctx.surface_id) }, ctx.compositor_id, ctx.create_surface_opcode)
+  create_dma(ctx)
 }
 
 create_xdg_surface :: proc(ctx: ^WaylandContext) {
@@ -191,79 +273,88 @@ create_xdg_surface :: proc(ctx: ^WaylandContext) {
   write(ctx, { wl.BoundNewId(ctx.xdg_surface_id), wl.Object(ctx.surface_id) }, ctx.xdg_wm_base_id, ctx.get_xdg_surface_opcode)
   write(ctx, { wl.BoundNewId(ctx.xdg_toplevel_id) }, ctx.xdg_surface_id, ctx.get_toplevel_opcode)
 
-  if !create_shm_pool(ctx, 1920, 1080) do panic("Failed to create shm pool")
+  //if !create_shm_pool(ctx, 1920, 1080) do panic("Failed to create shm pool")
 
   write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
 }
 
-create_shm_pool :: proc(ctx: ^WaylandContext, max_width: u32, max_height: u32) -> bool {
-  color_channels: u32 = 4
+//create_shm_pool :: proc(ctx: ^WaylandContext, max_width: u32, max_height: u32) -> bool {
+//  color_channels: u32 = 4
+//
+//  ctx.shm_pool_id = get_id(ctx, "wl_shm_pool", {}, wl.WAYLAND_INTERFACES[:])
+//  ctx.create_buffer_opcode = get_request_opcode(ctx, "create_buffer", ctx.shm_pool_id)
+//
+//  ctx.dma_buf.id = get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
+//  //ctx.back_buffer.id = copy_id(ctx, ctx.front_buffer.id)
+//
+//  ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", ctx.front_buffer.id)
+//
+//  size := max_width * max_height * color_channels * 2
+//
+//  name := cstring("odin_custom_wayland_client")
+//  ctx.shm_socket = posix.shm_open(name, { .RDWR, .EXCL, .CREAT }, { .ISVXT, .IXGRP, .IWGRP, .IXUSR })
+//  if ctx.shm_socket < 0 {
+//    return false
+//  }
+//
+//  if posix.shm_unlink(name) == .FAIL {
+//    return false
+//  }
+//
+//  if posix.ftruncate(ctx.shm_socket, posix.off_t(size)) == .FAIL {
+//    return false
+//  }
+//
+//  ctx.shm_pool = ([^]u8)(posix.mmap(nil, uint(size), { .READ, .WRITE }, { .SHARED }, ctx.shm_socket, 0))[0:size]
+//
+//  if ctx.shm_pool == nil do return false
+//
+//  start := ctx.output_buffer.len
+//
+//  write(ctx, { wl.BoundNewId(ctx.shm_pool_id), wl.Fd(-1), wl.Int(size) }, ctx.shm_id, ctx.create_shm_pool_opcode)
+//
+//  if !sendmsg(ctx, posix.FD, ctx.shm_socket) do return false
+//
+//  l := max_width * max_height * color_channels
+//
+//  ctx.front_buffer.width = ctx.width
+//  ctx.front_buffer.height = ctx.height
+//  ctx.front_buffer.data = ctx.shm_pool[0:l]
+//  ctx.front_buffer.offset = 0
+//  ctx.front_buffer.released = true
+//
+//  ctx.back_buffer.width = ctx.width
+//  ctx.back_buffer.height = ctx.height
+//  ctx.back_buffer.data = ctx.shm_pool[l:2*l]
+//  ctx.back_buffer.offset = l
+//  ctx.back_buffer.released = true
+//
+//  for i in 0..<l {
+//    ctx.front_buffer.data[i] = 255
+//    ctx.back_buffer.data[i] = 255
+//  }
+//
+//  write(ctx, { wl.BoundNewId(ctx.front_buffer.id), wl.Int(ctx.front_buffer.offset), wl.Int(ctx.front_buffer.width), wl.Int(ctx.front_buffer.height), wl.Int(color_channels * ctx.front_buffer.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
+//  write(ctx, { wl.BoundNewId(ctx.back_buffer.id), wl.Int(ctx.back_buffer.offset), wl.Int(ctx.back_buffer.width), wl.Int(ctx.back_buffer.height), wl.Int(color_channels * ctx.back_buffer.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
+//
+//  return true
+//}
 
-  ctx.shm_pool_id = get_id(ctx, "wl_shm_pool", {}, wl.WAYLAND_INTERFACES[:])
-  ctx.create_buffer_opcode = get_request_opcode(ctx, "create_buffer", ctx.shm_pool_id)
-
-  ctx.front_buffer.id = get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
-  ctx.back_buffer.id = copy_id(ctx, ctx.front_buffer.id)
-
-  ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", ctx.front_buffer.id)
-
-  size := max_width * max_height * color_channels * 2
-
-  name := cstring("odin_custom_wayland_client")
-  ctx.shm_socket = posix.shm_open(name, { .RDWR, .EXCL, .CREAT }, { .ISVXT, .IXGRP, .IWGRP, .IXUSR })
-  if ctx.shm_socket < 0 {
-    return false
-  }
-
-  if posix.shm_unlink(name) == .FAIL {
-    return false
-  }
-
-  if posix.ftruncate(ctx.shm_socket, posix.off_t(size)) == .FAIL {
-    return false
-  }
-
-  ctx.shm_pool = ([^]u8)(posix.mmap(nil, uint(size), { .READ, .WRITE }, { .SHARED }, ctx.shm_socket, 0))[0:size]
-
-  if ctx.shm_pool == nil do return false
-
-  start := ctx.output_buffer.len
-
-  write(ctx, { wl.BoundNewId(ctx.shm_pool_id), wl.Fd(-1), wl.Int(size) }, ctx.shm_id, ctx.create_shm_pool_opcode)
-
-  if !sendmsg(ctx, posix.FD, ctx.shm_socket) do return false
-
-  l := max_width * max_height * color_channels
-
-  ctx.front_buffer.data = ctx.shm_pool[0:l]
-  ctx.front_buffer.offset = 0
-  ctx.front_buffer.released = true
-
-  ctx.back_buffer.data = ctx.shm_pool[l:2*l]
-  ctx.back_buffer.offset = l
-  ctx.back_buffer.released = true
-
-  for i in 0..<l {
-    ctx.front_buffer.data[i] = 255
-    ctx.back_buffer.data[i] = 255
-  }
-
-  write(ctx, { wl.BoundNewId(ctx.front_buffer.id), wl.Int(ctx.front_buffer.offset), wl.Int(ctx.width), wl.Int(ctx.height), wl.Int(color_channels * ctx.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
-  write(ctx, { wl.BoundNewId(ctx.back_buffer.id), wl.Int(ctx.back_buffer.offset), wl.Int(ctx.width), wl.Int(ctx.height), wl.Int(color_channels * ctx.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
-
-  return true
+create_dma :: proc(ctx: ^WaylandContext) {
+    ctx.dma_feedback_id = get_id(ctx, "zwp_linux_dmabuf_feedback_v1", { new_callback("done", dma_done_callback), new_callback("format_table", dma_format_table_callback), new_callback("main_device", dma_main_device_callback), new_callback("tranche_done", dma_tranche_done_callback), new_callback("tranche_target_device", dma_tranche_target_device_callback), new_callback("tranche_formats", dma_tranche_formats_callback), new_callback("tranche_flags", dma_tranche_flags_callback), }, wl.DMA_INTERFACES[:])
+    write(ctx, { wl.BoundNewId(ctx.dma_feedback_id), wl.Object(ctx.surface_id) }, ctx.dma_id, ctx.dma_surface_feedback_opcode)
 }
 
 write :: proc(ctx: ^WaylandContext, arguments: []wl.Argument, object_id: u32, opcode: u32) {
   object := get_object(ctx, object_id)
   request := get_request(object, opcode)
+  fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
 
   start: = ctx.output_buffer.len
 
   vec_append_generic(&ctx.output_buffer, u32, object_id)
   vec_append_generic(&ctx.output_buffer, u16, u16(opcode))
   total_len := vec_reserve(&ctx.output_buffer, u16)
-  //fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
 
   for kind, i in request.arguments {
     #partial switch kind {
@@ -309,6 +400,7 @@ read :: proc(ctx: ^WaylandContext) -> bool {
       case .BoundNewId: if !read_and_write(ctx, wl.BoundNewId) do return false
       case .String: if !read_and_write_collection(ctx, wl.String, &bytes_len) do return false
       case .Array: if !read_and_write_collection(ctx, wl.Array, &bytes_len) do return false
+      case .Fd: if !read_fd_and_write(ctx, &bytes_len) do return false
       case: return false
     }
   }
@@ -316,7 +408,7 @@ read :: proc(ctx: ^WaylandContext) -> bool {
   if ctx.input_buffer.len - start != u32(size) do return false
 
   values := ctx.values.data[0:ctx.values.len]
-  //fmt.println("<-", object.interface.name, object_id, opcode, event.name, values)
+  fmt.println("<-", object.interface.name, size, object_id, opcode, event.name, values)
   object.callbacks[opcode](ctx, object_id, values)
 
   return true
@@ -326,6 +418,11 @@ read_and_write :: proc(ctx: ^WaylandContext, $T: typeid) -> bool {
   value := vec_read(&ctx.input_buffer, T) or_return
   vec_append(&ctx.values, value)
 
+  return true
+}
+
+read_fd_and_write :: proc(ctx: ^WaylandContext, length_ptr: ^u32) -> bool {
+  vec_append(&ctx.values, wl.Fd(ctx.last_fd))
   return true
 }
 
@@ -347,7 +444,42 @@ read_and_write_collection :: proc(ctx: ^WaylandContext, $T: typeid, length_ptr: 
 }
 
 recv :: proc(ctx: ^WaylandContext) {
-  count := posix.recv(ctx.socket, raw_data(ctx.input_buffer.data), 4096, { })
+  iovec := posix.iovec {
+    iov_base = raw_data(ctx.input_buffer.data),
+    iov_len = 4096,
+  }
+
+  t_size := size_of(posix.FD)
+  t_align := mem.align_formula(t_size, size_of(uint))
+  cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
+
+  buf := make([]u8, cmsg_align + t_align, ctx.tmp_allocator)
+
+  msg := posix.msghdr {
+    msg_iov = &iovec,
+    msg_iovlen = 1,
+    msg_control = raw_data(buf),
+    msg_controllen = len(buf)
+  }
+
+  count := posix.recvmsg(ctx.socket, &msg, { })
+  alig := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
+  ctx.last_fd = intrinsics.unaligned_load((^posix.FD)(raw_data(buf[alig:])))
+  fmt.println("reading first", ctx.last_fd)
+
+  //fmt.println("creating control buffer", len(buf))
+  //fmt.println("reading fd:", msg)
+
+  //header_ptr := ([^]posix.cmsghdr)(raw_data(buf))
+  //fmt.println("reading fd:", msg, header_ptr[0:2])
+  //cmsghdr := posix.CMSG_FIRSTHDR(&msg)
+  //if cmsghdr != nil {
+    //data := posix.CMSG_DATA(cmsghdr)
+    //fmt.println("reading second", intrinsics.unaligned_load((^posix.FD)(data)))
+  //}
+  //count := posix.recv(ctx.socket, raw_data(ctx.input_buffer.data), 4096, { })
+  //fmt.println("reading fd", ([^]u32)(raw_data(buf))[0:6])
+
   ctx.input_buffer.cap = u32(count)
   ctx.input_buffer.len = 0
 }
@@ -384,7 +516,6 @@ sendmsg :: proc(ctx: ^WaylandContext, $T: typeid, value: T) -> bool {
   cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
 
   buf := make([]u8, cmsg_align + t_align, ctx.tmp_allocator)
-  defer free(raw_data(buf))
 
   socket_msg := posix.msghdr {
     msg_name = nil,
@@ -397,9 +528,9 @@ sendmsg :: proc(ctx: ^WaylandContext, $T: typeid, value: T) -> bool {
   }
 
   cmsg := (^posix.cmsghdr)(socket_msg.msg_control)
-  cmsg.cmsg_level = posix.SOL_SOCKET
-  cmsg.cmsg_type = posix.SCM_RIGHTS
   cmsg.cmsg_len = uint(cmsg_align + t_size)
+  cmsg.cmsg_type = posix.SCM_RIGHTS
+  cmsg.cmsg_level = posix.SOL_SOCKET
 
   data := (^T)(&([^]posix.cmsghdr)(cmsg)[1])
   data^ = value
@@ -431,6 +562,10 @@ ctx_append :: proc(ctx: ^WaylandContext, callbacks: []CallbackConfig, interface:
 }
 
 get_object :: proc(ctx: ^WaylandContext, id: u32) -> InterfaceObject {
+  if len(ctx.objects.data) < int(id) {
+    panic("Cannot get object")
+  }
+
   return ctx.objects.data[id - 1]
 }
 
@@ -451,10 +586,17 @@ copy_id :: proc(ctx: ^WaylandContext, id: u32) -> u32 {
 }
 
 get_event :: proc(object: InterfaceObject, opcode: u32) -> ^wl.Event {
+  if len(object.interface.events) <= int(opcode) {
+    panic("Request out of bounds")
+  }
   return &object.interface.events[opcode]
 }
 
 get_request :: proc(object: InterfaceObject, opcode: u32) -> ^wl.Request {
+  if len(object.interface.requests) <= int(opcode) {
+    panic("Request out of bounds")
+  }
+
   return &object.interface.requests[opcode]
 }
 
@@ -593,35 +735,32 @@ global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument)
 
     write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.compositor_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
     create_surface(ctx)
+  case "zwp_linux_dmabuf_v1":
+    ctx.dma_id = get_id(ctx, interface_name, { new_callback("format", dma_format_callback), new_callback("modifier", dma_modifier_callback) }  , wl.DMA_INTERFACES[:])
+    ctx.dma_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_id)
+    ctx.dma_create_param_opcode = get_request_opcode(ctx, "create_params", ctx.dma_id)
+    ctx.dma_surface_feedback_opcode = get_request_opcode(ctx, "get_surface_feedback", ctx.dma_id)
+
+    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.dma_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
+    //create_dma(ctx)
+
+    fmt.println("creaating dmabuf interface")
   }
 }
 
 global_remove_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
 
+dma_modifier_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  fmt.println("modifiers", arguments)
+}
+
+dma_format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  fmt.println("format", arguments)
+}
+
 configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  if !ctx.front_buffer.released {
-    write(ctx, { arguments[0] }, id, ctx.ack_configure_opcode)
-    return
-  }
-
-  if !ctx.front_buffer.update {
-    defer ctx.front_buffer.update = true
-
-    write(ctx, {}, ctx.front_buffer.id, ctx.destroy_buffer_opcode)
-
-    write(ctx, { wl.BoundNewId(ctx.front_buffer.id), wl.Int(ctx.front_buffer.offset), wl.Int(ctx.width), wl.Int(ctx.height), wl.Int(4 * ctx.width), wl.Uint(ctx.format) }, ctx.shm_pool_id, ctx.create_buffer_opcode)
-
-    write_image(ctx.vk, ctx.width, ctx.height, ctx.front_buffer.data)
-  }
-
-  ctx.front_buffer.released = false
-
   write(ctx, { arguments[0] }, id, ctx.ack_configure_opcode)
-  write(ctx, { wl.Object(ctx.front_buffer.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
-  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
-
-  ctx.front_buffer, ctx.back_buffer = ctx.back_buffer, ctx.front_buffer
 }
 
 ping_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
@@ -634,16 +773,7 @@ toplevel_configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []
 
   if width == 0 || height == 0 do return
   if width == ctx.width && height == ctx.height do return
-
-  ctx.width = width
-  ctx.height = height
-
-  ctx.front_buffer.update = false
-  ctx.back_buffer.update = false
-
-  if !resize_renderer(ctx.vk, width, height) do panic("failed to resize renderer")
-
-  ctx.resize = true
+  resize(ctx, width, height)
 }
 
 toplevel_close_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {
@@ -657,7 +787,7 @@ toplevel_wm_capabilities_callback :: proc(ctx: ^WaylandContext, id: u32, arugmen
 }
 
 buffer_release_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  ctx.front_buffer.released = true
+  ctx.dma_buf.released = true
 }
 
 enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
@@ -671,6 +801,80 @@ preferred_buffer_scale_callback :: proc(ctx: ^WaylandContext, id: u32, arguments
 
 preferred_buffer_transform_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
+
+dma_format_table_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  fd := posix.FD(arguments[0].(wl.Fd))
+  size := u32(arguments[1].(wl.Uint))
+
+  buf := ([^]u8)(posix.mmap(nil, uint(size), { .READ }, { .PRIVATE }, fd, 0))[0:size]
+
+  if buf == nil do return
+
+  format_size: u32 = size_of(u32)
+  modifier_size: u32 = size_of(u64)
+  tuple_size := u32(mem.align_formula(int(format_size + modifier_size), int(modifier_size)))
+
+  count := size / tuple_size
+  for i in 0..<count {
+    offset := u32(i) * tuple_size
+
+    format := intrinsics.unaligned_load((^u32)(raw_data(buf[offset:][0:format_size])))
+    modifier := intrinsics.unaligned_load((^u64)(raw_data(buf[offset + modifier_size:][0:modifier_size])))
+
+    mod := Modifier {
+      format = format,
+      modifier = modifier
+    }
+
+    vec_append(&ctx.modifiers, mod)
+  }
+}
+
+dma_main_device_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  ctx.dma_main_device = intrinsics.unaligned_load((^u64)(raw_data(arguments[0].(wl.Array))))
+}
+
+dma_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+dma_tranche_target_device_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+dma_tranche_formats_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  array := arguments[0].(wl.Array)
+  indices := ([^]u16)(raw_data(array))[0:len(array) / 2]
+
+  l: u32 = 0
+  modifiers := ctx.modifiers
+  ctx.modifiers.len = 0
+
+  for i in indices {
+    vec_append(&ctx.modifiers, modifiers.data[i])
+  }
+}
+
+dma_tranche_flags_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+
+dma_tranche_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  ctx.dma_params_id = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback)}, wl.DMA_INTERFACES[:])
+  ctx.dma_params_create_opcode = get_request_opcode(ctx, "create", ctx.dma_params_id)
+  ctx.dma_params_add_opcode = get_request_opcode(ctx, "add", ctx.dma_params_id)
+  ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id)
+
+  ctx.dma_buf.id = get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
+
+  write(ctx, { wl.BoundNewId(ctx.dma_params_id) }, ctx.dma_id, ctx.dma_create_param_opcode)
+
+  for layout, i in ctx.vk.plane_layouts {
+    modifier_hi := (ctx.vk.modifier.drmFormatModifier & 0xFFFFFFFF00000000) >> 32
+    modifier_lo := ctx.vk.modifier.drmFormatModifier & 0x00000000FFFFFFFF
+
+    write(ctx, { wl.Fd(-1), wl.Uint(i), wl.Uint(layout.offset), wl.Uint(layout.rowPitch), wl.Uint(modifier_hi), wl.Uint(modifier_lo) }, ctx.dma_params_id, ctx.dma_params_add_opcode)
+    if !sendmsg(ctx, posix.FD, posix.FD(ctx.vk.fd)) do panic("Failed to put drm fd into the socket")
+  }
+
+  format := drm_format(ctx.vk.format)
+  write(ctx, { wl.Int(ctx.width), wl.Int(ctx.height), wl.Uint(format), wl.Uint(0) }, ctx.dma_params_id,ctx.dma_params_create_opcode)
+}
+
+param_created_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) { }
+param_failed_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) { }
 
 delete_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
 }
