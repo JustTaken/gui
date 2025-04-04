@@ -6,6 +6,7 @@ import "base:runtime"
 import "core:os"
 import "core:mem"
 import "core:fmt"
+import "core:sys/posix"
 
 library: dynlib.Library
 
@@ -60,7 +61,7 @@ VulkanContext :: struct {
   plane_layouts: []vk.SubresourceLayout,
   modifiers: []vk.DrmFormatModifierPropertiesEXT,
   modifier: vk.DrmFormatModifierPropertiesEXT,
-  fd: i32,
+  fds: []i32,
 
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
@@ -130,6 +131,10 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
 }
 
 deinit_vulkan :: proc(ctx: ^VulkanContext) {
+  for fd in ctx.fds {
+    posix.close(posix.FD(fd))
+  }
+
   vk.DestroyBuffer(ctx.device, ctx.uniform_buffer, nil)
   vk.FreeMemory(ctx.device, ctx.uniform_buffer_memory, nil)
   vk.DestroyBuffer(ctx.device, ctx.vertex_buffer, nil)
@@ -223,28 +228,22 @@ init_frame :: proc(ctx: ^VulkanContext) -> bool {
     handleType = { .DMA_BUF_EXT },
   }
 
-  if vk.GetMemoryFdKHR(ctx.device, &memory_info, &ctx.fd) != .SUCCESS do return false
+  for fd in ctx.fds {
+    posix.close(posix.FD(fd))
+  }
 
-  return true
-}
+  ctx.fds = make([]i32, ctx.modifier.drmFormatModifierPlaneCount, ctx.allocator)
 
-resize_renderer :: proc(ctx: ^VulkanContext, width: u32, height: u32) -> bool {
-  ctx.width = width
-  ctx.height = height
+  for &fd in ctx.fds {
+    if vk.GetMemoryFdKHR(ctx.device, &memory_info, &fd) != .SUCCESS do return false
+  }
 
-  vk.DestroyFramebuffer(ctx.device, ctx.framebuffer, nil)
-  vk.DestroyImageView(ctx.device, ctx.image_view, nil)
-  vk.FreeMemory(ctx.device, ctx.memory, nil)
-  vk.DestroyImage(ctx.device, ctx.image, nil)
-
-  init_frame(ctx) or_return
-  draw(ctx) or_return
+  fmt.println("fds", ctx.fds)
 
   return true
 }
 
 draw :: proc(ctx: ^VulkanContext) -> bool {
-  fmt.println("DRAWING")
   cmd := ctx.command_buffers[0]
 
   vertex_buffers := [?]vk.Buffer{ ctx.vertex_buffer }
@@ -318,6 +317,24 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
   vk.ResetFences(ctx.device, 1, &ctx.fence)
   if vk.QueueSubmit(ctx.queues[0], 1, &submit_info, ctx.fence) != .SUCCESS do return false
   if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
+
+  fmt.println("DRAWING")
+  write_image(ctx) or_return
+
+  return true
+}
+
+resize_renderer :: proc(ctx: ^VulkanContext, width: u32, height: u32) -> bool {
+  ctx.width = width
+  ctx.height = height
+
+  vk.DestroyFramebuffer(ctx.device, ctx.framebuffer, nil)
+  vk.DestroyImageView(ctx.device, ctx.image_view, nil)
+  vk.FreeMemory(ctx.device, ctx.memory, nil)
+  vk.DestroyImage(ctx.device, ctx.image, nil)
+
+  init_frame(ctx) or_return
+  draw(ctx) or_return
 
   return true
 }
@@ -942,10 +959,10 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format)
 }
 
 @(private="file")
-write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) -> bool {
+write_image :: proc(ctx: ^VulkanContext) -> bool {
   cmd := ctx.command_buffers[0]
 
-  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, width, height) or_return
+  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, ctx.width, ctx.height) or_return
   defer vk.DestroyImage(ctx.device, out_image, nil)
 
   out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image, nil) or_return
@@ -995,15 +1012,15 @@ write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) 
   dstOffset: vk.Offset3D
   extent := vk.Extent3D { width = ctx.width, height = ctx.height, depth = 1 }
 
-  if ctx.width > width {
-    srcOffset.x = i32(ctx.width - width)
-    extent.width = width - u32(srcOffset.x)
-  }
-
-  if ctx.height > height {
-    srcOffset.y = i32(ctx.height - height)
-    extent.height = height - u32(srcOffset.y)
-  }
+//  if ctx.width > width {
+//    srcOffset.x = i32(ctx.width - width)
+//    extent.width = width - u32(srcOffset.x)
+//  }
+//
+//  if ctx.height > height {
+//    srcOffset.y = i32(ctx.height - height)
+//    extent.height = height - u32(srcOffset.y)
+//  }
 
   copy_info := vk.ImageCopy {
     srcSubresource = resource,
@@ -1042,36 +1059,36 @@ write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) 
   vk.MapMemory(ctx.device, out_memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, (^rawptr)(&out))
   defer vk.UnmapMemory(ctx.device, out_memory)
 
-  fmt.println("WRITING IMAGE", width, height, ctx.width, ctx.height)
-  for i in 0..<ctx.height {
-    copy(buffer[i * width * 4:], out[i * u32(layout.rowPitch):][0:ctx.width * 4])
-  }
+ // fmt.println("WRITING IMAGE", width, height, ctx.width, ctx.height)
+ // for i in 0..<ctx.height {
+ //   copy(buffer[i * width * 4:], out[i * u32(layout.rowPitch):][0:ctx.width * 4])
+ // }
 
-//  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
-//  defer mem.end_arena_temp_memory(mark)
-//
-//  file_output: []u8
-//  err: mem.Allocator_Error
-//
-//  if file_output, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
-//  if file_output == nil do return false
-//
-//  header := fmt.bprintf(file_output, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
-//  count := u32(len(header))
-//
-//  for i in 0..<ctx.height {
-//    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
-//
-//    for j in 0..<ctx.width {
-//      off := out[line + j * size_of(u32):]
-//      cont := fmt.bprintf(file_output[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
-//      count += u32(len(cont))
-//    }
-//  }
-// 
-//  if !os.write_entire_file("assets/out.ppm", file_output[0:count]) do return false
-// 
-//  fmt.println("wrote to file assets/out.ppm")
+  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
+  defer mem.end_arena_temp_memory(mark)
+
+  file_output: []u8
+  err: mem.Allocator_Error
+
+  if file_output, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
+  if file_output == nil do return false
+
+  header := fmt.bprintf(file_output, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
+  count := u32(len(header))
+
+  for i in 0..<ctx.height {
+    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
+
+    for j in 0..<ctx.width {
+      off := out[line + j * size_of(u32):]
+      cont := fmt.bprintf(file_output[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
+      count += u32(len(cont))
+    }
+  }
+ 
+  if !os.write_entire_file("assets/out.ppm", file_output[0:count]) do return false
+ 
+  fmt.println("wrote to file assets/out.ppm")
 
   return true
 }

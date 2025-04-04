@@ -36,6 +36,7 @@ Buffer :: struct {
   height: u32,
   update: bool,
   released: bool,
+  bound: bool,
 }
 
 Modifier :: struct {
@@ -73,6 +74,7 @@ WaylandContext :: struct {
   create_surface_opcode: u32,
   surface_attach_opcode: u32,
   surface_commit_opcode: u32,
+  surface_damage_opcode: u32,
   ack_configure_opcode: u32,
   get_xdg_surface_opcode: u32,
   get_toplevel_opcode: u32,
@@ -81,7 +83,8 @@ WaylandContext :: struct {
   dma_destroy_opcode: u32,
   dma_create_param_opcode: u32,
   dma_surface_feedback_opcode: u32,
-  dma_params_create_opcode: u32,
+  dma_feedback_destroy_opcode: u32,
+  dma_params_create_immed_opcode: u32,
   dma_params_add_opcode: u32,
   dma_params_destroy_opcode: u32,
 
@@ -91,7 +94,6 @@ WaylandContext :: struct {
 
   last_fd: posix.FD,
 
-  dma_buf_id: u32,
   dma_buf: Buffer,
 
   width: u32,
@@ -199,17 +201,7 @@ render :: proc(ctx: ^WaylandContext) -> bool {
   time.sleep(time.Millisecond * 30)
 
   roundtrip(ctx) or_return
-
-  if !ctx.dma_buf.released do return true
-  if !ctx.dma_buf.update {
-    create_dma_buf(ctx)
-    //write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
-    return true
-  }
-
-  ctx.dma_buf.released = false
-  write(ctx, { wl.Object(ctx.dma_buf.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
-  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
+  send(ctx) or_return
 
   return true
 }
@@ -227,6 +219,7 @@ create_surface :: proc(ctx: ^WaylandContext) {
   ctx.surface_id = get_id(ctx, "wl_surface", { new_callback("enter", enter_callback), new_callback("leave", leave_callback), new_callback("preferred_buffer_scale", preferred_buffer_scale_callback), new_callback("preferred_buffer_transform", preferred_buffer_transform_callback) }, wl.WAYLAND_INTERFACES[:])
   ctx.surface_attach_opcode = get_request_opcode(ctx, "attach", ctx.surface_id)
   ctx.surface_commit_opcode = get_request_opcode(ctx, "commit", ctx.surface_id)
+  ctx.surface_damage_opcode = get_request_opcode(ctx, "damage", ctx.surface_id)
 
   write(ctx, { wl.BoundNewId(ctx.surface_id) }, ctx.compositor_id, ctx.create_surface_opcode)
   create_dma(ctx)
@@ -248,13 +241,22 @@ create_xdg_surface :: proc(ctx: ^WaylandContext) {
 @(private="file")
 create_dma :: proc(ctx: ^WaylandContext) {
     ctx.dma_feedback_id = get_id(ctx, "zwp_linux_dmabuf_feedback_v1", { new_callback("done", dma_done_callback), new_callback("format_table", dma_format_table_callback), new_callback("main_device", dma_main_device_callback), new_callback("tranche_done", dma_tranche_done_callback), new_callback("tranche_target_device", dma_tranche_target_device_callback), new_callback("tranche_formats", dma_tranche_formats_callback), new_callback("tranche_flags", dma_tranche_flags_callback), }, wl.DMA_INTERFACES[:])
+    ctx.dma_feedback_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_feedback_id)
     write(ctx, { wl.BoundNewId(ctx.dma_feedback_id), wl.Object(ctx.surface_id) }, ctx.dma_id, ctx.dma_surface_feedback_opcode)
 }
 
 @(private="file")
 create_dma_buf :: proc(ctx: ^WaylandContext) {
-  defer ctx.dma_buf.update = true
+  if !ctx.dma_buf.released do return
+
   defer ctx.dma_buf.released = false
+  defer ctx.dma_buf.bound = true
+
+  if ctx.dma_buf.bound do write(ctx, { }, ctx.dma_buf.id, ctx.destroy_buffer_opcode)
+
+  if ctx.dma_buf.width != ctx.width || ctx.dma_buf.height != ctx.height {
+    resize_renderer(ctx.vk, ctx.width, ctx.height)
+  }
 
   write(ctx, { wl.BoundNewId(ctx.dma_params_id) }, ctx.dma_id, ctx.dma_create_param_opcode)
 
@@ -262,14 +264,20 @@ create_dma_buf :: proc(ctx: ^WaylandContext) {
     modifier_hi := (ctx.vk.modifier.drmFormatModifier & 0xFFFFFFFF00000000) >> 32
     modifier_lo := ctx.vk.modifier.drmFormatModifier & 0x00000000FFFFFFFF
 
-    write(ctx, { wl.Fd(ctx.vk.fd), wl.Uint(i), wl.Uint(layout.offset), wl.Uint(layout.rowPitch), wl.Uint(modifier_hi), wl.Uint(modifier_lo) }, ctx.dma_params_id, ctx.dma_params_add_opcode)
+    write(ctx, { wl.Fd(ctx.vk.fds[i]), wl.Uint(i), wl.Uint(layout.offset), wl.Uint(layout.rowPitch), wl.Uint(modifier_hi), wl.Uint(modifier_lo) }, ctx.dma_params_id, ctx.dma_params_add_opcode)
   }
 
   ctx.dma_buf.width = ctx.width
   ctx.dma_buf.height = ctx.height
 
   format := drm_format(ctx.vk.format)
-  write(ctx, { wl.Int(ctx.width), wl.Int(ctx.height), wl.Uint(format), wl.Uint(0) }, ctx.dma_params_id, ctx.dma_params_create_opcode)
+
+  write(ctx, { wl.BoundNewId(ctx.dma_buf.id), wl.Int(ctx.width), wl.Int(ctx.height), wl.Uint(format), wl.Uint(0) }, ctx.dma_params_id, ctx.dma_params_create_immed_opcode)
+  write(ctx, { }, ctx.dma_params_id, ctx.dma_params_destroy_opcode)
+
+  write(ctx, { wl.Object(ctx.dma_buf.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
+  write(ctx, { wl.Int(0), wl.Int(0), wl.Int(ctx.width), wl.Int(ctx.height) }, ctx.surface_id, ctx.surface_damage_opcode)
+  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
 }
 
 @(private="file")
@@ -469,7 +477,7 @@ ctx_append :: proc(ctx: ^WaylandContext, callbacks: []CallbackConfig, interface:
 @(private="file")
 get_object :: proc(ctx: ^WaylandContext, id: u32) -> InterfaceObject {
   if len(ctx.objects.data) < int(id) {
-    return ctx.objects.data[ctx.dma_buf_id - 1]
+    panic("OBject out of bounds")
   }
 
   return ctx.objects.data[id - 1]
@@ -540,6 +548,192 @@ new_callback :: proc(name: string, callback: Callback) -> CallbackConfig {
     name = name,
     function = callback,
   }
+}
+
+@(private="file")
+format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  format := u32(arguments[0].(wl.Uint))
+
+  if format != 0 do return
+
+  ctx.format = format
+}
+
+@(private="file")
+global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  str := arguments[1].(wl.String)
+  version := arguments[2].(wl.Uint)
+  interface_name := string(str[0:len(str) - 1])
+
+  switch interface_name {
+  case "xdg_wm_base":
+    ctx.xdg_wm_base_id = get_id(ctx, interface_name, { new_callback("ping", ping_callback) }, wl.XDG_INTERFACES[:])
+    ctx.pong_opcode = get_request_opcode(ctx, "pong", ctx.xdg_wm_base_id)
+    ctx.get_xdg_surface_opcode = get_request_opcode(ctx, "get_xdg_surface", ctx.xdg_wm_base_id)
+
+    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.xdg_wm_base_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
+    create_xdg_surface(ctx)
+  case "wl_compositor":
+    ctx.compositor_id = get_id( ctx, interface_name, { } , wl.WAYLAND_INTERFACES[:])
+    ctx.create_surface_opcode = get_request_opcode(ctx, "create_surface", ctx.compositor_id)
+
+    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.compositor_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
+    create_surface(ctx)
+  case "zwp_linux_dmabuf_v1":
+    ctx.dma_id = get_id(ctx, interface_name, { new_callback("format", dma_format_callback), new_callback("modifier", dma_modifier_callback) }  , wl.DMA_INTERFACES[:])
+    ctx.dma_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_id)
+    ctx.dma_create_param_opcode = get_request_opcode(ctx, "create_params", ctx.dma_id)
+    ctx.dma_surface_feedback_opcode = get_request_opcode(ctx, "get_surface_feedback", ctx.dma_id)
+
+    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.dma_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
+  }
+}
+
+@(private="file")
+global_remove_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+
+@(private="file")
+dma_modifier_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+@(private="file")
+dma_format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+
+@(private="file")
+configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  write(ctx, { arguments[0] }, id, ctx.ack_configure_opcode)
+  create_dma_buf(ctx)
+}
+
+@(private="file")
+ping_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  write(ctx, { arguments[0] }, ctx.xdg_wm_base_id, ctx.pong_opcode)
+}
+
+@(private="file")
+toplevel_configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  width := u32(arguments[0].(wl.Int))
+  height := u32(arguments[1].(wl.Int))
+
+  if width == 0 || height == 0 do return
+  if width == ctx.width && height == ctx.height do return
+
+  resize(ctx, width, height)
+}
+
+@(private="file")
+toplevel_close_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {
+  ctx.running = false
+}
+
+@(private="file")
+toplevel_configure_bounds_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {}
+@(private="file")
+toplevel_wm_capabilities_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {}
+
+@(private="file")
+buffer_release_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  ctx.dma_buf.released = true
+
+  create_dma_buf(ctx)
+}
+
+@(private="file")
+enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+@(private="file")
+leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+@(private="file")
+preferred_buffer_scale_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+@(private="file")
+preferred_buffer_transform_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+
+@(private="file")
+dma_format_table_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  fd := posix.FD(arguments[0].(wl.Fd))
+  size := u32(arguments[1].(wl.Uint))
+
+  buf := ([^]u8)(posix.mmap(nil, uint(size), { .READ }, { .PRIVATE }, fd, 0))[0:size]
+
+  if buf == nil do return
+
+  format_size: u32 = size_of(u32)
+  modifier_size: u32 = size_of(u64)
+  tuple_size := u32(mem.align_formula(int(format_size + modifier_size), int(modifier_size)))
+
+  count := size / tuple_size
+  for i in 0..<count {
+    offset := u32(i) * tuple_size
+
+    format := intrinsics.unaligned_load((^u32)(raw_data(buf[offset:][0:format_size])))
+    modifier := intrinsics.unaligned_load((^u64)(raw_data(buf[offset + modifier_size:][0:modifier_size])))
+
+    mod := Modifier {
+      format = format,
+      modifier = modifier
+    }
+
+    vec_append(&ctx.modifiers, mod)
+  }
+}
+
+@(private="file")
+dma_main_device_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  ctx.dma_main_device = intrinsics.unaligned_load((^u64)(raw_data(arguments[0].(wl.Array))))
+}
+
+@(private="file")
+dma_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  write(ctx, {}, id, ctx.dma_feedback_destroy_opcode)
+}
+
+@(private="file")
+dma_tranche_target_device_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+@(private="file")
+dma_tranche_flags_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+@(private="file")
+dma_tranche_formats_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  array := arguments[0].(wl.Array)
+  indices := ([^]u16)(raw_data(array))[0:len(array) / 2]
+
+  l: u32 = 0
+  modifiers := ctx.modifiers
+  ctx.modifiers.len = 0
+
+  for i in indices {
+    vec_append(&ctx.modifiers, modifiers.data[i])
+  }
+}
+
+@(private="file")
+dma_tranche_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  ctx.dma_params_id = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback)}, wl.DMA_INTERFACES[:])
+  ctx.dma_params_create_immed_opcode = get_request_opcode(ctx, "create_immed", ctx.dma_params_id)
+  ctx.dma_params_add_opcode = get_request_opcode(ctx, "add", ctx.dma_params_id)
+  ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id)
+
+  ctx.dma_buf.id = get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
+  ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", ctx.dma_buf.id)
+  ctx.dma_buf.released = true
+}
+
+@(private="file")
+param_created_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) { 
+  //ctx.dma_buf.released = true
+  //ctx.dma_buf.id = u32(arguments[0].(wl.BoundNewId))
+
+  //write(ctx, { wl.Object(ctx.dma_buf.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
+  //write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
+  //write(ctx, { }, ctx.dma_params_id, ctx.dma_params_destroy_opcode)
+}
+
+@(private="file")
+param_failed_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) { 
+  panic("Failed to create dma buf server side")
+}
+
+@(private="file")
+delete_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+@(private="file")
+error_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+  fmt.println("error:", string(arguments[2].(wl.String)))
 }
 
 @(private="file")
@@ -622,185 +816,5 @@ vec_reserve :: proc(vec: ^Vector(u8), $T: typeid) -> ^T {
 
   defer vec.len += size_of(T)
   return (^T)(raw_data(vec.data[vec.len:]))
-}
-
-@(private="file")
-format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  format := u32(arguments[0].(wl.Uint))
-
-  if format != 0 do return
-
-  ctx.format = format
-}
-
-@(private="file")
-global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  str := arguments[1].(wl.String)
-  version := arguments[2].(wl.Uint)
-  interface_name := string(str[0:len(str) - 1])
-
-  switch interface_name {
-  case "xdg_wm_base":
-    ctx.xdg_wm_base_id = get_id(ctx, interface_name, { new_callback("ping", ping_callback) }, wl.XDG_INTERFACES[:])
-    ctx.pong_opcode = get_request_opcode(ctx, "pong", ctx.xdg_wm_base_id)
-    ctx.get_xdg_surface_opcode = get_request_opcode(ctx, "get_xdg_surface", ctx.xdg_wm_base_id)
-
-    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.xdg_wm_base_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
-    create_xdg_surface(ctx)
-  case "wl_compositor":
-    ctx.compositor_id = get_id( ctx, interface_name, { } , wl.WAYLAND_INTERFACES[:])
-    ctx.create_surface_opcode = get_request_opcode(ctx, "create_surface", ctx.compositor_id)
-
-    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.compositor_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
-    create_surface(ctx)
-  case "zwp_linux_dmabuf_v1":
-    ctx.dma_id = get_id(ctx, interface_name, { new_callback("format", dma_format_callback), new_callback("modifier", dma_modifier_callback) }  , wl.DMA_INTERFACES[:])
-    ctx.dma_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_id)
-    ctx.dma_create_param_opcode = get_request_opcode(ctx, "create_params", ctx.dma_id)
-    ctx.dma_surface_feedback_opcode = get_request_opcode(ctx, "get_surface_feedback", ctx.dma_id)
-
-    write(ctx, { arguments[0], wl.UnBoundNewId{ id = wl.BoundNewId(ctx.dma_id), interface = str, version = version }}, ctx.registry_id, ctx.registry_bind_opcode)
-  }
-}
-
-@(private="file")
-global_remove_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-
-@(private="file")
-dma_modifier_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-dma_format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-
-@(private="file")
-configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  write(ctx, { arguments[0] }, id, ctx.ack_configure_opcode)
-}
-
-@(private="file")
-ping_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  write(ctx, { arguments[0] }, ctx.xdg_wm_base_id, ctx.pong_opcode)
-}
-
-@(private="file")
-toplevel_configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  width := u32(arguments[0].(wl.Int))
-  height := u32(arguments[1].(wl.Int))
-
-  if width == 0 || height == 0 do return
-  if width == ctx.width && height == ctx.height do return
-
-  resize(ctx, width, height)
-}
-
-@(private="file")
-toplevel_close_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {
-  ctx.running = false
-}
-
-@(private="file")
-toplevel_configure_bounds_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {}
-@(private="file")
-toplevel_wm_capabilities_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {}
-
-@(private="file")
-buffer_release_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  ctx.dma_buf.released = true
-  resize_renderer(ctx.vk, ctx.width, ctx.height)
-}
-
-@(private="file")
-enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-preferred_buffer_scale_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-preferred_buffer_transform_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-
-@(private="file")
-dma_format_table_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  fd := posix.FD(arguments[0].(wl.Fd))
-  size := u32(arguments[1].(wl.Uint))
-
-  buf := ([^]u8)(posix.mmap(nil, uint(size), { .READ }, { .PRIVATE }, fd, 0))[0:size]
-
-  if buf == nil do return
-
-  format_size: u32 = size_of(u32)
-  modifier_size: u32 = size_of(u64)
-  tuple_size := u32(mem.align_formula(int(format_size + modifier_size), int(modifier_size)))
-
-  count := size / tuple_size
-  for i in 0..<count {
-    offset := u32(i) * tuple_size
-
-    format := intrinsics.unaligned_load((^u32)(raw_data(buf[offset:][0:format_size])))
-    modifier := intrinsics.unaligned_load((^u64)(raw_data(buf[offset + modifier_size:][0:modifier_size])))
-
-    mod := Modifier {
-      format = format,
-      modifier = modifier
-    }
-
-    vec_append(&ctx.modifiers, mod)
-  }
-}
-
-@(private="file")
-dma_main_device_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  ctx.dma_main_device = intrinsics.unaligned_load((^u64)(raw_data(arguments[0].(wl.Array))))
-}
-
-@(private="file")
-dma_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-dma_tranche_target_device_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-dma_tranche_flags_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-dma_tranche_formats_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  array := arguments[0].(wl.Array)
-  indices := ([^]u16)(raw_data(array))[0:len(array) / 2]
-
-  l: u32 = 0
-  modifiers := ctx.modifiers
-  ctx.modifiers.len = 0
-
-  for i in indices {
-    vec_append(&ctx.modifiers, modifiers.data[i])
-  }
-}
-
-@(private="file")
-dma_tranche_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  ctx.dma_params_id = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback)}, wl.DMA_INTERFACES[:])
-  ctx.dma_params_create_opcode = get_request_opcode(ctx, "create", ctx.dma_params_id)
-  ctx.dma_params_add_opcode = get_request_opcode(ctx, "add", ctx.dma_params_id)
-  ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id)
-
-  ctx.dma_buf_id = get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
-  create_dma_buf(ctx)
-}
-
-@(private="file")
-param_created_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) { 
-  ctx.dma_buf.released = true
-  ctx.dma_buf.id = u32(arguments[0].(wl.BoundNewId))
-
-  write(ctx, { wl.Object(ctx.dma_buf.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
-  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
-  write(ctx, { }, ctx.dma_params_id, ctx.dma_params_destroy_opcode)
-}
-
-@(private="file")
-param_failed_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) { 
-  panic("Failed to create dma buf server side")
-}
-
-@(private="file")
-delete_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
-@(private="file")
-error_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  fmt.println("error:", string(arguments[2].(wl.String)))
 }
 
