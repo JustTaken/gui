@@ -156,6 +156,7 @@ deinit_vulkan :: proc(ctx: ^VulkanContext) {
    _ = dynlib.unload_library(library)
 }
 
+@(private="file")
 init_frame :: proc(ctx: ^VulkanContext) -> bool {
   modifiers := make([]u64, len(ctx.modifiers))
 
@@ -216,13 +217,6 @@ init_frame :: proc(ctx: ^VulkanContext) -> bool {
     vk.GetImageSubresourceLayout(ctx.device, ctx.image, &image_resource, &ctx.plane_layouts[i])
   }
 
-//MemoryGetFdInfoKHR :: struct {
-//	sType:      StructureType,
-//	pNext:      rawptr,
-//	memory:     DeviceMemory,
-//	handleType: ExternalMemoryHandleTypeFlags,
-//}
-
   memory_info := vk.MemoryGetFdInfoKHR {
     sType = .MEMORY_GET_FD_INFO_KHR,
     memory = ctx.memory,
@@ -250,6 +244,7 @@ resize_renderer :: proc(ctx: ^VulkanContext, width: u32, height: u32) -> bool {
 }
 
 draw :: proc(ctx: ^VulkanContext) -> bool {
+  fmt.println("DRAWING")
   cmd := ctx.command_buffers[0]
 
   vertex_buffers := [?]vk.Buffer{ ctx.vertex_buffer }
@@ -327,6 +322,7 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
   return true
 }
 
+@(private="file")
 create_instance :: proc(allocator: runtime.Allocator) -> (vk.Instance, bool) {
   instance: vk.Instance
   err: mem.Allocator_Error
@@ -368,6 +364,7 @@ create_instance :: proc(allocator: runtime.Allocator) -> (vk.Instance, bool) {
   return instance, true
 }
 
+@(private="file")
 create_device :: proc(physical_device: vk.PhysicalDevice, indices: []u32, allocator: runtime.Allocator) -> (vk.Device, bool) {
   queue_priority := f32(1.0)
 
@@ -414,6 +411,7 @@ create_device :: proc(physical_device: vk.PhysicalDevice, indices: []u32, alloca
   return device, true
 }
 
+@(private="file")
 create_set_layouts :: proc(device: vk.Device, allocator: runtime.Allocator) -> ([]vk.DescriptorSetLayout, bool) {
   set_layouts: []vk.DescriptorSetLayout = make([]vk.DescriptorSetLayout, 1, allocator)
 
@@ -441,6 +439,7 @@ create_set_layouts :: proc(device: vk.Device, allocator: runtime.Allocator) -> (
   return set_layouts, true
 }
 
+@(private="file")
 create_layout :: proc(device: vk.Device, set_layouts: []vk.DescriptorSetLayout) -> (vk.PipelineLayout, bool) {
   layout_info := vk.PipelineLayoutCreateInfo {
     sType = .PIPELINE_LAYOUT_CREATE_INFO,
@@ -454,6 +453,7 @@ create_layout :: proc(device: vk.Device, set_layouts: []vk.DescriptorSetLayout) 
   return layout, true
 }
 
+@(private="file")
 create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32, allocator: runtime.Allocator) -> (pipeline: vk.Pipeline, ok: bool) {
   vert_module := create_shader_module(device, "assets/output/vert.spv", allocator) or_return
   defer vk.DestroyShaderModule(device, vert_module, nil)
@@ -622,6 +622,7 @@ create_pipeline :: proc(device: vk.Device, layout: vk.PipelineLayout, render_pas
   return pipeline, true
 }
 
+@(private="file")
 create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPass, bool) {
   render_pass_attachments := [?]vk.AttachmentDescription {
     {
@@ -679,6 +680,7 @@ create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPa
   return render_pass, true
 }
 
+@(private="file")
 get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format, allocator: runtime.Allocator) -> []vk.DrmFormatModifierPropertiesEXT {
   l: u32 = 0
   render_features: vk.FormatFeatureFlags = { .COLOR_ATTACHMENT, .COLOR_ATTACHMENT_BLEND }
@@ -756,6 +758,7 @@ get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format,
   return modifiers[0:l]
 }
 
+@(private="file")
 check_physical_device_ext_support :: proc(physical_device: vk.PhysicalDevice, allocator: runtime.Allocator) -> bool {
   count: u32
   available_extensions: []vk.ExtensionProperties
@@ -776,6 +779,7 @@ check_physical_device_ext_support :: proc(physical_device: vk.PhysicalDevice, al
   return true
 }
 
+@(private="file")
 find_physical_device :: proc(instance: vk.Instance, allocator: runtime.Allocator) -> (vk.PhysicalDevice, bool) {
   physical_device: vk.PhysicalDevice
 
@@ -816,6 +820,7 @@ find_physical_device :: proc(instance: vk.Instance, allocator: runtime.Allocator
   return physical_device, true
 }
 
+@(private="file")
 create_queues :: proc(device: vk.Device, queue_indices: []u32, allocator: runtime.Allocator) -> ([]vk.Queue, bool) {
   queues: []vk.Queue
   err: mem.Allocator_Error
@@ -828,6 +833,7 @@ create_queues :: proc(device: vk.Device, queue_indices: []u32, allocator: runtim
   return queues, true
 }
 
+@(private="file")
 find_queue_indices :: proc(physical_device: vk.PhysicalDevice, allocator: runtime.Allocator) -> ([2]u32, bool) {
   MAX: u32 = 0xFF
   indices := [2]u32{ MAX, MAX}
@@ -852,6 +858,7 @@ find_queue_indices :: proc(physical_device: vk.PhysicalDevice, allocator: runtim
   return indices, true
 }
 
+@(private="file")
 create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, pNext: rawptr, width: u32, height: u32) -> (image: vk.Image, ok: bool) {
 
   info := vk.ImageCreateInfo {
@@ -883,6 +890,7 @@ create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, t
   return image, true
 }
 
+@(private="file")
 create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, image: vk.Image, pNext: rawptr) -> (memory: vk.DeviceMemory, ok: bool) {
   requirements: vk.MemoryRequirements
   vk.GetImageMemoryRequirements(device, image, &requirements)
@@ -901,6 +909,7 @@ create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevic
   return memory, true
 }
 
+@(private="file")
 create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format) -> (vk.ImageView, bool) {
   components := vk.ComponentMapping {
     r = .R,
@@ -932,6 +941,7 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format)
   return view, true
 }
 
+@(private="file")
 write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) -> bool {
   cmd := ctx.command_buffers[0]
 
@@ -1066,6 +1076,7 @@ write_image :: proc(ctx: ^VulkanContext, width: u32, height: u32, buffer: []u8) 
   return true
 }
 
+@(private="file")
 create_framebuffer :: proc(device: vk.Device, render_pass: vk.RenderPass, view: ^vk.ImageView, width: u32, height: u32) -> (vk.Framebuffer, bool) {
   info := vk.FramebufferCreateInfo {
     sType = .FRAMEBUFFER_CREATE_INFO,
@@ -1083,6 +1094,7 @@ create_framebuffer :: proc(device: vk.Device, render_pass: vk.RenderPass, view: 
   return buffer, true
 }
 
+@(private="file")
 create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandPool, bool) {
   pool_info: vk.CommandPoolCreateInfo
   pool_info.sType = .COMMAND_POOL_CREATE_INFO
@@ -1095,6 +1107,7 @@ create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandP
   return command_pool, true
 }
 
+@(private="file")
 allocate_command_buffers :: proc(device: vk.Device, command_pool: vk.CommandPool, count: u32, allocator: runtime.Allocator) -> ([]vk.CommandBuffer, bool) {
   alloc_info: vk.CommandBufferAllocateInfo
   alloc_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
@@ -1110,6 +1123,7 @@ allocate_command_buffers :: proc(device: vk.Device, command_pool: vk.CommandPool
   return command_buffers, true
 }
 
+@(private="file")
 create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, bool) {
   sizes := [?]vk.DescriptorPoolSize {
     {
@@ -1130,6 +1144,7 @@ create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, bool) {
   return pool, true
 }
 
+@(private="file")
 allocate_descriptor_sets :: proc(device: vk.Device, layouts: []vk.DescriptorSetLayout, pool: vk.DescriptorPool, buffer: vk.Buffer, binding: u32, allocator: runtime.Allocator) -> ([]vk.DescriptorSet, bool) {
   count := u32(len(layouts))
   info := vk.DescriptorSetAllocateInfo {
@@ -1168,6 +1183,7 @@ allocate_descriptor_sets :: proc(device: vk.Device, layouts: []vk.DescriptorSetL
   return sets, true
 }
 
+@(private="file")
 create_fence :: proc(device: vk.Device) -> (vk.Fence, bool) {
   info := vk.FenceCreateInfo {
     sType = .FENCE_CREATE_INFO,
@@ -1180,6 +1196,7 @@ create_fence :: proc(device: vk.Device) -> (vk.Fence, bool) {
   return fence, true
 }
 
+@(private="file")
 create_semaphore :: proc(device: vk.Device) -> (vk.Semaphore, bool) {
   info := vk.SemaphoreCreateInfo {
     sType = .SEMAPHORE_CREATE_INFO,
@@ -1190,6 +1207,7 @@ create_semaphore :: proc(device: vk.Device) -> (vk.Semaphore, bool) {
   return semaphore, true
 }
 
+@(private="file")
 create_shader_module :: proc(device: vk.Device, path: string, allocator: runtime.Allocator) -> (vk.ShaderModule, bool) {
   module: vk.ShaderModule
 
@@ -1221,6 +1239,7 @@ create_shader_module :: proc(device: vk.Device, path: string, allocator: runtime
   return module, true
 }
 
+@(private="file")
 find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, bool) {
   mem_properties: vk.PhysicalDeviceMemoryProperties
   vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
@@ -1232,6 +1251,7 @@ find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, p
   return 0, false
 }
 
+@(private="file")
 create_buffer :: proc(device: vk.Device, size: vk.DeviceSize, usage: vk.BufferUsageFlags) -> (vk.Buffer, bool) {
   buf_info := vk.BufferCreateInfo {
     sType = .BUFFER_CREATE_INFO,
@@ -1248,6 +1268,7 @@ create_buffer :: proc(device: vk.Device, size: vk.DeviceSize, usage: vk.BufferUs
   return buffer, true
 }
 
+@(private="file")
 create_buffer_memory :: proc(device: vk.Device , physical_device: vk.PhysicalDevice, buffer: vk.Buffer, properties: vk.MemoryPropertyFlags) -> (memory: vk.DeviceMemory, ok: bool) {
   requirements: vk.MemoryRequirements
   vk.GetBufferMemoryRequirements(device, buffer, &requirements)
@@ -1266,6 +1287,7 @@ create_buffer_memory :: proc(device: vk.Device , physical_device: vk.PhysicalDev
   return memory, true
 }
 
+@(private="file")
 copy_data :: proc($T: typeid, device: vk.Device, memory: vk.DeviceMemory, data: []T) {
   out: [^]T
 

@@ -28,7 +28,5 @@ main :: proc() {
   //if !draw(&vk) do panic("Failed to draw frame")
   if !init_wayland(&wl, width, height, &vk, &arena, &tmp_arena) do panic("Failed to initialize wayland")
 
-  //for render(&wl) { 
-    //send(&wl)
-  //}
+  for render(&wl) {}
 }
