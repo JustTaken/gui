@@ -247,7 +247,8 @@ create_dma :: proc(ctx: ^WaylandContext) {
 
 @(private="file")
 create_dma_buf :: proc(ctx: ^WaylandContext) {
-  if !ctx.dma_buf.released do return
+  if ctx.dma_buf.width == ctx.width && ctx.dma_buf.height == ctx.height && !ctx.dma_buf.released do return
+  fmt.println("CREATING BUFFER")
 
   defer ctx.dma_buf.released = false
   defer ctx.dma_buf.bound = true
@@ -420,7 +421,7 @@ insert_fd :: proc(ctx: ^WaylandContext, fd: wl.Fd) {
 @(private="file")
 send :: proc(ctx: ^WaylandContext) -> bool {
   if ctx.output_buffer.len == 0 {
-    return false
+    return true
   }
 
   io := posix.iovec {

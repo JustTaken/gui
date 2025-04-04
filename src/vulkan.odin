@@ -20,6 +20,13 @@ DEVICE_EXTENSIONS := [?]cstring{
   "VK_EXT_image_drm_format_modifier",
 }
 
+PLANE_INDICES := [?]vk.ImageAspectFlag {
+  .MEMORY_PLANE_0_EXT,
+  .MEMORY_PLANE_1_EXT,
+  .MEMORY_PLANE_2_EXT,
+  .MEMORY_PLANE_3_EXT,
+}
+
 Vertex :: struct {
   position: [2]f32,
 }
@@ -205,21 +212,15 @@ init_frame :: proc(ctx: ^VulkanContext) -> bool {
     }
   }
 
-  plane_indices := [?]vk.ImageAspectFlag {
-    .MEMORY_PLANE_0_EXT,
-    .MEMORY_PLANE_1_EXT,
-    .MEMORY_PLANE_2_EXT,
-    .MEMORY_PLANE_3_EXT,
-  }
-
   ctx.plane_layouts = make([]vk.SubresourceLayout, ctx.modifier.drmFormatModifierPlaneCount, ctx.allocator)
 
   for i in 0..<ctx.modifier.drmFormatModifierPlaneCount {
     image_resource := vk.ImageSubresource {
-      aspectMask = { plane_indices[i] },
+      aspectMask = { PLANE_INDICES[i] },
     }
 
     vk.GetImageSubresourceLayout(ctx.device, ctx.image, &image_resource, &ctx.plane_layouts[i])
+    ctx.plane_layouts[i].size = 0
   }
 
   memory_info := vk.MemoryGetFdInfoKHR {
@@ -319,7 +320,7 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
   if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
 
   fmt.println("DRAWING")
-  write_image(ctx) or_return
+  //import_image(ctx) or_return
 
   return true
 }
@@ -768,6 +769,9 @@ get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format,
     if vk.GetPhysicalDeviceImageFormatProperties2(physical_device, &image_info, &image_properties) != .SUCCESS do continue
     if emp.externalMemoryFeatures < { .IMPORTABLE, .EXPORTABLE } do continue
 
+    //if modifier_properties.drmFormatModifierPlaneCount > 1 do continue
+
+    //fmt.println("appending:", modifier_properties)
     modifiers[l] = modifier_properties
     l += 1
   }
@@ -959,7 +963,7 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format)
 }
 
 @(private="file")
-write_image :: proc(ctx: ^VulkanContext) -> bool {
+write_image :: proc(ctx: ^VulkanContext, image: vk.Image) -> bool {
   cmd := ctx.command_buffers[0]
 
   out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, ctx.width, ctx.height) or_return
@@ -1033,7 +1037,7 @@ write_image :: proc(ctx: ^VulkanContext) -> bool {
   if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return false
 
   vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_1_info)
-  vk.CmdCopyImage(cmd, ctx.image, .TRANSFER_SRC_OPTIMAL, out_image, .TRANSFER_DST_OPTIMAL, 1, &copy_info)
+  vk.CmdCopyImage(cmd, image, .TRANSFER_SRC_OPTIMAL, out_image, .TRANSFER_DST_OPTIMAL, 1, &copy_info)
   vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_2_info)
 
   if vk.EndCommandBuffer(cmd) != .SUCCESS do return false
@@ -1317,7 +1321,7 @@ copy_data :: proc($T: typeid, device: vk.Device, memory: vk.DeviceMemory, data: 
 drm_format :: proc(format: vk.Format) -> u32 {
   #partial switch format {
   case .B8G8R8A8_SRGB:
-    return (u32(u8('B')) << 24) | (u32(u8('A')) << 16) | (u32(u8('2')) << 8) | u32(u8('4'))
+    return (u32(u8('X'))) | (u32(u8('R')) << 8) | (u32(u8('2')) << 16) | (u32(u8('4')) << 24)
   }
 
   return 0
@@ -1327,3 +1331,110 @@ load_fn :: proc(ptr: rawptr, name: cstring) {
     (cast(^rawptr)ptr)^ = dynlib.symbol_address(library, string(name))
 }
 
+import_image :: proc(ctx: ^VulkanContext) -> bool {
+  plane_count := ctx.modifier.drmFormatModifierPlaneCount
+  modifier := ctx.modifier.drmFormatModifier
+
+  extent := vk.Extent3D {
+    width = ctx.width,
+    height = ctx.height,
+    depth = 1,
+  }
+
+  mod_info := vk.ImageDrmFormatModifierExplicitCreateInfoEXT {
+    sType = .IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
+    drmFormatModifierPlaneCount = plane_count,
+    drmFormatModifier = modifier,
+    pPlaneLayouts = &ctx.plane_layouts[0],
+  }
+
+  ext_info := vk.ExternalMemoryImageCreateInfo {
+    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+    pNext = &mod_info,
+    handleTypes = { .DMA_BUF_EXT },
+  }
+
+  image_info := vk.ImageCreateInfo {
+    sType = .IMAGE_CREATE_INFO,
+    pNext = &ext_info,
+    imageType = .D2,
+    format = ctx.format,
+    tiling = .DRM_FORMAT_MODIFIER_EXT,
+    mipLevels = 1,
+    arrayLayers = 1,
+    samples = { ._1 },
+    sharingMode = .EXCLUSIVE,
+    initialLayout = .UNDEFINED,
+    extent = extent,
+    usage = { .COLOR_ATTACHMENT, .TRANSFER_SRC }
+  }
+
+  image: vk.Image
+  if vk.CreateImage(ctx.device, &image_info, nil, &image) != .SUCCESS do return false
+  defer vk.DestroyImage(ctx.device, image, nil)
+
+  bind_info := make([]vk.BindImageMemoryInfo, plane_count, ctx.tmp_allocator)
+  bind_plane_info := make([]vk.BindImagePlaneMemoryInfo, plane_count, ctx.tmp_allocator)
+
+  fd_properties := vk.MemoryFdPropertiesKHR {
+    sType = .MEMORY_FD_PROPERTIES_KHR,
+  }
+
+  mems := make([]vk.DeviceMemory, plane_count, ctx.allocator)
+
+  for i in 0..<plane_count {
+    if vk.GetMemoryFdPropertiesKHR(ctx.device, { .DMA_BUF_EXT }, ctx.fds[i], &fd_properties) != .SUCCESS do return false
+    requirements_info := vk.ImageMemoryRequirementsInfo2 {
+      sType = .IMAGE_MEMORY_REQUIREMENTS_INFO_2,
+      image = image,
+    }
+
+    requirements := vk.MemoryRequirements2 {
+      sType = .MEMORY_REQUIREMENTS_2,
+    }
+
+    vk.GetImageMemoryRequirements2(ctx.device, &requirements_info, &requirements)
+    dedicated_info := vk.MemoryDedicatedAllocateInfo {
+      sType = .MEMORY_DEDICATED_ALLOCATE_INFO,
+      image = image,
+    }
+
+    import_info := vk.ImportMemoryFdInfoKHR {
+      sType = .IMPORT_MEMORY_FD_INFO_KHR,
+      pNext = &dedicated_info,
+      fd = ctx.fds[i],
+      handleType = { .DMA_BUF_EXT },
+    }
+
+    allocate_info := vk.MemoryAllocateInfo {
+      sType = .MEMORY_ALLOCATE_INFO,
+      pNext = &import_info,
+      allocationSize = requirements.memoryRequirements.size,
+      memoryTypeIndex = find_memory_type(ctx.physical_device, requirements.memoryRequirements.memoryTypeBits & fd_properties.memoryTypeBits, {}) or_return
+    }
+
+    if vk.AllocateMemory(ctx.device, &allocate_info, nil, &mems[i]) != .SUCCESS do return false
+//      bind_plane_info[i] = vk.BindImagePlaneMemoryInfo {
+//        sType = .BIND_IMAGE_PLANE_MEMORY_INFO,
+//        planeAspect = { PLANE_INDICES[i] },
+//      }
+
+      bind_info[i] = vk.BindImageMemoryInfo {
+        sType = .BIND_IMAGE_MEMORY_INFO,
+//        pNext = &bind_plane_info[i],
+        memory = mems[i],
+        image = image,
+        memoryOffset = 0,
+      }
+  }
+
+  if vk.BindImageMemory2(ctx.device, plane_count, &bind_info[0]) != .SUCCESS do return false
+
+  write_image(ctx, image) or_return
+
+  for mem in mems {
+    vk.FreeMemory(ctx.device, mem, nil)
+  }
+
+  return true
+}
