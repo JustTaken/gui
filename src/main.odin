@@ -1,7 +1,8 @@
 package main
 
-import "core:fmt"
 import "core:mem"
+import "core:time"
+import "core:fmt"
 
 main :: proc() {
   bytes: []u8
@@ -24,9 +25,6 @@ main :: proc() {
   context.temp_allocator = mem.arena_allocator(&tmp_arena)
 
   if !init(&vk, &wl, width, height, frames, &arena, &tmp_arena) do panic("Failed to initialize")
-
-  geometries := make([]^Geometry, 10, context.allocator)
-  if !init_geometries(&vk, geometries) do panic("Failed to initialize geometries")
 
   loop(&vk, &wl, &arena, &tmp_arena)
 
@@ -53,18 +51,9 @@ init :: proc(vk: ^VulkanContext, wl: ^WaylandContext, width: u32, height: u32, f
   return true
 }
 
-loop :: proc(vk: ^VulkanContext, wl: ^WaylandContext, arena: ^mem.Arena, tmp_arena: ^mem.Arena) {
-  for wl.running { 
-    mark := mem.begin_arena_temp_memory(tmp_arena)
-    defer mem.end_arena_temp_memory(mark)
+loop :: proc(vk: ^VulkanContext, wl: ^WaylandContext, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
+  geometries := make([]^Geometry, 10, context.allocator)
 
-    if !render(wl) {
-      fmt.println("Failed to render frame")
-    }
-  }
-}
-
-init_geometries :: proc(vk: ^VulkanContext, geometries: []^Geometry) -> bool {
   triangle_vertices := [?]Vertex {
     { position = { -0.5, -0.5 } },
     { position = {  0.0,  0.5 } },
@@ -80,11 +69,48 @@ init_geometries :: proc(vk: ^VulkanContext, geometries: []^Geometry) -> bool {
     { position = {  0.5,  0.5 } },
   }
 
+  triangle_model := matrix[4, 4]f32 {
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  }
+
+  quad_model := matrix[4, 4]f32 {
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  }
+
   geometries[0] = add_geometry(vk, triangle_vertices[:], 1) or_return
   geometries[1] = add_geometry(vk, quad_vertices[:], 1) or_return
 
-  add_geometry_instance(vk, geometries[0], Vertex { position = {  0.5, 0 } }) or_return
-  add_geometry_instance(vk, geometries[1], Vertex { position = { -0.5, 0 } }) or_return
+  triangle_id := add_geometry_instance(vk, geometries[0], triangle_model) or_return
+  quad_id := add_geometry_instance(vk, geometries[1], quad_model) or_return
+
+  i: i32 = 0
+
+  for wl.running { 
+    mark := mem.begin_arena_temp_memory(tmp_arena)
+    defer mem.end_arena_temp_memory(mark)
+
+    //instant := time.tick_now()._nsec
+
+    f := f32((i % 200) - 100) / 100
+    triangle_model[0, 3] = f
+    triangle_model[1, 3] = f
+
+    //fmt.println("dif:", dif)
+
+    update_geometry_instance(vk, geometries[0], triangle_id, triangle_model) or_return
+
+    if !render(wl) {
+      fmt.println("Failed to render frame")
+    }
+
+    i += 1
+  }
 
   return true
 }

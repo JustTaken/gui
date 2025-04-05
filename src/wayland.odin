@@ -98,17 +98,12 @@ WaylandContext :: struct {
 
   dma_main_device: u64,
 
-  format: u32,
-
+  buffers: []Buffer,
   buffer: ^Buffer,
-  buffer_count: u32,
 
   width: u32,
   height: u32,
   running: bool,
-
-  resizing: bool,
-  last_resize: time.Tick,
 
   vk: ^VulkanContext,
 
@@ -167,17 +162,18 @@ init_wayland :: proc(ctx: ^WaylandContext, vk: ^VulkanContext, width: u32, heigh
   ctx.out_fds_len = 0
   ctx.in_fds = make([]wl.Fd, 10, ctx.allocator)
   ctx.in_fds_len = 0
+  ctx.in_fd_index = 0
 
   ctx.input_buffer.cap = 0
   ctx.width = width
   ctx.height = height
   ctx.running = true
-  ctx.buffer_count = frame_count
-  ctx.buffer = new(Buffer, ctx.allocator)
+  ctx.buffers = make([]Buffer, frame_count, ctx.allocator)
+  ctx.buffer = &ctx.buffers[0]
 
   buffer := ctx.buffer
-  for i in 0..<frame_count - 1 {
-    buffer.next = new(Buffer, ctx.allocator)
+  for i in 1..<frame_count {
+    buffer.next = &ctx.buffers[i]
     buffer = buffer.next
   }
 
@@ -205,13 +201,11 @@ deinit_wayland :: proc(ctx: ^WaylandContext) {
 }
 
 render :: proc(ctx: ^WaylandContext) -> bool {
-  time.sleep(time.Millisecond * 30)
+  time.sleep(time.Millisecond * 60)
 
   roundtrip(ctx)
 
-  if ctx.width != ctx.buffer.width || ctx.height != ctx.buffer.height {
-    buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
-  }
+  buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
 
   send(ctx) or_return
 
@@ -293,24 +287,17 @@ init_buffers :: proc(ctx: ^WaylandContext) -> bool {
   base_id := get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
   ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", base_id)
 
-  ctx.buffer.id = base_id
-  ctx.buffer.frame = get_frame(ctx.vk, ctx.buffer.id - base_id)
-  ctx.buffer.released = true
-  ctx.buffer.bound = false
-  ctx.buffer.width = 0
-  ctx.buffer.height = 0
+  ctx.buffers[0].id = base_id
+  for i in 0..<len(ctx.buffers) {
+    buffer := &ctx.buffers[i]
 
-  buffer := ctx.buffer.next
+    if i != 0 do buffer.id = copy_id(ctx, ctx.buffer.id)
 
-  for i in 0..<ctx.buffer_count - 1 {
-    buffer.id = copy_id(ctx, ctx.buffer.id)
     buffer.frame = get_frame(ctx.vk, buffer.id - base_id)
     buffer.released = true
     buffer.bound = false
     buffer.width = 0
     buffer.height = 0
-
-    buffer = buffer.next
   }
 
   return true
@@ -343,7 +330,7 @@ create_buffer :: proc(ctx: ^WaylandContext, buffer: ^Buffer, width: u32, height:
 write :: proc(ctx: ^WaylandContext, arguments: []wl.Argument, object_id: u32, opcode: u32) {
   object := get_object(ctx, object_id)
   request := get_request(object, opcode)
-  fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
+  //fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
 
   start: = ctx.output_buffer.len
 
@@ -405,7 +392,7 @@ read :: proc(ctx: ^WaylandContext) -> bool {
   if ctx.input_buffer.len - start != u32(size) do return false
 
   values := ctx.values.data[0:ctx.values.len]
-  fmt.println("<-", object.interface.name, size, object_id, opcode, event.name, values)
+  //fmt.println("<-", object.interface.name, size, object_id, opcode, event.name, values)
   object.callbacks[opcode](ctx, object_id, values)
 
   return true
@@ -619,15 +606,6 @@ new_callback :: proc(name: string, callback: Callback) -> CallbackConfig {
 }
 
 @(private="file")
-format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  format := u32(arguments[0].(wl.Uint))
-
-  if format != 0 do return
-
-  ctx.format = format
-}
-
-@(private="file")
 global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
   str := arguments[1].(wl.String)
   version := arguments[2].(wl.Uint)
@@ -668,11 +646,6 @@ dma_format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argum
 @(private="file")
 configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
   write(ctx, { arguments[0] }, id, ctx.ack_configure_opcode)
-//  buf := get_front_buffer(ctx)
-
-//  if buf.width != ctx.width || buf.height != ctx.height {
-//    if buffer_write_swap(ctx, buf, ctx.width, ctx.height) do fmt.println("Failed to set wl bufer")
-//  }
 }
 
 @(private="file")
@@ -703,16 +676,7 @@ toplevel_wm_capabilities_callback :: proc(ctx: ^WaylandContext, id: u32, arugmen
 
 @(private="file")
 buffer_release_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-  buffer := ctx.buffer
-
-  for i in 0..<ctx.buffer_count {
-    if buffer.id == id {
-      buffer.released = true
-      return
-    }
-
-    buffer = buffer.next
-  }
+  ctx.buffers[id - ctx.buffers[0].id].released = true
 }
 
 @(private="file")
