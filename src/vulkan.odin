@@ -31,10 +31,18 @@ Vertex :: struct {
   position: [2]f32,
 }
 
+Geometry :: struct {
+  vertex: vk.Buffer,
+  memory: vk.DeviceMemory,
+  instance_offset: u32,
+  instance_count: u32,
+  count: u32,
+}
+
 Frame :: struct {
   fd: i32,
-  modifier: vk.DrmFormatModifierPropertiesEXT,
   planes: []vk.SubresourceLayout,
+  modifier: vk.DrmFormatModifierPropertiesEXT,
   image: vk.Image,
   memory: vk.DeviceMemory,
   view: vk.ImageView,
@@ -56,14 +64,16 @@ VulkanContext :: struct {
   command_pool: vk.CommandPool,
   command_buffers: []vk.CommandBuffer,
 
-  uniform_buffer: vk.Buffer,
-  uniform_buffer_memory: vk.DeviceMemory,
+  storage_buffer: vk.Buffer,
+  storage_buffer_memory: vk.DeviceMemory,
+
   descriptor_pool: vk.DescriptorPool,
   descriptor_sets: []vk.DescriptorSet,
   frames: []Frame,
 
-  vertex_buffer: vk.Buffer,
-  vertex_buffer_memory: vk.DeviceMemory,
+  geometries: []Geometry,
+  geometries_len: u32,
+  max_instances: u32,
 
   fence: vk.Fence,
   semaphore: vk.Semaphore,
@@ -96,11 +106,9 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, frame_count: u
   ctx.queue_indices = find_queue_indices(ctx.physical_device, ctx.tmp_allocator) or_return
   ctx.device = create_device(ctx.physical_device, ctx.queue_indices[:], ctx.tmp_allocator) or_return
   ctx.render_pass = create_render_pass(ctx.device, ctx.format) or_return
-  ctx.set_layouts = create_set_layouts(ctx.device, ctx.allocator) or_return
-  ctx.uniform_buffer = create_buffer(ctx.device, size_of([3]f32), { .UNIFORM_BUFFER }) or_return
-  ctx.uniform_buffer_memory = create_buffer_memory(ctx.device, ctx.physical_device, ctx.uniform_buffer, { .HOST_COHERENT, .HOST_VISIBLE }) or_return
   ctx.descriptor_pool = create_descriptor_pool(ctx.device) or_return
-  ctx.descriptor_sets = allocate_descriptor_sets(ctx.device, ctx.set_layouts, ctx.descriptor_pool, ctx.uniform_buffer, 0, ctx.allocator) or_return
+  ctx.set_layouts = create_set_layouts(ctx.device, ctx.allocator) or_return
+  ctx.descriptor_sets = allocate_descriptor_sets(ctx.device, ctx.set_layouts, ctx.descriptor_pool, ctx.allocator) or_return
   ctx.layout = create_layout(ctx.device, ctx.set_layouts) or_return
   ctx.pipeline = create_pipeline(ctx.device, ctx.layout, ctx.render_pass, width, height, ctx.tmp_allocator) or_return
   ctx.queues = create_queues(ctx.device, ctx.queue_indices[:], ctx.allocator) or_return
@@ -110,18 +118,20 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, frame_count: u
   ctx.semaphore = create_semaphore(ctx.device) or_return
 
   create_frames(ctx, frame_count, width, height) or_return
-  create_buffers(ctx) or_return
+  create_geometries(ctx) or_return
 
   return true
 }
 
 deinit_vulkan :: proc(ctx: ^VulkanContext) {
-  vk.DestroyBuffer(ctx.device, ctx.uniform_buffer, nil)
-  vk.FreeMemory(ctx.device, ctx.uniform_buffer_memory, nil)
-  vk.DestroyBuffer(ctx.device, ctx.vertex_buffer, nil)
-  vk.FreeMemory(ctx.device, ctx.vertex_buffer_memory, nil)
+  vk.DestroyBuffer(ctx.device, ctx.storage_buffer, nil)
+  vk.FreeMemory(ctx.device, ctx.storage_buffer_memory, nil)
   vk.DestroySemaphore(ctx.device, ctx.semaphore, nil)
   vk.DestroyFence(ctx.device, ctx.fence, nil)
+
+  for i in 0..<ctx.geometries_len {
+    destroy_geometry(ctx.device, &ctx.geometries[i])
+  }
 
   for &frame in ctx.frames {
     destroy_frame(ctx.device, &frame)
@@ -144,13 +154,27 @@ deinit_vulkan :: proc(ctx: ^VulkanContext) {
 }
 
 @(private="file")
+create_geometries :: proc(ctx: ^VulkanContext) -> bool {
+  ctx.geometries = make([]Geometry, 10, ctx.allocator)
+  ctx.geometries_len = 0
+  ctx.max_instances = 0
+
+  size := vk.DeviceSize(size_of(Vertex) * 20)
+
+  ctx.storage_buffer = create_buffer(ctx.device, size, { .STORAGE_BUFFER, .TRANSFER_DST }) or_return
+  ctx.storage_buffer_memory = create_buffer_memory(ctx.device, ctx.physical_device, ctx.storage_buffer, { .DEVICE_LOCAL }) or_return
+
+  return true
+}
+
+@(private="file")
 create_frames :: proc(ctx: ^VulkanContext, count: u32, width: u32, height: u32) -> bool {
   ctx.frames = make([]Frame, count, ctx.allocator)
 
   for i in 0..<count {
     frame := &ctx.frames[i]
-
     frame.planes = make([]vk.SubresourceLayout, 3, ctx.allocator)
+
     create_frame(ctx, frame, width, height) or_return
   }
 
@@ -244,38 +268,60 @@ destroy_frame :: proc(device: vk.Device, frame: ^Frame) {
   posix.close(posix.FD(frame.fd))
 }
 
-create_buffers :: proc(ctx: ^VulkanContext) -> bool {
-  vertices := [?]Vertex {
-    { position = { -1.0, -1.0 } },
-    { position = { -1.0, -0.5 } },
-    { position = { -0.5, -1.0 } },
+add_geometry :: proc(ctx: ^VulkanContext, vertices: []Vertex, max_instances: u32) -> (geometry: ^Geometry, ok: bool) {
+  geometry = &ctx.geometries[ctx.geometries_len]
 
-    { position = {  1.0, -1.0 } },
-    { position = {  0.0, 1.0 } },
-    { position = {  1.0, 1.0 } },
-  }
+  size := vk.DeviceSize(size_of(Vertex) * len(vertices))
 
-  staging_buffer := create_buffer(ctx.device, size_of(Vertex) * len(vertices), { .TRANSFER_SRC }) or_return
+  staging_buffer := create_buffer(ctx.device, size, { .TRANSFER_SRC }) or_return
   defer vk.DestroyBuffer(ctx.device, staging_buffer, nil)
+
   staging_memory := create_buffer_memory(ctx.device, ctx.physical_device, staging_buffer, { .HOST_COHERENT, .HOST_VISIBLE }) or_return
   defer vk.FreeMemory(ctx.device, staging_memory, nil)
 
   copy_data(Vertex, ctx.device, staging_memory, vertices[:])
 
-  ctx.vertex_buffer = create_buffer(ctx.device, size_of(Vertex) * len(vertices), { .VERTEX_BUFFER, .TRANSFER_DST }) or_return
-  ctx.vertex_buffer_memory = create_buffer_memory(ctx.device, ctx.physical_device, ctx.vertex_buffer, { .DEVICE_LOCAL }) or_return
+  geometry.vertex = create_buffer(ctx.device, size, { .VERTEX_BUFFER, .TRANSFER_DST }) or_return
+  geometry.memory = create_buffer_memory(ctx.device, ctx.physical_device, geometry.vertex, { .DEVICE_LOCAL }) or_return
 
-  copy_buffer(ctx, &ctx.command_buffers[0], ctx.vertex_buffer, staging_buffer, size_of(Vertex) * len(vertices)) or_return
+  copy_buffer(ctx, &ctx.command_buffers[0], geometry.vertex, staging_buffer, size, 0) or_return
+
+  geometry.instance_offset = ctx.max_instances
+  geometry.instance_count = 0
+  geometry.count = u32(len(vertices))
+  ctx.max_instances += max_instances
+
+  ctx.geometries_len += 1
+
+  return geometry, true
+}
+
+add_geometry_instance :: proc(ctx: ^VulkanContext, geometry: ^Geometry, position: Vertex) -> bool {
+  staging_buffer := create_buffer(ctx.device, size_of(Vertex), { .TRANSFER_SRC }) or_return
+  defer vk.DestroyBuffer(ctx.device, staging_buffer, nil)
+
+  staging_memory := create_buffer_memory(ctx.device, ctx.physical_device, staging_buffer, { .HOST_COHERENT, .HOST_VISIBLE }) or_return
+  defer vk.FreeMemory(ctx.device, staging_memory, nil)
+
+  vertices := [?]Vertex{ position }
+
+  copy_data(Vertex, ctx.device, staging_memory, vertices[:])
+  copy_buffer(ctx, &ctx.command_buffers[0], ctx.storage_buffer, staging_buffer, size_of(Vertex), vk.DeviceSize(geometry.instance_offset + geometry.instance_count) * size_of(Vertex)) or_return
+
+  update_descriptor_set(ctx.device, ctx.descriptor_sets[0], ctx.storage_buffer, 0, .STORAGE_BUFFER, vk.DeviceSize(ctx.max_instances * size_of(Vertex)))
+
+  geometry.instance_count += 1
 
   return true
+}
 
+destroy_geometry :: proc(device: vk.Device, geometry: ^Geometry) {
+  vk.DestroyBuffer(device, geometry.vertex, nil)
+  vk.FreeMemory(device, geometry.memory, nil)
 }
 
 draw :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> (^Frame, bool) {
   cmd := ctx.command_buffers[0]
-
-  vertex_buffers := [?]vk.Buffer{ ctx.vertex_buffer }
-  vertex_offsets := [?]vk.DeviceSize{ 0 * size_of(Vertex) }
 
   area := vk.Rect2D {
     offset = vk.Offset2D {
@@ -324,9 +370,18 @@ draw :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> (^F
   vk.CmdBindPipeline(cmd, .GRAPHICS, ctx.pipeline)
   vk.CmdSetViewport(cmd, 0, 1, &viewport)
   vk.CmdSetScissor(cmd, 0, 1, &area)
-  vk.CmdBindVertexBuffers(cmd, 0, u32(len(vertex_buffers)), &vertex_buffers[0], &vertex_offsets[0])
-  //vk.CmdBindDescriptorSets(cmd, .GRAPHICS, ctx.layout, 0, u32(len(ctx.descriptor_sets)), &ctx.descriptor_sets[0], 0, nil)
-  vk.CmdDraw(cmd, 6, 1, 0, 0)
+  vk.CmdBindDescriptorSets(cmd, .GRAPHICS, ctx.layout, 0, u32(len(ctx.descriptor_sets)), &ctx.descriptor_sets[0], 0, nil)
+
+  for i in 0..<ctx.geometries_len {
+    geometry := &ctx.geometries[i]
+
+    if geometry.instance_count == 0 do continue
+
+    offset := vk.DeviceSize(0)
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &geometry.vertex, &offset)
+    vk.CmdDraw(cmd, geometry.count, geometry.instance_count, 0, geometry.instance_offset)
+  }
+
   vk.CmdEndRenderPass(cmd)
 
   if vk.EndCommandBuffer(cmd) != .SUCCESS do return frame, false
@@ -449,13 +504,11 @@ create_device :: proc(physical_device: vk.PhysicalDevice, indices: []u32, alloca
 
 @(private="file")
 create_set_layouts :: proc(device: vk.Device, allocator: runtime.Allocator) -> ([]vk.DescriptorSetLayout, bool) {
-  set_layouts: []vk.DescriptorSetLayout = make([]vk.DescriptorSetLayout, 1, allocator)
-
   set_layout_bindings := [?]vk.DescriptorSetLayoutBinding {
     {
       binding = 0,
       stageFlags = { .VERTEX },
-      descriptorType = .UNIFORM_BUFFER,
+      descriptorType = .STORAGE_BUFFER,
       descriptorCount = 1,
     }
   }
@@ -468,6 +521,7 @@ create_set_layouts :: proc(device: vk.Device, allocator: runtime.Allocator) -> (
     }
   }
 
+  set_layouts: []vk.DescriptorSetLayout = make([]vk.DescriptorSetLayout, 1, allocator)
   for i in 0..<len(set_layouts) {
     if vk.CreateDescriptorSetLayout(device, &set_layout_infos[i], nil, &set_layouts[i]) != .SUCCESS do return set_layouts, false
   }
@@ -1028,8 +1082,9 @@ allocate_command_buffers :: proc(device: vk.Device, command_pool: vk.CommandPool
 create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, bool) {
   sizes := [?]vk.DescriptorPoolSize {
     {
-      type = .UNIFORM_BUFFER,
-      descriptorCount = 10, }
+      type = .STORAGE_BUFFER,
+      descriptorCount = 10, 
+    }
   }
 
   info := vk.DescriptorPoolCreateInfo {
@@ -1046,42 +1101,41 @@ create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, bool) {
 }
 
 @(private="file")
-allocate_descriptor_sets :: proc(device: vk.Device, layouts: []vk.DescriptorSetLayout, pool: vk.DescriptorPool, buffer: vk.Buffer, binding: u32, allocator: runtime.Allocator) -> ([]vk.DescriptorSet, bool) {
-  count := u32(len(layouts))
+allocate_descriptor_sets :: proc(device: vk.Device, layouts: []vk.DescriptorSetLayout, pool: vk.DescriptorPool, allocator: runtime.Allocator) -> ([]vk.DescriptorSet, bool) {
   info := vk.DescriptorSetAllocateInfo {
     sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
     descriptorPool = pool,
-    descriptorSetCount = count,
+    descriptorSetCount = u32(len(layouts)),
     pSetLayouts = &layouts[0],
   }
 
-  sets: []vk.DescriptorSet
-  err: mem.Allocator_Error
-
-  if sets, err = make([]vk.DescriptorSet, count, allocator); err != nil do return sets, false
+  sets := make([]vk.DescriptorSet, len(layouts), allocator)
   if vk.AllocateDescriptorSets(device, &info, &sets[0]) != .SUCCESS do return sets, false
 
+  return sets, true
+}
+
+@(private="file")
+update_descriptor_set :: proc(device: vk.Device, set: vk.DescriptorSet, buffer: vk.Buffer, binding: u32, kind: vk.DescriptorType, size: vk.DeviceSize) {
   buffer_info := vk.DescriptorBufferInfo {
-    buffer = buffer,
     offset = 0,
-    range = size_of(Vertex),
+    buffer = buffer,
+    range = size,
   }
 
   writes := [?]vk.WriteDescriptorSet {
     {
       sType = .WRITE_DESCRIPTOR_SET,
-      dstSet = sets[0],
+      dstSet = set,
       dstBinding = binding,
       dstArrayElement = 0,
       descriptorCount = 1,
-      descriptorType = .UNIFORM_BUFFER,
+      descriptorType = kind,
       pBufferInfo = &buffer_info,
     }
   }
 
   vk.UpdateDescriptorSets(device, u32(len(writes)), &writes[0], 0, nil)
-
-  return sets, true
 }
 
 @(private="file")
@@ -1189,11 +1243,11 @@ create_buffer_memory :: proc(device: vk.Device , physical_device: vk.PhysicalDev
 }
 
 @(private="file")
-copy_buffer :: proc(ctx: ^VulkanContext, command_buffer: [^]vk.CommandBuffer, dst_buffer: vk.Buffer, src_buffer: vk.Buffer, size: u32) -> bool {
+copy_buffer :: proc(ctx: ^VulkanContext, command_buffer: [^]vk.CommandBuffer, dst_buffer: vk.Buffer, src_buffer: vk.Buffer, size: vk.DeviceSize, dst_offset: vk.DeviceSize) -> bool {
   copy_info := vk.BufferCopy {
     srcOffset = 0,
-    dstOffset = 0,
-    size = vk.DeviceSize(size),
+    dstOffset = dst_offset,
+    size = size,
   }
 
   begin_info := vk.CommandBufferBeginInfo {
