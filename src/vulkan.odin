@@ -31,6 +31,18 @@ Vertex :: struct {
   position: [2]f32,
 }
 
+Frame :: struct {
+  fd: i32,
+  modifier: vk.DrmFormatModifierPropertiesEXT,
+  planes: []vk.SubresourceLayout,
+  image: vk.Image,
+  memory: vk.DeviceMemory,
+  view: vk.ImageView,
+  buffer: vk.Framebuffer,
+  width: u32,
+  height: u32, 
+}
+
 VulkanContext :: struct {
   instance: vk.Instance,
   device: vk.Device,
@@ -48,12 +60,7 @@ VulkanContext :: struct {
   uniform_buffer_memory: vk.DeviceMemory,
   descriptor_pool: vk.DescriptorPool,
   descriptor_sets: []vk.DescriptorSet,
-
-  image: vk.Image,
-  memory: vk.DeviceMemory,
-  image_view: vk.ImageView,
-
-  framebuffer: vk.Framebuffer,
+  frames: []Frame,
 
   vertex_buffer: vk.Buffer,
   vertex_buffer_memory: vk.DeviceMemory,
@@ -61,14 +68,8 @@ VulkanContext :: struct {
   fence: vk.Fence,
   semaphore: vk.Semaphore,
 
-  width: u32,
-  height: u32,
   format: vk.Format,
-
-  plane_layouts: []vk.SubresourceLayout,
   modifiers: []vk.DrmFormatModifierPropertiesEXT,
-  modifier: vk.DrmFormatModifierPropertiesEXT,
-  fds: []i32,
 
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
@@ -91,8 +92,6 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
   ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
   ctx.format = .B8G8R8A8_SRGB 
-  ctx.width = width
-  ctx.height = height
 
   mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
   defer mem.end_arena_temp_memory(mark)
@@ -109,12 +108,12 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
   ctx.descriptor_pool = create_descriptor_pool(ctx.device) or_return
   ctx.descriptor_sets = allocate_descriptor_sets(ctx.device, ctx.set_layouts, ctx.descriptor_pool, ctx.uniform_buffer, 0, ctx.allocator) or_return
   ctx.layout = create_layout(ctx.device, ctx.set_layouts) or_return
-  ctx.pipeline = create_pipeline(ctx.device, ctx.layout, ctx.render_pass, ctx.width, ctx.height, ctx.tmp_allocator) or_return
+  ctx.pipeline = create_pipeline(ctx.device, ctx.layout, ctx.render_pass, width, height, ctx.tmp_allocator) or_return
   ctx.queues = create_queues(ctx.device, ctx.queue_indices[:], ctx.allocator) or_return
   ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
   ctx.command_buffers = allocate_command_buffers(ctx.device, ctx.command_pool, 1, ctx.allocator) or_return
 
-  init_frame(ctx) or_return
+  create_frames(ctx, 2, width, height) or_return
 
   ctx.fence = create_fence(ctx.device) or_return
   ctx.semaphore = create_semaphore(ctx.device) or_return
@@ -138,20 +137,17 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
 }
 
 deinit_vulkan :: proc(ctx: ^VulkanContext) {
-  for fd in ctx.fds {
-    posix.close(posix.FD(fd))
-  }
-
   vk.DestroyBuffer(ctx.device, ctx.uniform_buffer, nil)
   vk.FreeMemory(ctx.device, ctx.uniform_buffer_memory, nil)
   vk.DestroyBuffer(ctx.device, ctx.vertex_buffer, nil)
   vk.FreeMemory(ctx.device, ctx.vertex_buffer_memory, nil)
   vk.DestroySemaphore(ctx.device, ctx.semaphore, nil)
   vk.DestroyFence(ctx.device, ctx.fence, nil)
-  vk.DestroyFramebuffer(ctx.device, ctx.framebuffer, nil)
-  vk.DestroyImageView(ctx.device, ctx.image_view, nil)
-  vk.FreeMemory(ctx.device, ctx.memory, nil)
-  vk.DestroyImage(ctx.device, ctx.image, nil)
+
+  for &frame in ctx.frames {
+    destroy_frame(ctx.device, &frame)
+  }
+
   vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
   vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
   vk.DestroyPipeline(ctx.device, ctx.pipeline, nil)
@@ -169,8 +165,22 @@ deinit_vulkan :: proc(ctx: ^VulkanContext) {
 }
 
 @(private="file")
-init_frame :: proc(ctx: ^VulkanContext) -> bool {
-  modifiers := make([]u64, len(ctx.modifiers))
+create_frames :: proc(ctx: ^VulkanContext, count: u32, width: u32, height: u32) -> bool {
+  ctx.frames = make([]Frame, count, ctx.allocator)
+
+  for i in 0..<count {
+    create_frame(ctx, &ctx.frames[i], width, height) or_return
+  }
+
+  return true
+}
+
+@(private="file")
+create_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> bool {
+  frame.width = width
+  frame.height = height
+
+  modifiers := make([]u64, len(ctx.modifiers), ctx.tmp_allocator)
 
   for modifier, i in ctx.modifiers {
     modifiers[i] = modifier.drmFormatModifier
@@ -188,63 +198,76 @@ init_frame :: proc(ctx: ^VulkanContext) -> bool {
     pDrmFormatModifiers = &modifiers[0],
   }
 
-  import_info := vk.ExportMemoryAllocateInfo {
+  export_info := vk.ExportMemoryAllocateInfo {
     sType = .EXPORT_MEMORY_ALLOCATE_INFO,
     pNext = nil,
     handleTypes = { .DMA_BUF_EXT },
   }
 
-  ctx.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT, .TRANSFER_SRC}, {  }, &list_info, ctx.width, ctx.height) or_return
-  ctx.memory = create_image_memory(ctx.device, ctx.physical_device, ctx.image, &import_info) or_return
-  ctx.image_view = create_image_view(ctx.device, ctx.image, ctx.format) or_return
-  ctx.framebuffer = create_framebuffer(ctx.device, ctx.render_pass, &ctx.image_view, ctx.width, ctx.height) or_return
+  frame.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, { .COLOR_ATTACHMENT }, {}, &list_info, width, height) or_return
+  frame.memory = create_image_memory(ctx.device, ctx.physical_device, frame.image, &export_info) or_return
+  frame.view = create_image_view(ctx.device, frame.image, ctx.format) or_return
+  frame.buffer = create_framebuffer(ctx.device, ctx.render_pass, &frame.view, width, height) or_return
 
   properties := vk.ImageDrmFormatModifierPropertiesEXT {
     sType = .IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
   }
 
-  if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device, ctx.image, &properties) != .SUCCESS do return false
+  if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device, frame.image, &properties) != .SUCCESS do return false
 
   for modifier in ctx.modifiers {
     if modifier.drmFormatModifier == properties.drmFormatModifier {
-      ctx.modifier = modifier
+      frame.modifier = modifier
       break
     }
   }
 
-  ctx.plane_layouts = make([]vk.SubresourceLayout, ctx.modifier.drmFormatModifierPlaneCount, ctx.allocator)
+  frame.planes = make([]vk.SubresourceLayout, frame.modifier.drmFormatModifierPlaneCount, ctx.allocator)
 
-  for i in 0..<ctx.modifier.drmFormatModifierPlaneCount {
+  for i in 0..<frame.modifier.drmFormatModifierPlaneCount {
     image_resource := vk.ImageSubresource {
       aspectMask = { PLANE_INDICES[i] },
     }
 
-    vk.GetImageSubresourceLayout(ctx.device, ctx.image, &image_resource, &ctx.plane_layouts[i])
-    ctx.plane_layouts[i].size = 0
+    vk.GetImageSubresourceLayout(ctx.device, frame.image, &image_resource, &frame.planes[i])
   }
 
-  memory_info := vk.MemoryGetFdInfoKHR {
+  info := vk.MemoryGetFdInfoKHR {
     sType = .MEMORY_GET_FD_INFO_KHR,
-    memory = ctx.memory,
+    memory = frame.memory,
     handleType = { .DMA_BUF_EXT },
   }
 
-  for fd in ctx.fds {
-    posix.close(posix.FD(fd))
-  }
-
-  ctx.fds = make([]i32, ctx.modifier.drmFormatModifierPlaneCount, ctx.allocator)
-
-  for &fd in ctx.fds {
-    if vk.GetMemoryFdKHR(ctx.device, &memory_info, &fd) != .SUCCESS do return false
-  }
-
-  fmt.println("fds", ctx.fds)
+  if vk.GetMemoryFdKHR(ctx.device, &info, &frame.fd) != .SUCCESS do return false
 
   return true
 }
 
-draw :: proc(ctx: ^VulkanContext) -> bool {
+@(private="file")
+resize_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> bool {
+  if frame.width == width && frame.height == height do return true
+
+  destroy_frame(ctx.device, frame)
+  create_frame(ctx, frame, width, height) or_return
+
+  return true
+}
+
+@(private="file")
+destroy_frame :: proc(device: vk.Device, frame: ^Frame) {
+  vk.DestroyFramebuffer(device, frame.buffer, nil)
+  vk.DestroyImageView(device, frame.view, nil)
+  vk.FreeMemory(device, frame.memory, nil)
+  vk.DestroyImage(device, frame.image, nil)
+
+  posix.close(posix.FD(frame.fd))
+}
+
+draw :: proc(ctx: ^VulkanContext, index: u32, width: u32, height: u32) -> (^Frame, bool) {
+  frame := &ctx.frames[index]
+
+  if !resize_frame(ctx, frame, width, height) do return frame, false
+
   cmd := ctx.command_buffers[0]
 
   vertex_buffers := [?]vk.Buffer{ ctx.vertex_buffer }
@@ -257,8 +280,8 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
     },
 
     extent = vk.Extent2D {
-      width = ctx.width,
-      height = ctx.height,
+      width = width,
+      height = height,
     }
   }
 
@@ -271,8 +294,8 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
   }
 
   viewport := vk.Viewport  {
-    width = f32(ctx.width),
-    height = f32(ctx.height),
+    width = f32(width),
+    height = f32(height),
     minDepth = 0,
     maxDepth = 1,
   }
@@ -285,13 +308,13 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
   render_pass_info := vk.RenderPassBeginInfo {
     sType = .RENDER_PASS_BEGIN_INFO,
     renderPass = ctx.render_pass,
-    framebuffer = ctx.framebuffer,
+    framebuffer = frame.buffer,
     renderArea = area, 
     clearValueCount = u32(len(clear_values)),
     pClearValues = &clear_values[0],
   }
 
-  if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return false
+  if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return frame, false
 
   vk.CmdBeginRenderPass(cmd, &render_pass_info, .INLINE)
   vk.CmdBindPipeline(cmd, .GRAPHICS, ctx.pipeline)
@@ -302,7 +325,7 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
   vk.CmdDraw(cmd, 6, 1, 0, 0)
   vk.CmdEndRenderPass(cmd)
 
-  if vk.EndCommandBuffer(cmd) != .SUCCESS do return false
+  if vk.EndCommandBuffer(cmd) != .SUCCESS do return frame, false
 
   wait_stage := vk.PipelineStageFlags { .COLOR_ATTACHMENT_OUTPUT }
 
@@ -316,28 +339,12 @@ draw :: proc(ctx: ^VulkanContext) -> bool {
   }
 
   vk.ResetFences(ctx.device, 1, &ctx.fence)
-  if vk.QueueSubmit(ctx.queues[0], 1, &submit_info, ctx.fence) != .SUCCESS do return false
-  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
+  if vk.QueueSubmit(ctx.queues[0], 1, &submit_info, ctx.fence) != .SUCCESS do return frame, false
+  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return frame, false
 
   fmt.println("DRAWING")
-  //import_image(ctx) or_return
 
-  return true
-}
-
-resize_renderer :: proc(ctx: ^VulkanContext, width: u32, height: u32) -> bool {
-  ctx.width = width
-  ctx.height = height
-
-  vk.DestroyFramebuffer(ctx.device, ctx.framebuffer, nil)
-  vk.DestroyImageView(ctx.device, ctx.image_view, nil)
-  vk.FreeMemory(ctx.device, ctx.memory, nil)
-  vk.DestroyImage(ctx.device, ctx.image, nil)
-
-  init_frame(ctx) or_return
-  draw(ctx) or_return
-
-  return true
+  return frame, true
 }
 
 @(private="file")
@@ -649,7 +656,7 @@ create_render_pass :: proc(device: vk.Device, format: vk.Format) -> (vk.RenderPa
       loadOp = .CLEAR,
       storeOp = .STORE,
       initialLayout = .UNDEFINED,
-      finalLayout = .TRANSFER_SRC_OPTIMAL,
+      finalLayout = .COLOR_ATTACHMENT_OPTIMAL,
       stencilLoadOp = .DONT_CARE,
       stencilStoreOp = .DONT_CARE,
     }
@@ -771,7 +778,6 @@ get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format,
 
     //if modifier_properties.drmFormatModifierPlaneCount > 1 do continue
 
-    //fmt.println("appending:", modifier_properties)
     modifiers[l] = modifier_properties
     l += 1
   }
@@ -960,141 +966,6 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format)
   if vk.CreateImageView(device, &info, nil, &view) != .SUCCESS do return view, false
 
   return view, true
-}
-
-@(private="file")
-write_image :: proc(ctx: ^VulkanContext, image: vk.Image) -> bool {
-  cmd := ctx.command_buffers[0]
-
-  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, ctx.width, ctx.height) or_return
-  defer vk.DestroyImage(ctx.device, out_image, nil)
-
-  out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image, nil) or_return
-  defer vk.FreeMemory(ctx.device, out_memory, nil)
-
-  begin_info := vk.CommandBufferBeginInfo {
-    sType = .COMMAND_BUFFER_BEGIN_INFO,
-    flags = { .ONE_TIME_SUBMIT },
-  }
-
-  range := vk.ImageSubresourceRange {
-    aspectMask = { .COLOR },
-    baseMipLevel = 0,
-    levelCount = 1,
-    baseArrayLayer = 0,
-    layerCount = 1,
-  }
-
-  image_barrier_1_info := vk.ImageMemoryBarrier {
-    sType = .IMAGE_MEMORY_BARRIER,
-    image = out_image,
-    srcAccessMask = { },
-    dstAccessMask = { .TRANSFER_WRITE },
-    oldLayout = .UNDEFINED,
-    newLayout = .TRANSFER_DST_OPTIMAL,
-    subresourceRange = range,
-  }
-
-  image_barrier_2_info := vk.ImageMemoryBarrier {
-    sType = .IMAGE_MEMORY_BARRIER,
-    image = out_image,
-    srcAccessMask = { .TRANSFER_WRITE },
-    dstAccessMask = { .MEMORY_READ },
-    oldLayout = .TRANSFER_DST_OPTIMAL,
-    newLayout = .GENERAL,
-    subresourceRange = range,
-  }
-
-  resource := vk.ImageSubresourceLayers {
-    aspectMask = { .COLOR },
-    baseArrayLayer = 0,
-    layerCount = 1,
-    mipLevel = 0,
-  }
-
-  srcOffset: vk.Offset3D
-  dstOffset: vk.Offset3D
-  extent := vk.Extent3D { width = ctx.width, height = ctx.height, depth = 1 }
-
-//  if ctx.width > width {
-//    srcOffset.x = i32(ctx.width - width)
-//    extent.width = width - u32(srcOffset.x)
-//  }
-//
-//  if ctx.height > height {
-//    srcOffset.y = i32(ctx.height - height)
-//    extent.height = height - u32(srcOffset.y)
-//  }
-
-  copy_info := vk.ImageCopy {
-    srcSubresource = resource,
-    dstSubresource = resource,
-    srcOffset = srcOffset,
-    dstOffset = dstOffset,
-    extent = extent,
-  }
-
-  if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return false
-
-  vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_1_info)
-  vk.CmdCopyImage(cmd, image, .TRANSFER_SRC_OPTIMAL, out_image, .TRANSFER_DST_OPTIMAL, 1, &copy_info)
-  vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_2_info)
-
-  if vk.EndCommandBuffer(cmd) != .SUCCESS do return false
-
-  submit_info := vk.SubmitInfo {
-    sType = .SUBMIT_INFO,
-    commandBufferCount = 1,
-    pCommandBuffers = &cmd,
-  }
-
-  vk.ResetFences(ctx.device, 1, &ctx.fence)
-  if vk.QueueSubmit(ctx.queues[1], 1, &submit_info, ctx.fence) != .SUCCESS do return false
-  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
-
-  image_resource := vk.ImageSubresource {
-    aspectMask = { .COLOR },
-  }
-
-  layout: vk.SubresourceLayout
-  vk.GetImageSubresourceLayout(ctx.device, out_image, &image_resource, &layout)
-
-  out: [^]u8
-  vk.MapMemory(ctx.device, out_memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, (^rawptr)(&out))
-  defer vk.UnmapMemory(ctx.device, out_memory)
-
- // fmt.println("WRITING IMAGE", width, height, ctx.width, ctx.height)
- // for i in 0..<ctx.height {
- //   copy(buffer[i * width * 4:], out[i * u32(layout.rowPitch):][0:ctx.width * 4])
- // }
-
-  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
-  defer mem.end_arena_temp_memory(mark)
-
-  file_output: []u8
-  err: mem.Allocator_Error
-
-  if file_output, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
-  if file_output == nil do return false
-
-  header := fmt.bprintf(file_output, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
-  count := u32(len(header))
-
-  for i in 0..<ctx.height {
-    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
-
-    for j in 0..<ctx.width {
-      off := out[line + j * size_of(u32):]
-      cont := fmt.bprintf(file_output[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
-      count += u32(len(cont))
-    }
-  }
- 
-  if !os.write_entire_file("assets/out.ppm", file_output[0:count]) do return false
- 
-  fmt.println("wrote to file assets/out.ppm")
-
-  return true
 }
 
 @(private="file")
@@ -1331,110 +1202,246 @@ load_fn :: proc(ptr: rawptr, name: cstring) {
     (cast(^rawptr)ptr)^ = dynlib.symbol_address(library, string(name))
 }
 
-import_image :: proc(ctx: ^VulkanContext) -> bool {
-  plane_count := ctx.modifier.drmFormatModifierPlaneCount
-  modifier := ctx.modifier.drmFormatModifier
-
-  extent := vk.Extent3D {
-    width = ctx.width,
-    height = ctx.height,
-    depth = 1,
-  }
-
-  mod_info := vk.ImageDrmFormatModifierExplicitCreateInfoEXT {
-    sType = .IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
-    drmFormatModifierPlaneCount = plane_count,
-    drmFormatModifier = modifier,
-    pPlaneLayouts = &ctx.plane_layouts[0],
-  }
-
-  ext_info := vk.ExternalMemoryImageCreateInfo {
-    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-    pNext = &mod_info,
-    handleTypes = { .DMA_BUF_EXT },
-  }
-
-  image_info := vk.ImageCreateInfo {
-    sType = .IMAGE_CREATE_INFO,
-    pNext = &ext_info,
-    imageType = .D2,
-    format = ctx.format,
-    tiling = .DRM_FORMAT_MODIFIER_EXT,
-    mipLevels = 1,
-    arrayLayers = 1,
-    samples = { ._1 },
-    sharingMode = .EXCLUSIVE,
-    initialLayout = .UNDEFINED,
-    extent = extent,
-    usage = { .COLOR_ATTACHMENT, .TRANSFER_SRC }
-  }
-
-  image: vk.Image
-  if vk.CreateImage(ctx.device, &image_info, nil, &image) != .SUCCESS do return false
-  defer vk.DestroyImage(ctx.device, image, nil)
-
-  bind_info := make([]vk.BindImageMemoryInfo, plane_count, ctx.tmp_allocator)
-  bind_plane_info := make([]vk.BindImagePlaneMemoryInfo, plane_count, ctx.tmp_allocator)
-
-  fd_properties := vk.MemoryFdPropertiesKHR {
-    sType = .MEMORY_FD_PROPERTIES_KHR,
-  }
-
-  mems := make([]vk.DeviceMemory, plane_count, ctx.allocator)
-
-  for i in 0..<plane_count {
-    if vk.GetMemoryFdPropertiesKHR(ctx.device, { .DMA_BUF_EXT }, ctx.fds[i], &fd_properties) != .SUCCESS do return false
-    requirements_info := vk.ImageMemoryRequirementsInfo2 {
-      sType = .IMAGE_MEMORY_REQUIREMENTS_INFO_2,
-      image = image,
-    }
-
-    requirements := vk.MemoryRequirements2 {
-      sType = .MEMORY_REQUIREMENTS_2,
-    }
-
-    vk.GetImageMemoryRequirements2(ctx.device, &requirements_info, &requirements)
-    dedicated_info := vk.MemoryDedicatedAllocateInfo {
-      sType = .MEMORY_DEDICATED_ALLOCATE_INFO,
-      image = image,
-    }
-
-    import_info := vk.ImportMemoryFdInfoKHR {
-      sType = .IMPORT_MEMORY_FD_INFO_KHR,
-      pNext = &dedicated_info,
-      fd = ctx.fds[i],
-      handleType = { .DMA_BUF_EXT },
-    }
-
-    allocate_info := vk.MemoryAllocateInfo {
-      sType = .MEMORY_ALLOCATE_INFO,
-      pNext = &import_info,
-      allocationSize = requirements.memoryRequirements.size,
-      memoryTypeIndex = find_memory_type(ctx.physical_device, requirements.memoryRequirements.memoryTypeBits & fd_properties.memoryTypeBits, {}) or_return
-    }
-
-    if vk.AllocateMemory(ctx.device, &allocate_info, nil, &mems[i]) != .SUCCESS do return false
-//      bind_plane_info[i] = vk.BindImagePlaneMemoryInfo {
-//        sType = .BIND_IMAGE_PLANE_MEMORY_INFO,
-//        planeAspect = { PLANE_INDICES[i] },
+//import_image :: proc(ctx: ^VulkanContext) -> bool {
+//  plane_count := ctx.modifier.drmFormatModifierPlaneCount
+//  modifier := ctx.modifier.drmFormatModifier
+//
+//  extent := vk.Extent3D {
+//    width = ctx.width,
+//    height = ctx.height,
+//    depth = 1,
+//  }
+//
+//  mod_info := vk.ImageDrmFormatModifierExplicitCreateInfoEXT {
+//    sType = .IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
+//    drmFormatModifierPlaneCount = plane_count,
+//    drmFormatModifier = modifier,
+//    pPlaneLayouts = &ctx.plane_layouts[0],
+//  }
+//
+//  ext_info := vk.ExternalMemoryImageCreateInfo {
+//    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+//    pNext = &mod_info,
+//    handleTypes = { .DMA_BUF_EXT },
+//  }
+//
+//  image_info := vk.ImageCreateInfo {
+//    sType = .IMAGE_CREATE_INFO,
+//    pNext = &ext_info,
+//    imageType = .D2,
+//    format = ctx.format,
+//    tiling = .DRM_FORMAT_MODIFIER_EXT,
+//    mipLevels = 1,
+//    arrayLayers = 1,
+//    samples = { ._1 },
+//    sharingMode = .EXCLUSIVE,
+//    initialLayout = .UNDEFINED,
+//    extent = extent,
+//    usage = { .COLOR_ATTACHMENT, .TRANSFER_SRC }
+//  }
+//
+//  image: vk.Image
+//  if vk.CreateImage(ctx.device, &image_info, nil, &image) != .SUCCESS do return false
+//  defer vk.DestroyImage(ctx.device, image, nil)
+//
+//  bind_info := make([]vk.BindImageMemoryInfo, plane_count, ctx.tmp_allocator)
+//  bind_plane_info := make([]vk.BindImagePlaneMemoryInfo, plane_count, ctx.tmp_allocator)
+//
+//  fd_properties := vk.MemoryFdPropertiesKHR {
+//    sType = .MEMORY_FD_PROPERTIES_KHR,
+//  }
+//
+//  mems := make([]vk.DeviceMemory, plane_count, ctx.allocator)
+//
+//  for i in 0..<plane_count {
+//    if vk.GetMemoryFdPropertiesKHR(ctx.device, { .DMA_BUF_EXT }, ctx.fds[i], &fd_properties) != .SUCCESS do return false
+//    requirements_info := vk.ImageMemoryRequirementsInfo2 {
+//      sType = .IMAGE_MEMORY_REQUIREMENTS_INFO_2,
+//      image = image,
+//    }
+//
+//    requirements := vk.MemoryRequirements2 {
+//      sType = .MEMORY_REQUIREMENTS_2,
+//    }
+//
+//    vk.GetImageMemoryRequirements2(ctx.device, &requirements_info, &requirements)
+//    dedicated_info := vk.MemoryDedicatedAllocateInfo {
+//      sType = .MEMORY_DEDICATED_ALLOCATE_INFO,
+//      image = image,
+//    }
+//
+//    import_info := vk.ImportMemoryFdInfoKHR {
+//      sType = .IMPORT_MEMORY_FD_INFO_KHR,
+//      pNext = &dedicated_info,
+//      fd = ctx.fds[i],
+//      handleType = { .DMA_BUF_EXT },
+//    }
+//
+//    allocate_info := vk.MemoryAllocateInfo {
+//      sType = .MEMORY_ALLOCATE_INFO,
+//      pNext = &import_info,
+//      allocationSize = requirements.memoryRequirements.size,
+//      memoryTypeIndex = find_memory_type(ctx.physical_device, requirements.memoryRequirements.memoryTypeBits & fd_properties.memoryTypeBits, {}) or_return
+//    }
+//
+//    if vk.AllocateMemory(ctx.device, &allocate_info, nil, &mems[i]) != .SUCCESS do return false
+////      bind_plane_info[i] = vk.BindImagePlaneMemoryInfo {
+////        sType = .BIND_IMAGE_PLANE_MEMORY_INFO,
+////        planeAspect = { PLANE_INDICES[i] },
+////      }
+//
+//      bind_info[i] = vk.BindImageMemoryInfo {
+//        sType = .BIND_IMAGE_MEMORY_INFO,
+////        pNext = &bind_plane_info[i],
+//        memory = mems[i],
+//        image = image,
+//        memoryOffset = 0,
 //      }
+//  }
+//
+//  if vk.BindImageMemory2(ctx.device, plane_count, &bind_info[0]) != .SUCCESS do return false
+//
+//  write_image(ctx, image) or_return
+//
+//  for mem in mems {
+//    vk.FreeMemory(ctx.device, mem, nil)
+//  }
+//
+//  return true
+//}
 
-      bind_info[i] = vk.BindImageMemoryInfo {
-        sType = .BIND_IMAGE_MEMORY_INFO,
-//        pNext = &bind_plane_info[i],
-        memory = mems[i],
-        image = image,
-        memoryOffset = 0,
-      }
-  }
+//@(private="file")
+//write_image :: proc(ctx: ^VulkanContext, image: vk.Image) -> bool {
+//  cmd := ctx.command_buffers[0]
+//
+//  out_image := create_image(ctx.device, ctx.format, .D2, .LINEAR, { .TRANSFER_DST }, {}, nil, ctx.width, ctx.height) or_return
+//  defer vk.DestroyImage(ctx.device, out_image, nil)
+//
+//  out_memory := create_image_memory(ctx.device, ctx.physical_device, out_image, nil) or_return
+//  defer vk.FreeMemory(ctx.device, out_memory, nil)
+//
+//  begin_info := vk.CommandBufferBeginInfo {
+//    sType = .COMMAND_BUFFER_BEGIN_INFO,
+//    flags = { .ONE_TIME_SUBMIT },
+//  }
+//
+//  range := vk.ImageSubresourceRange {
+//    aspectMask = { .COLOR },
+//    baseMipLevel = 0,
+//    levelCount = 1,
+//    baseArrayLayer = 0,
+//    layerCount = 1,
+//  }
+//
+//  image_barrier_1_info := vk.ImageMemoryBarrier {
+//    sType = .IMAGE_MEMORY_BARRIER,
+//    image = out_image,
+//    srcAccessMask = { },
+//    dstAccessMask = { .TRANSFER_WRITE },
+//    oldLayout = .UNDEFINED,
+//    newLayout = .TRANSFER_DST_OPTIMAL,
+//    subresourceRange = range,
+//  }
+//
+//  image_barrier_2_info := vk.ImageMemoryBarrier {
+//    sType = .IMAGE_MEMORY_BARRIER,
+//    image = out_image,
+//    srcAccessMask = { .TRANSFER_WRITE },
+//    dstAccessMask = { .MEMORY_READ },
+//    oldLayout = .TRANSFER_DST_OPTIMAL,
+//    newLayout = .GENERAL,
+//    subresourceRange = range,
+//  }
+//
+//  resource := vk.ImageSubresourceLayers {
+//    aspectMask = { .COLOR },
+//    baseArrayLayer = 0,
+//    layerCount = 1,
+//    mipLevel = 0,
+//  }
+//
+//  srcOffset: vk.Offset3D
+//  dstOffset: vk.Offset3D
+//  extent := vk.Extent3D { width = ctx.width, height = ctx.height, depth = 1 }
+//
+////  if ctx.width > width {
+////    srcOffset.x = i32(ctx.width - width)
+////    extent.width = width - u32(srcOffset.x)
+////  }
+////
+////  if ctx.height > height {
+////    srcOffset.y = i32(ctx.height - height)
+////    extent.height = height - u32(srcOffset.y)
+////  }
+//
+//  copy_info := vk.ImageCopy {
+//    srcSubresource = resource,
+//    dstSubresource = resource,
+//    srcOffset = srcOffset,
+//    dstOffset = dstOffset,
+//    extent = extent,
+//  }
+//
+//  if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return false
+//
+//  vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_1_info)
+//  vk.CmdCopyImage(cmd, image, .TRANSFER_SRC_OPTIMAL, out_image, .TRANSFER_DST_OPTIMAL, 1, &copy_info)
+//  vk.CmdPipelineBarrier(cmd, { .TRANSFER }, { .TRANSFER }, {}, 0, nil, 0, nil, 1, &image_barrier_2_info)
+//
+//  if vk.EndCommandBuffer(cmd) != .SUCCESS do return false
+//
+//  submit_info := vk.SubmitInfo {
+//    sType = .SUBMIT_INFO,
+//    commandBufferCount = 1,
+//    pCommandBuffers = &cmd,
+//  }
+//
+//  vk.ResetFences(ctx.device, 1, &ctx.fence)
+//  if vk.QueueSubmit(ctx.queues[1], 1, &submit_info, ctx.fence) != .SUCCESS do return false
+//  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
+//
+//  image_resource := vk.ImageSubresource {
+//    aspectMask = { .COLOR },
+//  }
+//
+//  layout: vk.SubresourceLayout
+//  vk.GetImageSubresourceLayout(ctx.device, out_image, &image_resource, &layout)
+//
+//  out: [^]u8
+//  vk.MapMemory(ctx.device, out_memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, (^rawptr)(&out))
+//  defer vk.UnmapMemory(ctx.device, out_memory)
+//
+// // fmt.println("WRITING IMAGE", width, height, ctx.width, ctx.height)
+// // for i in 0..<ctx.height {
+// //   copy(buffer[i * width * 4:], out[i * u32(layout.rowPitch):][0:ctx.width * 4])
+// // }
+//
+//  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
+//  defer mem.end_arena_temp_memory(mark)
+//
+//  file_output: []u8
+//  err: mem.Allocator_Error
+//
+//  if file_output, err = make([]u8, ctx.width * ctx.height * (3 * 3 + 3) + 100, ctx.tmp_allocator); err != nil do return false
+//  if file_output == nil do return false
+//
+//  header := fmt.bprintf(file_output, "P3\n{:d} {:d}\n255\n", ctx.width, ctx.height)
+//  count := u32(len(header))
+//
+//  for i in 0..<ctx.height {
+//    line := (ctx.height - i - 1) * u32(layout.rowPitch) 
+//
+//    for j in 0..<ctx.width {
+//      off := out[line + j * size_of(u32):]
+//      cont := fmt.bprintf(file_output[count:], "{:d} {:d} {:d}\n", off[0], off[1], off[2])
+//      count += u32(len(cont))
+//    }
+//  }
+// 
+//  if !os.write_entire_file("assets/out.ppm", file_output[0:count]) do return false
+// 
+//  fmt.println("wrote to file assets/out.ppm")
+//
+//  return true
+//}
 
-  if vk.BindImageMemory2(ctx.device, plane_count, &bind_info[0]) != .SUCCESS do return false
-
-  write_image(ctx, image) or_return
-
-  for mem in mems {
-    vk.FreeMemory(ctx.device, mem, nil)
-  }
-
-  return true
-}
