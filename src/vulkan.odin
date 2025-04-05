@@ -78,12 +78,9 @@ VulkanContext :: struct {
   tmp_allocator: runtime.Allocator,
 }
 
-init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
-  {
-    ok: bool
-    if library, ok = dynlib.load_library("libvulkan.so"); !ok do return false
-    vk.load_proc_addresses_custom(load_fn)
-  }
+init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
+  library = dynlib.load_library("libvulkan.so") or_return
+  vk.load_proc_addresses_custom(load_fn)
 
   ctx.arena = arena
   ctx.allocator = mem.arena_allocator(arena)
@@ -92,9 +89,6 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
   ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
   ctx.format = .B8G8R8A8_SRGB 
-
-  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
-  defer mem.end_arena_temp_memory(mark)
 
   ctx.instance = create_instance(ctx.tmp_allocator) or_return
   ctx.physical_device = find_physical_device(ctx.instance, ctx.tmp_allocator) or_return
@@ -112,26 +106,11 @@ init_vulkan :: proc(ctx: ^VulkanContext, width: u32, height: u32, arena: ^mem.Ar
   ctx.queues = create_queues(ctx.device, ctx.queue_indices[:], ctx.allocator) or_return
   ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
   ctx.command_buffers = allocate_command_buffers(ctx.device, ctx.command_pool, 1, ctx.allocator) or_return
-
-  create_frames(ctx, 2, width, height) or_return
-
   ctx.fence = create_fence(ctx.device) or_return
   ctx.semaphore = create_semaphore(ctx.device) or_return
 
-  vertices := [?]Vertex {
-    { position = { -1.0, -1.0 } },
-    { position = { -1.0, -0.5 } },
-    { position = { -0.5, -1.0 } },
-
-    { position = {  1.0, -1.0 } },
-    { position = {  0.0, 1.0 } },
-    { position = {  1.0, 1.0 } },
-  }
-
-  ctx.vertex_buffer = create_buffer(ctx.device, size_of(Vertex) * len(vertices), { .VERTEX_BUFFER }) or_return
-  ctx.vertex_buffer_memory = create_buffer_memory(ctx.device, ctx.physical_device, ctx.vertex_buffer, { .HOST_COHERENT, .HOST_VISIBLE, .DEVICE_LOCAL }) or_return
-
-  copy_data(Vertex, ctx.device, ctx.vertex_buffer_memory, vertices[:])
+  create_frames(ctx, frame_count, width, height) or_return
+  create_buffers(ctx) or_return
 
   return true
 }
@@ -169,7 +148,10 @@ create_frames :: proc(ctx: ^VulkanContext, count: u32, width: u32, height: u32) 
   ctx.frames = make([]Frame, count, ctx.allocator)
 
   for i in 0..<count {
-    create_frame(ctx, &ctx.frames[i], width, height) or_return
+    frame := &ctx.frames[i]
+
+    frame.planes = make([]vk.SubresourceLayout, 3, ctx.allocator)
+    create_frame(ctx, frame, width, height) or_return
   }
 
   return true
@@ -222,8 +204,6 @@ create_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32
     }
   }
 
-  frame.planes = make([]vk.SubresourceLayout, frame.modifier.drmFormatModifierPlaneCount, ctx.allocator)
-
   for i in 0..<frame.modifier.drmFormatModifierPlaneCount {
     image_resource := vk.ImageSubresource {
       aspectMask = { PLANE_INDICES[i] },
@@ -243,10 +223,11 @@ create_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32
   return true
 }
 
-@(private="file")
-resize_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> bool {
-  if frame.width == width && frame.height == height do return true
+get_frame :: proc(ctx: ^VulkanContext, index: u32) -> ^Frame {
+  return &ctx.frames[index]
+}
 
+resize_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> bool {
   destroy_frame(ctx.device, frame)
   create_frame(ctx, frame, width, height) or_return
 
@@ -263,11 +244,34 @@ destroy_frame :: proc(device: vk.Device, frame: ^Frame) {
   posix.close(posix.FD(frame.fd))
 }
 
-draw :: proc(ctx: ^VulkanContext, index: u32, width: u32, height: u32) -> (^Frame, bool) {
-  frame := &ctx.frames[index]
+create_buffers :: proc(ctx: ^VulkanContext) -> bool {
+  vertices := [?]Vertex {
+    { position = { -1.0, -1.0 } },
+    { position = { -1.0, -0.5 } },
+    { position = { -0.5, -1.0 } },
 
-  if !resize_frame(ctx, frame, width, height) do return frame, false
+    { position = {  1.0, -1.0 } },
+    { position = {  0.0, 1.0 } },
+    { position = {  1.0, 1.0 } },
+  }
 
+  staging_buffer := create_buffer(ctx.device, size_of(Vertex) * len(vertices), { .TRANSFER_SRC }) or_return
+  defer vk.DestroyBuffer(ctx.device, staging_buffer, nil)
+  staging_memory := create_buffer_memory(ctx.device, ctx.physical_device, staging_buffer, { .HOST_COHERENT, .HOST_VISIBLE }) or_return
+  defer vk.FreeMemory(ctx.device, staging_memory, nil)
+
+  copy_data(Vertex, ctx.device, staging_memory, vertices[:])
+
+  ctx.vertex_buffer = create_buffer(ctx.device, size_of(Vertex) * len(vertices), { .VERTEX_BUFFER, .TRANSFER_DST }) or_return
+  ctx.vertex_buffer_memory = create_buffer_memory(ctx.device, ctx.physical_device, ctx.vertex_buffer, { .DEVICE_LOCAL }) or_return
+
+  copy_buffer(ctx, &ctx.command_buffers[0], ctx.vertex_buffer, staging_buffer, size_of(Vertex) * len(vertices)) or_return
+
+  return true
+
+}
+
+draw :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> (^Frame, bool) {
   cmd := ctx.command_buffers[0]
 
   vertex_buffers := [?]vk.Buffer{ ctx.vertex_buffer }
@@ -329,22 +333,26 @@ draw :: proc(ctx: ^VulkanContext, index: u32, width: u32, height: u32) -> (^Fram
 
   wait_stage := vk.PipelineStageFlags { .COLOR_ATTACHMENT_OUTPUT }
 
-  submit_info := vk.SubmitInfo {
-    sType = .SUBMIT_INFO,
-    commandBufferCount = 1,
-    pCommandBuffers = &cmd,
-    pWaitDstStageMask = &wait_stage,
-    //signalSemaphoreCount = 1,
-    //pSignalSemaphores = &ctx.semaphore,
-  }
-
-  vk.ResetFences(ctx.device, 1, &ctx.fence)
-  if vk.QueueSubmit(ctx.queues[0], 1, &submit_info, ctx.fence) != .SUCCESS do return frame, false
-  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return frame, false
+  if !submit_command_buffers(ctx, &cmd, 1, &wait_stage, ctx.queues[0]) do return frame, false
 
   fmt.println("DRAWING")
 
   return frame, true
+}
+
+submit_command_buffers :: proc(ctx: ^VulkanContext, cmds: [^]vk.CommandBuffer, count: u32, wait_stage: [^]vk.PipelineStageFlags, queue: vk.Queue) -> bool {
+  submit_info := vk.SubmitInfo {
+    sType = .SUBMIT_INFO,
+    commandBufferCount = count,
+    pCommandBuffers = &cmds[0],
+    pWaitDstStageMask = wait_stage,
+  }
+
+  vk.ResetFences(ctx.device, 1, &ctx.fence)
+  if vk.QueueSubmit(queue, 1, &submit_info, ctx.fence) != .SUCCESS do return false
+  if vk.WaitForFences(ctx.device, 1, &ctx.fence, true, 0xFFFFFF) != .SUCCESS do return false
+
+  return true
 }
 
 @(private="file")
@@ -394,7 +402,10 @@ create_device :: proc(physical_device: vk.PhysicalDevice, indices: []u32, alloca
   queue_priority := f32(1.0)
 
   unique_indices: [10]u32 = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
-  for i in indices do unique_indices[i] += 1
+  for i in indices {
+    if i != indices[0] do panic("Not accepting diferent queue indices for now")
+    unique_indices[i] += 1
+  }
 
   queue_create_infos := make([dynamic]vk.DeviceQueueCreateInfo, 0, len(indices), allocator)
   defer delete(queue_create_infos)
@@ -775,8 +786,6 @@ get_drm_modifiers :: proc(physical_device: vk.PhysicalDevice, format: vk.Format,
 
     if vk.GetPhysicalDeviceImageFormatProperties2(physical_device, &image_info, &image_properties) != .SUCCESS do continue
     if emp.externalMemoryFeatures < { .IMPORTABLE, .EXPORTABLE } do continue
-
-    //if modifier_properties.drmFormatModifierPlaneCount > 1 do continue
 
     modifiers[l] = modifier_properties
     l += 1
@@ -1177,6 +1186,28 @@ create_buffer_memory :: proc(device: vk.Device , physical_device: vk.PhysicalDev
   vk.BindBufferMemory(device, buffer, memory, 0)
 
   return memory, true
+}
+
+@(private="file")
+copy_buffer :: proc(ctx: ^VulkanContext, command_buffer: [^]vk.CommandBuffer, dst_buffer: vk.Buffer, src_buffer: vk.Buffer, size: u32) -> bool {
+  copy_info := vk.BufferCopy {
+    srcOffset = 0,
+    dstOffset = 0,
+    size = vk.DeviceSize(size),
+  }
+
+  begin_info := vk.CommandBufferBeginInfo {
+    sType = .COMMAND_BUFFER_BEGIN_INFO,
+    flags = { .ONE_TIME_SUBMIT },
+  }
+
+  if vk.BeginCommandBuffer(command_buffer[0], &begin_info) != .SUCCESS do return false
+  vk.CmdCopyBuffer(command_buffer[0], src_buffer, dst_buffer, 1, &copy_info)
+  if vk.EndCommandBuffer(command_buffer[0]) != .SUCCESS do return false
+
+  submit_command_buffers(ctx, command_buffer, 1, nil, ctx.queues[1]) or_return
+
+  return true
 }
 
 @(private="file")
