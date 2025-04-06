@@ -55,39 +55,43 @@ loop :: proc(vk: ^VulkanContext, wl: ^WaylandContext, arena: ^mem.Arena, tmp_are
   geometries := make([]^Geometry, 10, context.allocator)
 
   triangle_vertices := [?]Vertex {
-    { position = { -0.5, -0.5 } },
-    { position = {  0.0,  0.5 } },
-    { position = {  0.5, -0.5 } },
+    { position = { -1.0, -1.0 } },
+    { position = {  0.0,  1.0 } },
+    { position = {  1.0, -1.0 } },
   }
 
   quad_vertices := [?]Vertex {
-    { position = { -0.5, -0.5 } },
-    { position = { -0.5,  0.5 } },
-    { position = {  0.5, -0.5 } },
-    { position = {  0.5, -0.5 } },
-    { position = { -0.5,  0.5 } },
-    { position = {  0.5,  0.5 } },
+    { position = { -1.0, -1.0 } },
+    { position = { -1.0,  1.0 } },
+    { position = {  1.0, -1.0 } },
+    { position = {  1.0, -1.0 } },
+    { position = { -1.0,  1.0 } },
+    { position = {  1.0,  1.0 } },
   }
 
   triangle_model := matrix[4, 4]f32 {
-    800, 0, 0, 0,
-    0, 800, 0, 0,
-    0, 0, 1, 1.5,
+    400, 0, 0, 0,
+    0, 400, 0, 0,
+    0, 0, 1, 1,
     0, 0, 0, 1,
   }
 
+  triangle_color := [3]f32 { 1.0, 1.0, 0.0 }
+
   quad_model := matrix[4, 4]f32 {
-    800, 0, 0, 0,
-    0, 800, 0, 0,
-    0, 0, 1, 1.5,
+    400, 0, 0, 0,
+    0, 400, 0, 0,
+    0, 0, 1, 1,
     0, 0, 0, 1,
   }
+
+  quad_color := [3]f32 { 1.0, 1.0, 0.0 }
 
   geometries[0] = add_geometry(vk, triangle_vertices[:], 1) or_return
   geometries[1] = add_geometry(vk, quad_vertices[:], 1) or_return
 
-  triangle_id := add_geometry_instance(vk, geometries[0], triangle_model) or_return
-  quad_id := add_geometry_instance(vk, geometries[1], quad_model) or_return
+  triangle_id := add_geometry_instance(vk, geometries[0], triangle_model, triangle_color) or_return
+  quad_id := add_geometry_instance(vk, geometries[1], quad_model, quad_color) or_return
 
   i: i32 = 0
 
@@ -95,10 +99,11 @@ loop :: proc(vk: ^VulkanContext, wl: ^WaylandContext, arena: ^mem.Arena, tmp_are
     mark := mem.begin_arena_temp_memory(tmp_arena)
     defer mem.end_arena_temp_memory(mark)
 
-    triangle_model[0, 3] += 1
-    triangle_model[1, 3] += 1
+    triangle_model[0, 3] = f32(i % 400)
+    quad_model[1, 3] = -f32(i % 400)
 
-    update_geometry_instance(vk, geometries[0], triangle_id, triangle_model) or_return
+    update_geometry_instance(vk, geometries[0], triangle_id, triangle_model, nil) or_return
+    update_geometry_instance(vk, geometries[1], quad_id, quad_model, nil) or_return
 
     if !render(wl) {
       fmt.println("Failed to render frame")
