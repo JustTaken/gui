@@ -151,6 +151,8 @@ init_wayland :: proc(ctx: ^WaylandContext, vk: ^VulkanContext, width: u32, heigh
 
   if posix.connect(ctx.socket, (^posix.sockaddr)(&sockaddr), posix.socklen_t(size_of(posix.sockaddr_un))) == .FAIL do return false
 
+  resize(ctx, width, height)
+
   ctx.values = new_vec(wl.Argument, 40, ctx.allocator)
   ctx.objects = new_vec(InterfaceObject, 40, ctx.allocator)
   ctx.output_buffer = new_vec(u8, 4096, ctx.allocator)
@@ -165,8 +167,6 @@ init_wayland :: proc(ctx: ^WaylandContext, vk: ^VulkanContext, width: u32, heigh
   ctx.in_fd_index = 0
 
   ctx.input_buffer.cap = 0
-  ctx.width = width
-  ctx.height = height
   ctx.running = true
   ctx.buffers = make([]Buffer, frame_count, ctx.allocator)
   ctx.buffer = &ctx.buffers[0]
@@ -216,6 +216,40 @@ render :: proc(ctx: ^WaylandContext) -> bool {
 resize :: proc(ctx: ^WaylandContext, width: u32, height: u32) {
   ctx.width = width
   ctx.height = height
+
+  f_width := f32(width)
+  f_height := f32(height)
+  far := f32(11)
+  near := f32(1)
+
+  scale := matrix[4, 4]f32 {
+    2 / f_width, 0, 0, 0,
+    0, -2 / f_height, 0, 0,
+    0, 0, 1 / (far - near), 0,
+    0, 0, 0, 1,
+  }
+
+  // z = n => z * k + w = 0
+  // z = f => z * k + w = 1
+
+  // n * k = f * k - 1
+  // k (f - n) = 1
+  // k = 1 / (f - n)
+
+  // 2w = 1 - k (n + f)
+  // w = 1/2 - k (n + f) / 2
+  // w = (1 - (n + f) / (f - n)) / 2
+  // w = (f - n - n - f) / (2 * (f - n))
+  // w = -n / (f - n)
+
+  translate := matrix[4, 4]f32 {
+    1, 0, 0, - f_width / 2,
+    0, 1, 0, f_height / 2,
+    0, 0, 1, - near / (far - near),
+    0, 0, 1, 0,
+  }
+
+  update_projection(ctx.vk, scale * translate)
 }
 
 @(private="file")
