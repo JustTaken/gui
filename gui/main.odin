@@ -6,10 +6,11 @@ import "core:fmt"
 
 main :: proc() {
   bytes: []u8
-  wl: WaylandContext
-  vk: VulkanContext
   arena: mem.Arena
   tmp_arena: mem.Arena
+
+  wl: WaylandContext
+  vk: VulkanContext
 
   width: u32 = 1920
   height: u32 = 1080

@@ -28,21 +28,6 @@ InterfaceObject :: struct {
   callbacks: []Callback,
 }
 
-Buffer :: struct {
-  data: []u8,
-  id: u32,
-  offset: u32,
-
-  width: u32,
-  height: u32,
-
-  released: bool,
-  bound: bool,
-
-  frame: ^Frame,
-  next: ^Buffer,
-}
-
 Modifier :: struct {
   format: u32,
   modifier: u64,
@@ -76,6 +61,7 @@ WaylandContext :: struct {
   dma_id: u32,
   dma_feedback_id: u32,
   dma_params_id: u32,
+  buffer_base_id: u32,
 
   get_registry_opcode: u32,
   registry_bind_opcode: u32,
@@ -190,8 +176,11 @@ init_wayland :: proc(ctx: ^WaylandContext, vk: ^VulkanContext, width: u32, heigh
   send(ctx) or_return
   roundtrip(ctx)
 
-  init_buffers(ctx) or_return
-  buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
+  ctx.buffer_base_id = get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
+  ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", ctx.buffer_base_id)
+
+  wayland_buffers_init(ctx) or_return
+  wayland_buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
   send(ctx) or_return
 
   return true
@@ -201,11 +190,11 @@ deinit_wayland :: proc(ctx: ^WaylandContext) {
 }
 
 render :: proc(ctx: ^WaylandContext) -> bool {
-  time.sleep(time.Millisecond * 60)
+  time.sleep(time.Millisecond * 30)
 
   roundtrip(ctx)
 
-  buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
+  wayland_buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
 
   send(ctx) or_return
 
@@ -289,78 +278,6 @@ create_dma :: proc(ctx: ^WaylandContext) {
     write(ctx, { wl.BoundNewId(ctx.dma_feedback_id), wl.Object(ctx.surface_id) }, ctx.dma_id, ctx.dma_surface_feedback_opcode)
 }
 
-@(private="file")
-buffer_write_swap :: proc(ctx: ^WaylandContext, buffer: ^Buffer, width: u32, height: u32) -> bool {
-  if !buffer.released {
-    fmt.println("Buffer is not ready")
-    return false
-  }
-
-  defer buffer.released = false
-
-  if buffer.width != width || buffer.height != height {
-    if buffer.bound do write(ctx, { }, buffer.id, ctx.destroy_buffer_opcode)
-
-    resize_frame(ctx.vk, buffer.frame, width, height) or_return
-    create_buffer(ctx, buffer, width, height)
-  }
-
-  draw(ctx.vk, buffer.frame, width, height) or_return
-
-  write(ctx, { wl.Object(buffer.id), wl.Int(0), wl.Int(0) }, ctx.surface_id, ctx.surface_attach_opcode)
-  write(ctx, { wl.Int(0), wl.Int(0), wl.Int(width), wl.Int(height) }, ctx.surface_id, ctx.surface_damage_opcode)
-  write(ctx, { }, ctx.surface_id, ctx.surface_commit_opcode)
-
-  ctx.buffer = buffer.next
-
-  return true
-}
-
-@(private="file")
-init_buffers :: proc(ctx: ^WaylandContext) -> bool {
-  base_id := get_id(ctx, "wl_buffer", { new_callback("release", buffer_release_callback) }, wl.WAYLAND_INTERFACES[:])
-  ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", base_id)
-
-  ctx.buffers[0].id = base_id
-  for i in 0..<len(ctx.buffers) {
-    buffer := &ctx.buffers[i]
-
-    if i != 0 do buffer.id = copy_id(ctx, ctx.buffer.id)
-
-    buffer.frame = get_frame(ctx.vk, buffer.id - base_id)
-    buffer.released = true
-    buffer.bound = false
-    buffer.width = 0
-    buffer.height = 0
-  }
-
-  return true
-}
-
-@(private="file")
-create_buffer :: proc(ctx: ^WaylandContext, buffer: ^Buffer, width: u32, height: u32) {
-    buffer.bound = true
-
-    write(ctx, { wl.BoundNewId(ctx.dma_params_id) }, ctx.dma_id, ctx.dma_create_param_opcode)
-
-    for i in 0..<buffer.frame.modifier.drmFormatModifierPlaneCount {
-      plane := &buffer.frame.planes[i]
-      modifier_hi := (buffer.frame.modifier.drmFormatModifier & 0xFFFFFFFF00000000) >> 32
-      modifier_lo := buffer.frame.modifier.drmFormatModifier & 0x00000000FFFFFFFF
-
-      write(ctx, { wl.Fd(buffer.frame.fd), wl.Uint(i), wl.Uint(plane.offset), wl.Uint(plane.rowPitch), wl.Uint(modifier_hi), wl.Uint(modifier_lo) }, ctx.dma_params_id, ctx.dma_params_add_opcode)
-    }
-
-    buffer.width = width
-    buffer.height = height
-
-    format := drm_format(ctx.vk.format)
-
-    write(ctx, { wl.BoundNewId(buffer.id), wl.Int(width), wl.Int(height), wl.Uint(format), wl.Uint(0) }, ctx.dma_params_id, ctx.dma_params_create_immed_opcode)
-    write(ctx, { }, ctx.dma_params_id, ctx.dma_params_destroy_opcode)
-}
-
-@(private="file")
 write :: proc(ctx: ^WaylandContext, arguments: []wl.Argument, object_id: u32, opcode: u32) {
   object := get_object(ctx, object_id)
   request := get_request(object, opcode)
@@ -584,7 +501,6 @@ get_id :: proc(ctx: ^WaylandContext, name: string, callbacks: []CallbackConfig, 
   panic("interface id  not found")
 }
 
-@(private="file")
 copy_id :: proc(ctx: ^WaylandContext, id: u32) -> u32 {
   defer vec_append(&ctx.objects, get_object(ctx, id))
   return ctx.objects.len + 1
@@ -618,7 +534,6 @@ get_event_opcode :: proc(interface: ^wl.Interface, name: string) -> u32 {
   panic("event  opcode not found")
 }
 
-@(private="file")
 get_request_opcode :: proc(ctx: ^WaylandContext, name: string, object_id: u32) -> u32 {
   requests := get_object(ctx, object_id).interface.requests
 
