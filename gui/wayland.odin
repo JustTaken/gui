@@ -212,7 +212,7 @@ init_wayland :: proc(
 
 deinit_wayland :: proc(ctx: ^WaylandContext) {}
 render :: proc(ctx: ^WaylandContext) -> Error {
-	time.sleep(time.Millisecond * 1000)
+	time.sleep(time.Millisecond * 60)
 
 	roundtrip(ctx) or_return
 
@@ -356,7 +356,7 @@ dma_params_init :: proc(ctx: ^WaylandContext) {
 write :: proc(ctx: ^WaylandContext, arguments: []wl.Argument, object_id: u32, opcode: u32) {
 	object := get_object(ctx, object_id)
 	request := get_request(object, opcode)
-	fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
+	// fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
 
 	start := ctx.output_buffer.len
 
@@ -433,7 +433,7 @@ read :: proc(ctx: ^WaylandContext) -> bool {
 	if ctx.input_buffer.len - start != u32(size) do return false
 
 	values := ctx.values.data[0:ctx.values.len]
-	fmt.println("<-", object.interface.name, size, object_id, opcode, event.name, values)
+	// fmt.println("<-", object.interface.name, size, object_id, opcode, event.name, values)
 	object.callbacks[opcode](ctx, object_id, values)
 
 	return true
@@ -758,7 +758,7 @@ global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument)
 		)
 	}
 
-	fmt.println("interface:", string(([]u8)(str)))
+	// fmt.println("interface:", string(([]u8)(str)))
 }
 
 @(private = "file")
@@ -820,7 +820,20 @@ seat_capabilities :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argumen
 
 @(private = "file")
 keyboard_keymap_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+	fmt.println("keymap:", arguments)
+	size := uint(arguments[2].(wl.Uint))
+	data := ([^]u8)(
+		posix.mmap(nil, size, {.READ}, {.PRIVATE}, posix.FD(arguments[1].(wl.Fd)), 0),
+	)[0:size]
+	defer posix.munmap(raw_data(data), size)
 
+	if data == nil {
+		panic("Mapped data is null")
+	}
+
+	os.write_entire_file("output.txt", data)
+
+	fmt.println("content:", string(data))
 }
 
 @(private = "file")
@@ -828,7 +841,9 @@ keyboard_enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.A
 @(private = "file")
 keyboard_leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-keyboard_key_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+keyboard_key_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+	fmt.println("key pressed:", arguments)
+}
 @(private = "file")
 keyboard_modifiers_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
@@ -938,6 +953,7 @@ dma_format_table_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl
 	size := u32(arguments[1].(wl.Uint))
 
 	buf := ([^]u8)(posix.mmap(nil, uint(size), {.READ}, {.PRIVATE}, fd, 0))[0:size]
+	defer posix.munmap(raw_data(buf), uint(size))
 
 	if buf == nil do return
 
