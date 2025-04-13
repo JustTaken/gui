@@ -48,6 +48,8 @@ VulkanContext :: struct {
 	descriptor_pool:       vk.DescriptorPool,
 	descriptor_sets:       []vk.DescriptorSet,
 	frames:                []Frame,
+	widgets:               []Widget,
+	widgets_len:           u32,
 	geometries:            []Geometry,
 	geometries_len:        u32,
 	max_instances:         u32,
@@ -55,6 +57,7 @@ VulkanContext :: struct {
 	draw_fence:            vk.Fence,
 	semaphore:             vk.Semaphore,
 	format:                vk.Format,
+	depth_format:          vk.Format,
 	modifiers:             []vk.DrmFormatModifierPropertiesEXT,
 	arena:                 ^mem.Arena,
 	allocator:             runtime.Allocator,
@@ -69,11 +72,12 @@ init_vulkan :: proc(
 	frame_count: u32,
 	arena: ^mem.Arena,
 	tmp_arena: ^mem.Arena,
-) -> bool {
+) -> Error {
 	mark := mem.begin_arena_temp_memory(tmp_arena)
 	defer mem.end_arena_temp_memory(mark)
 
-	library = dynlib.load_library("libvulkan.so") or_return
+	ok: bool
+	if library, ok = dynlib.load_library("libvulkan.so"); !ok do return .VulkanLib
 	vk.load_proc_addresses_custom(load_fn)
 
 	ctx.arena = arena
@@ -83,22 +87,25 @@ init_vulkan :: proc(
 	ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
 	ctx.format = .B8G8R8A8_SRGB
+	ctx.depth_format = .D32_SFLOAT_S8_UINT
 
 	ctx.instance = create_instance(ctx) or_return
 	ctx.physical_device = find_physical_device(ctx, ctx.instance) or_return
-	ctx.modifiers = get_drm_modifiers(ctx, ctx.physical_device, ctx.format)
+	ctx.modifiers = get_drm_modifiers(ctx, ctx.physical_device, ctx.format) or_return
 	ctx.queue_indices = find_queue_indices(ctx, ctx.physical_device) or_return
 	ctx.device = create_device(ctx, ctx.physical_device, ctx.queue_indices[:]) or_return
-	ctx.render_pass = create_render_pass(ctx.device, ctx.format) or_return
+	ctx.render_pass = create_render_pass(ctx) or_return
 	ctx.descriptor_pool = create_descriptor_pool(ctx.device) or_return
 	ctx.set_layouts = create_set_layouts(ctx, ctx.device) or_return
+	ctx.layout = create_layout(ctx.device, ctx.set_layouts) or_return
+
 	ctx.descriptor_sets = allocate_descriptor_sets(
 		ctx,
 		ctx.device,
 		ctx.set_layouts,
 		ctx.descriptor_pool,
 	) or_return
-	ctx.layout = create_layout(ctx.device, ctx.set_layouts) or_return
+
 	ctx.pipeline = create_pipeline(
 		ctx,
 		ctx.device,
@@ -107,6 +114,7 @@ init_vulkan :: proc(
 		width,
 		height,
 	) or_return
+
 	ctx.queues = create_queues(ctx, ctx.device, ctx.queue_indices[:]) or_return
 	ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
 	ctx.command_buffers = allocate_command_buffers(ctx, ctx.device, ctx.command_pool, 2) or_return
@@ -114,11 +122,12 @@ init_vulkan :: proc(
 	ctx.copy_fence = create_fence(ctx.device) or_return
 	ctx.semaphore = create_semaphore(ctx.device) or_return
 
-	create_staging_buffer(ctx, size_of(Projection) * 100) or_return
-	create_frames(ctx, frame_count, width, height) or_return
-	create_geometries(ctx) or_return
+	staging_buffer_init(ctx, size_of(Projection) * 100) or_return
+	frames_init(ctx, frame_count, width, height) or_return
+	geometries_init(ctx, 10, 20) or_return
+	widgets_init(ctx, 10) or_return
 
-	return true
+	return nil
 }
 
 deinit_vulkan :: proc(ctx: ^VulkanContext) {
@@ -162,20 +171,16 @@ deinit_vulkan :: proc(ctx: ^VulkanContext) {
 }
 
 @(private = "file")
-create_instance :: proc(ctx: ^VulkanContext) -> (vk.Instance, bool) {
-	instance: vk.Instance
-	err: mem.Allocator_Error
-	layers: []vk.LayerProperties
-
+create_instance :: proc(ctx: ^VulkanContext) -> (instance: vk.Instance, ok: Error) {
 	layer_count: u32
 	vk.EnumerateInstanceLayerProperties(&layer_count, nil)
-	if layers, err = make([]vk.LayerProperties, layer_count, ctx.tmp_allocator); err != nil do return instance, false
+	layers := alloc([]vk.LayerProperties, layer_count, ctx.tmp_allocator) or_return
 	vk.EnumerateInstanceLayerProperties(&layer_count, &layers[0])
 
-	check :: proc(v: cstring, availables: []vk.LayerProperties) -> bool {
-		for &available in availables do if v == cstring(&available.layerName[0]) do return true
+	check :: proc(v: cstring, availables: []vk.LayerProperties) -> Error {
+		for &available in availables do if v == cstring(&available.layerName[0]) do return nil
 
-		return false
+		return .LayerNotFound
 	}
 
 	app_info := vk.ApplicationInfo {
@@ -194,13 +199,11 @@ create_instance :: proc(ctx: ^VulkanContext) -> (vk.Instance, bool) {
 		enabledLayerCount   = len(VALIDATION_LAYERS),
 	}
 
-	result := vk.CreateInstance(&create_info, nil, &instance)
-	//if vk.CreateInstance(&create_info, nil, &instance) != .SUCCESS do return instance, false
-	if result != .SUCCESS do return instance, false
+	if vk.CreateInstance(&create_info, nil, &instance) != .SUCCESS do return instance, .CreateInstanceFailed
 
 	vk.load_proc_addresses_instance(instance)
 
-	return instance, true
+	return instance, nil
 }
 
 @(private = "file")
@@ -209,8 +212,8 @@ create_device :: proc(
 	physical_device: vk.PhysicalDevice,
 	indices: []u32,
 ) -> (
-	vk.Device,
-	bool,
+	device: vk.Device,
+	err: Error,
 ) {
 	queue_priority := f32(1.0)
 
@@ -220,7 +223,11 @@ create_device :: proc(
 		unique_indices[i] += 1
 	}
 
-	queue_create_infos := make([]vk.DeviceQueueCreateInfo, len(indices), ctx.tmp_allocator)
+	queue_create_infos := alloc(
+		[]vk.DeviceQueueCreateInfo,
+		u32(len(indices)),
+		ctx.tmp_allocator,
+	) or_return
 	defer delete(queue_create_infos)
 
 	count: u32 = 0
@@ -254,12 +261,11 @@ create_device :: proc(
 		enabledLayerCount       = 0,
 	}
 
-	device: vk.Device
-	if vk.CreateDevice(physical_device, &device_create_info, nil, &device) != .SUCCESS do return device, false
+	if vk.CreateDevice(physical_device, &device_create_info, nil, &device) != .SUCCESS do return device, .CreateDeviceFailed
 
 	vk.load_proc_addresses_device(device)
 
-	return device, true
+	return device, nil
 }
 
 @(private = "file")
@@ -267,7 +273,10 @@ get_drm_modifiers :: proc(
 	ctx: ^VulkanContext,
 	physical_device: vk.PhysicalDevice,
 	format: vk.Format,
-) -> []vk.DrmFormatModifierPropertiesEXT {
+) -> (
+	modifiers: []vk.DrmFormatModifierPropertiesEXT,
+	err: Error,
+) {
 	l: u32 = 0
 	render_features: vk.FormatFeatureFlags = {.COLOR_ATTACHMENT, .COLOR_ATTACHMENT_BLEND}
 	texture_features: vk.FormatFeatureFlags = {.SAMPLED_IMAGE, .SAMPLED_IMAGE_FILTER_LINEAR}
@@ -284,12 +293,12 @@ get_drm_modifiers :: proc(
 	vk.GetPhysicalDeviceFormatProperties2(physical_device, format, &properties)
 	count := modifier_properties_list.drmFormatModifierCount
 
-	modifiers := make([]vk.DrmFormatModifierPropertiesEXT, count, ctx.allocator)
-	drmFormatModifierProperties := make(
+	modifiers = alloc([]vk.DrmFormatModifierPropertiesEXT, count, ctx.allocator) or_return
+	drmFormatModifierProperties := alloc(
 		[]vk.DrmFormatModifierPropertiesEXT,
 		count,
 		ctx.tmp_allocator,
-	)
+	) or_return
 	modifier_properties_list.pDrmFormatModifierProperties = &drmFormatModifierProperties[0]
 
 	vk.GetPhysicalDeviceFormatProperties2(physical_device, format, &properties)
@@ -345,20 +354,18 @@ get_drm_modifiers :: proc(
 		l += 1
 	}
 
-	return modifiers[0:l]
+	return modifiers[0:l], nil
 }
 
 @(private = "file")
 check_physical_device_ext_support :: proc(
 	ctx: ^VulkanContext,
 	physical_device: vk.PhysicalDevice,
-) -> bool {
+) -> Error {
 	count: u32
-	available_extensions: []vk.ExtensionProperties
-	err: mem.Allocator_Error
 
 	vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, nil)
-	if available_extensions, err = make([]vk.ExtensionProperties, count, ctx.tmp_allocator); err != nil do return false
+	available_extensions := alloc([]vk.ExtensionProperties, count, ctx.tmp_allocator) or_return
 	vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, &available_extensions[0])
 
 	check :: proc(e: cstring, availables: []vk.ExtensionProperties) -> bool {
@@ -367,9 +374,9 @@ check_physical_device_ext_support :: proc(
 		return false
 	}
 
-	for ext in DEVICE_EXTENSIONS do if !check(ext, available_extensions) do return false
+	for ext in DEVICE_EXTENSIONS do if !check(ext, available_extensions) do return .ExtensionNotFound
 
-	return true
+	return nil
 }
 
 @(private = "file")
@@ -377,17 +384,12 @@ find_physical_device :: proc(
 	ctx: ^VulkanContext,
 	instance: vk.Instance,
 ) -> (
-	vk.PhysicalDevice,
-	bool,
+	physical_device: vk.PhysicalDevice,
+	err: Error,
 ) {
-	physical_device: vk.PhysicalDevice
-
-	devices: []vk.PhysicalDevice
-	err: mem.Allocator_Error
 	device_count: u32
-
 	vk.EnumeratePhysicalDevices(instance, &device_count, nil)
-	if devices, err = make([]vk.PhysicalDevice, device_count, ctx.tmp_allocator); err != nil do return physical_device, false
+	devices := alloc([]vk.PhysicalDevice, device_count, ctx.tmp_allocator) or_return
 	vk.EnumeratePhysicalDevices(instance, &device_count, &devices[0])
 
 	suitability :: proc(ctx: ^VulkanContext, dev: vk.PhysicalDevice) -> u32 {
@@ -400,7 +402,7 @@ find_physical_device :: proc(
 		score: u32 = 10
 		if props.deviceType == .DISCRETE_GPU do score += 1000
 
-		if !check_physical_device_ext_support(ctx, dev) do return 0
+		if check_physical_device_ext_support(ctx, dev) != nil do return 0
 
 		return score + props.limits.maxImageDimension2D
 	}
@@ -414,9 +416,9 @@ find_physical_device :: proc(
 		}
 	}
 
-	if hiscore == 0 do return physical_device, false
+	if hiscore == 0 do return physical_device, .PhysicalDeviceNotFound
 
-	return physical_device, true
+	return physical_device, nil
 }
 
 @(private = "file")
@@ -425,18 +427,15 @@ create_queues :: proc(
 	device: vk.Device,
 	queue_indices: []u32,
 ) -> (
-	[]vk.Queue,
-	bool,
+	queues: []vk.Queue,
+	err: Error,
 ) {
-	queues: []vk.Queue
-	err: mem.Allocator_Error
-	if queues, err = make([]vk.Queue, len(queue_indices), ctx.allocator); err != nil do return queues, false
-
+	queues = alloc([]vk.Queue, u32(len(queue_indices)), ctx.allocator) or_return
 	for &q, i in &queues {
 		vk.GetDeviceQueue(device, u32(queue_indices[i]), 0, &q)
 	}
 
-	return queues, true
+	return queues, nil
 }
 
 @(private = "file")
@@ -444,18 +443,15 @@ find_queue_indices :: proc(
 	ctx: ^VulkanContext,
 	physical_device: vk.PhysicalDevice,
 ) -> (
-	[2]u32,
-	bool,
+	indices: [2]u32,
+	err: Error,
 ) {
 	MAX: u32 = 0xFF
-	indices := [2]u32{MAX, MAX}
-
-	available_queues: []vk.QueueFamilyProperties
-	err: mem.Allocator_Error
+	indices = [2]u32{MAX, MAX}
 
 	queue_count: u32
 	vk.GetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_count, nil)
-	if available_queues, err = make([]vk.QueueFamilyProperties, queue_count, ctx.tmp_allocator); err != nil do return indices, false
+	available_queues := alloc([]vk.QueueFamilyProperties, queue_count, ctx.tmp_allocator) or_return
 	vk.GetPhysicalDeviceQueueFamilyProperties(
 		physical_device,
 		&queue_count,
@@ -468,23 +464,23 @@ find_queue_indices :: proc(
 	}
 
 	for indice in indices {
-		if indice == MAX do return indices, false
+		if indice == MAX do return indices, .FamilyIndiceNotComplete
 	}
 
-	return indices, true
+	return indices, nil
 }
 
 @(private = "file")
-create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandPool, bool) {
+create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandPool, Error) {
 	pool_info: vk.CommandPoolCreateInfo
 	pool_info.sType = .COMMAND_POOL_CREATE_INFO
 	pool_info.flags = {.RESET_COMMAND_BUFFER}
 	pool_info.queueFamilyIndex = queue_index
 
 	command_pool: vk.CommandPool
-	if res := vk.CreateCommandPool(device, &pool_info, nil, &command_pool); res != .SUCCESS do return command_pool, false
+	if vk.CreateCommandPool(device, &pool_info, nil, &command_pool) != .SUCCESS do return command_pool, .CreateCommandPoolFailed
 
-	return command_pool, true
+	return command_pool, nil
 }
 
 @(private = "file")
@@ -494,8 +490,8 @@ allocate_command_buffers :: proc(
 	command_pool: vk.CommandPool,
 	count: u32,
 ) -> (
-	[]vk.CommandBuffer,
-	bool,
+	command_buffers: []vk.CommandBuffer,
+	err: Error,
 ) {
 	alloc_info: vk.CommandBufferAllocateInfo
 	alloc_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
@@ -503,38 +499,36 @@ allocate_command_buffers :: proc(
 	alloc_info.level = .PRIMARY
 	alloc_info.commandBufferCount = count
 
-	command_buffers: []vk.CommandBuffer
-	err: mem.Allocator_Error
-	if command_buffers, err = make([]vk.CommandBuffer, count, ctx.allocator); err != nil do return command_buffers, false
-	if res := vk.AllocateCommandBuffers(device, &alloc_info, &command_buffers[0]); res != .SUCCESS do return command_buffers, false
+	command_buffers = alloc([]vk.CommandBuffer, count, ctx.allocator) or_return
+	if res := vk.AllocateCommandBuffers(device, &alloc_info, &command_buffers[0]); res != .SUCCESS do return command_buffers, .AllocateCommandBufferFailed
 
-	return command_buffers, true
+	return command_buffers, nil
 }
 
 @(private = "file")
-create_fence :: proc(device: vk.Device) -> (vk.Fence, bool) {
+create_fence :: proc(device: vk.Device) -> (vk.Fence, Error) {
 	info := vk.FenceCreateInfo {
 		sType = .FENCE_CREATE_INFO,
 		flags = {.SIGNALED},
 	}
 
 	fence: vk.Fence
-	if vk.CreateFence(device, &info, nil, &fence) != .SUCCESS do return fence, false
+	if vk.CreateFence(device, &info, nil, &fence) != .SUCCESS do return fence, .CreateFenceFailed
 
-	return fence, true
+	return fence, nil
 }
 
 @(private = "file")
-create_semaphore :: proc(device: vk.Device) -> (vk.Semaphore, bool) {
+create_semaphore :: proc(device: vk.Device) -> (vk.Semaphore, Error) {
 	info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,
 		flags = {},
 	}
 
 	semaphore: vk.Semaphore
-	if vk.CreateSemaphore(device, &info, nil, &semaphore) != .SUCCESS do return semaphore, false
+	if vk.CreateSemaphore(device, &info, nil, &semaphore) != .SUCCESS do return semaphore, .CreateSemaphoreFailed
 
-	return semaphore, true
+	return semaphore, nil
 }
 
 drm_format :: proc(format: vk.Format) -> u32 {
@@ -552,16 +546,16 @@ find_memory_type :: proc(
 	properties: vk.MemoryPropertyFlags,
 ) -> (
 	u32,
-	bool,
+	Error,
 ) {
 	mem_properties: vk.PhysicalDeviceMemoryProperties
 	vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
 
 	for i in 0 ..< mem_properties.memoryTypeCount {
-		if (type_filter & (1 << i) != 0) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties do return i, true
+		if (type_filter & (1 << i) != 0) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties do return i, nil
 	}
 
-	return 0, false
+	return 0, .MemoryNotFound
 }
 
 load_fn :: proc(ptr: rawptr, name: cstring) {

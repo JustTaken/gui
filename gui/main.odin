@@ -1,11 +1,57 @@
 package main
 
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:time"
+
+Error :: enum {
+	OutOfMemory,
+	FileNotFound,
+	ReadFileFailed,
+	AttributeKindNotFound,
+	NumberParseFailed,
+	CreateInstanceFailed,
+	CreateBuffer,
+	BeginCommandBufferFailed,
+	EndCommandBufferFailed,
+	AllocateCommandBufferFailed,
+	VulkanLib,
+	LayerNotFound,
+	PhysicalDeviceNotFound,
+	FamilyIndiceNotComplete,
+	MemoryNotFound,
+	EnviromentVariablesNotSet,
+	WaylandSocketNotAvaiable,
+	SendMessageFailed,
+	BufferNotReleased,
+	CreateDescriptorSetLayoutFailed,
+	CreatePipelineFailed,
+	GetImageModifier,
+	AllocateDeviceMemory,
+	CreateImageFailed,
+	WaitFencesFailed,
+	QueueSubmitFailed,
+	CreateImageViewFailed,
+	CreatePipelineLayouFailed,
+	CreateDescriptorPoolFailed,
+	CreateFramebufferFailed,
+	GetFdFailed,
+	SizeNotMatch,
+	CreateShaderModuleFailed,
+	AllocateDescriptorSetFailed,
+	ExtensionNotFound,
+	CreateDeviceFailed,
+	CreateRenderPassFailed,
+	CreateSemaphoreFailed,
+	CreateFenceFailed,
+	CreateCommandPoolFailed,
+	SocketConnectFailed,
+	GltfLoadFailed,
+}
 
 main :: proc() {
 	bytes: []u8
+	err: Error
 	arena: mem.Arena
 	tmp_arena: mem.Arena
 
@@ -16,7 +62,11 @@ main :: proc() {
 	height: u32 = 1080
 	frames: u32 = 2
 
-	if bytes = make([]u8, 1024 * 1024 * 2); bytes == nil do panic("Out of memory")
+	if bytes, err = alloc([]u8, 1024 * 1024 * 2, context.allocator); err != nil {
+		fmt.println("Error:", err)
+		return
+	}
+
 	defer delete(bytes)
 
 	mem.arena_init(&arena, bytes)
@@ -25,9 +75,15 @@ main :: proc() {
 	mem.arena_init(&tmp_arena, make([]u8, 1024 * 1024 * 1, context.allocator))
 	context.temp_allocator = mem.arena_allocator(&tmp_arena)
 
-	if !init(&vk, &wl, width, height, frames, &arena, &tmp_arena) do panic("Failed to initialize")
+	if err = init(&vk, &wl, width, height, frames, &arena, &tmp_arena); err != nil {
+		fmt.println("Error:", err)
+		return
+	}
 
-	loop(&vk, &wl, &arena, &tmp_arena)
+	if err = loop(&vk, &wl, &arena, &tmp_arena); err != nil {
+		fmt.println("Error:", err)
+		return
+	}
 
 	deinit_wayland(&wl)
 	deinit_vulkan(&vk)
@@ -44,12 +100,11 @@ init :: proc(
 	frames: u32,
 	arena: ^mem.Arena,
 	tmp_arena: ^mem.Arena,
-) -> bool {
+) -> Error {
 	init_vulkan(vk, 1920, 1080, frames, arena, tmp_arena) or_return
-
 	init_wayland(wl, vk, width, height, frames, arena, tmp_arena) or_return
 
-	return true
+	return nil
 }
 
 loop :: proc(
@@ -57,52 +112,71 @@ loop :: proc(
 	wl: ^WaylandContext,
 	arena: ^mem.Arena,
 	tmp_arena: ^mem.Arena,
-) -> bool {
-	geometries := make([]^Geometry, 10, context.allocator)
+) -> Error {
+	mesh := gltf_from_file("assets/cube.gltf", vk.tmp_allocator) or_return
 
-	triangle_vertices := [?]Vertex {
-		{position = {-1.0, -1.0}},
-		{position = {0.0, 1.0}},
-		{position = {1.0, -1.0}},
+	count := u32(len(mesh.position.([][3]f32)))
+	vertices := alloc([]Vertex, count, vk.tmp_allocator) or_return
+	indices := mesh.indice.([]u16)
+
+	{
+		positions := mesh.position.([][3]f32)
+		normals := mesh.normal.([][3]f32)
+		textures := mesh.texture.([][2]f32)
+
+		for i in 0 ..< count {
+			vertices[i] = Vertex {
+				position = positions[i],
+				normal   = normals[i],
+				texture  = textures[i],
+			}
+		}
 	}
 
-	quad_vertices := [?]Vertex {
-		{position = {-1.0, -1.0}},
-		{position = {-1.0, 1.0}},
-		{position = {1.0, -1.0}},
-		{position = {1.0, -1.0}},
-		{position = {-1.0, 1.0}},
-		{position = {1.0, 1.0}},
-	}
-
-	triangle_model := matrix[4, 4]f32{
-		400, 0, 0, 0, 
-		0, 400, 0, 0, 
+	width := f32(400)
+	height := f32(400)
+	model := matrix[4, 4]f32{
+		width, 0, 0, width, 
+		0, height, 0, -height, 
 		0, 0, 1, 1, 
 		0, 0, 0, 1, 
 	}
 
-	triangle_color := [3]f32{1.0, 1.0, 0.0}
+	widget_model := model
 
-	quad_model := matrix[4, 4]f32{
-		400, 0, 0, 0, 
-		0, 400, 0, 0, 
-		0, 0, 1, 1, 
+	color := Color{1.0, 0.0, 0.0, 1.0}
+
+	model1 := matrix[4, 4]f32{
+		300, 0, 0, 100, 
+		0, 50, 0, -50, 
+		0, 0, 1, 0, 
 		0, 0, 0, 1, 
 	}
 
-	quad_color := [3]f32{1.0, 1.0, 0.0}
+	model2 := matrix[4, 4]f32{
+		300, 0, 0, 100, 
+		0, 50, 0, -(50 + 5) * 2 - 50, 
+		0, 0, 1, 0, 
+		0, 0, 0, 1, 
+	}
 
-	geometries[0] = add_geometry(vk, triangle_vertices[:], 1) or_return
-	geometries[1] = add_geometry(vk, quad_vertices[:], 1) or_return
+	model3 := matrix[4, 4]f32{
+		300, 0, 0, 100, 
+		0, 50, 0, -(50 + 5) * 4 - 50, 
+		0, 0, 1, 0, 
+		0, 0, 0, 1, 
+	}
 
-	triangle_id := add_geometry_instance(
-		vk,
-		geometries[0],
-		triangle_model,
-		triangle_color,
-	) or_return
-	quad_id := add_geometry_instance(vk, geometries[1], quad_model, quad_color) or_return
+	color1 := Color{1.0, 1.0, 1.0, 1.0}
+	color2 := Color{0.0, 0.0, 1.0, 1.0}
+	color3 := Color{1.0, 0.0, 1.0, 1.0}
+
+	geometry := geometry_create(vk, vertices, indices, 4) or_return
+	widget := widget_create(vk, geometry, widget_model, color, 3) or_return
+
+	instance1 := widget_add_child(vk, widget, geometry, model1, color1) or_return
+	instance2 := widget_add_child(vk, widget, geometry, model2, color2) or_return
+	instance3 := widget_add_child(vk, widget, geometry, model3, color3) or_return
 
 	i: i32 = 0
 
@@ -110,18 +184,23 @@ loop :: proc(
 		mark := mem.begin_arena_temp_memory(tmp_arena)
 		defer mem.end_arena_temp_memory(mark)
 
-		triangle_model[0, 3] = f32(i % 400)
-		quad_model[1, 3] = -f32(i % 400)
+		// widget_model[1, 3] = model[1, 3] - f32(i % 400)
+		// widget_update(vk, quad_widget, widget_model) or_return
 
-		update_geometry_instance(vk, geometries[0], triangle_id, triangle_model, nil) or_return
-		update_geometry_instance(vk, geometries[1], quad_id, quad_model, nil) or_return
-
-		if !render(wl) {
+		if render(wl) != nil {
 			fmt.println("Failed to render frame")
 		}
 
-		i += 1
+		i += 20
 	}
 
-	return true
+	return nil
+}
+
+alloc :: proc($T: typeid/[]$E, count: u32, allocator: runtime.Allocator) -> ([]E, Error) {
+	if array, err := make(T, count, allocator); err == nil {
+		return array, nil
+	}
+
+	return nil, .OutOfMemory
 }
