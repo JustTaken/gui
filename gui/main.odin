@@ -47,6 +47,12 @@ Error :: enum {
 	CreateCommandPoolFailed,
 	SocketConnectFailed,
 	GltfLoadFailed,
+	InvalidKeymapInput,
+	TypeAssertionFailed,
+	IdentifierAssertionFailed,
+	KeywordAssertionFailed,
+	SymbolAssertionFailed,
+	Eof,
 }
 
 main :: proc() {
