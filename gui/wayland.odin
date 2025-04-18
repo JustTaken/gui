@@ -87,6 +87,7 @@ WaylandContext :: struct {
 	width:                          u32,
 	height:                         u32,
 	running:                        bool,
+	keymap:                         Keymap,
 	vk:                             ^VulkanContext,
 	arena:                          ^mem.Arena,
 	allocator:                      runtime.Allocator,
@@ -820,7 +821,7 @@ seat_capabilities :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argumen
 
 @(private = "file")
 keyboard_keymap_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-	fmt.println("keymap:", arguments)
+	err: Error
 	size := uint(arguments[2].(wl.Uint))
 	data := ([^]u8)(
 		posix.mmap(nil, size, {.READ}, {.PRIVATE}, posix.FD(arguments[1].(wl.Fd)), 0),
@@ -831,9 +832,13 @@ keyboard_keymap_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.
 		panic("Mapped data is null")
 	}
 
-	os.write_entire_file("output.txt", data)
+	ctx.keymap, err = keymap_from_bytes(data, ctx.allocator)
 
-	fmt.println("content:", string(data))
+	if err != nil {
+		fmt.println("Failed to create keymap")
+	} else {
+		fmt.println("Successfully read keymap file data")
+	}
 }
 
 @(private = "file")
@@ -842,7 +847,8 @@ keyboard_enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.A
 keyboard_leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
 keyboard_key_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-	fmt.println("key pressed:", arguments)
+	code := get_code(ctx.keymap, u32(arguments[2].(wl.Uint)))
+	fmt.println("key pressed:", code)
 }
 @(private = "file")
 keyboard_modifiers_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}

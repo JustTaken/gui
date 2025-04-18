@@ -52,7 +52,9 @@ Error :: enum {
 	IdentifierAssertionFailed,
 	KeywordAssertionFailed,
 	SymbolAssertionFailed,
-	Eof,
+	InvalidToken,
+	CodeNotFound,
+	UnregisteredKey,
 }
 
 main :: proc() {
@@ -63,6 +65,7 @@ main :: proc() {
 
 	wl: WaylandContext
 	vk: VulkanContext
+	// keymap: Keymap
 
 	width: u32 = 1920
 	height: u32 = 1080
