@@ -36,7 +36,7 @@ Widget :: struct {
 	childs_len:  u32,
 }
 
-widgets_init :: proc(ctx: ^VulkanContext, count: u32) -> Error {
+widgets_init :: proc(ctx: ^Vulkan_Context, count: u32) -> Error {
 	ctx.widgets = alloc([]Widget, count, ctx.allocator) or_return
 	ctx.widgets_len = 0
 
@@ -44,7 +44,7 @@ widgets_init :: proc(ctx: ^VulkanContext, count: u32) -> Error {
 }
 
 widget_create :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	geometry_id: u32,
 	model: InstanceModel,
 	color: Color,
@@ -68,7 +68,7 @@ widget_create :: proc(
 }
 
 widget_add_child :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	widget_id: u32,
 	geometry_id: u32,
 	model: InstanceModel,
@@ -92,7 +92,7 @@ widget_add_child :: proc(
 	return id, nil
 }
 
-widget_update :: proc(ctx: ^VulkanContext, widget_id: u32, model: InstanceModel) -> Error {
+widget_update :: proc(ctx: ^Vulkan_Context, widget_id: u32, model: InstanceModel) -> Error {
 	widget := &ctx.widgets[widget_id]
 	widget.model = model
 	geometry_update_instance(ctx, widget.geometry_id, widget.id, model, nil) or_return
@@ -123,7 +123,7 @@ relative_top_left :: proc(parent_model: InstanceModel, model: InstanceModel) -> 
 	return relative
 }
 
-geometries_init :: proc(ctx: ^VulkanContext, count: u32, max_instances: u32) -> Error {
+geometries_init :: proc(ctx: ^Vulkan_Context, count: u32, max_instances: u32) -> Error {
 	ctx.geometries = alloc([]Geometry, count, ctx.allocator) or_return
 	ctx.geometries_len = 0
 	ctx.max_instances = 0
@@ -171,7 +171,7 @@ geometries_init :: proc(ctx: ^VulkanContext, count: u32, max_instances: u32) -> 
 }
 
 geometry_create :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	vertices: []Vertex,
 	indices: []Indice,
 	max_instances: u32,
@@ -227,7 +227,7 @@ geometry_create :: proc(
 }
 
 geometry_add_instance :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	geometry_id: u32,
 	model: InstanceModel,
 	color: Color,
@@ -246,7 +246,7 @@ geometry_add_instance :: proc(
 }
 
 geometry_update_instance :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	geometry_id: u32,
 	id: u32,
 	model: Maybe(InstanceModel),

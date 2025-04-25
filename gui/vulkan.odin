@@ -26,7 +26,7 @@ PLANE_INDICES := [?]vk.ImageAspectFlag {
 
 Projection :: matrix[4, 4]f32
 
-VulkanContext :: struct {
+Vulkan_Context :: struct {
 	instance:              vk.Instance,
 	device:                vk.Device,
 	physical_device:       vk.PhysicalDevice,
@@ -66,7 +66,7 @@ VulkanContext :: struct {
 }
 
 init_vulkan :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	width: u32,
 	height: u32,
 	frame_count: u32,
@@ -130,7 +130,7 @@ init_vulkan :: proc(
 	return nil
 }
 
-deinit_vulkan :: proc(ctx: ^VulkanContext) {
+deinit_vulkan :: proc(ctx: ^Vulkan_Context) {
 	vk.WaitForFences(ctx.device, 1, &ctx.draw_fence, true, 0xFFFFFF)
 	vk.WaitForFences(ctx.device, 1, &ctx.copy_fence, true, 0xFFFFFF)
 
@@ -171,7 +171,7 @@ deinit_vulkan :: proc(ctx: ^VulkanContext) {
 }
 
 @(private = "file")
-create_instance :: proc(ctx: ^VulkanContext) -> (instance: vk.Instance, ok: Error) {
+create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: Error) {
 	layer_count: u32
 	vk.EnumerateInstanceLayerProperties(&layer_count, nil)
 	layers := alloc([]vk.LayerProperties, layer_count, ctx.tmp_allocator) or_return
@@ -208,7 +208,7 @@ create_instance :: proc(ctx: ^VulkanContext) -> (instance: vk.Instance, ok: Erro
 
 @(private = "file")
 create_device :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	physical_device: vk.PhysicalDevice,
 	indices: []u32,
 ) -> (
@@ -270,7 +270,7 @@ create_device :: proc(
 
 @(private = "file")
 get_drm_modifiers :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	physical_device: vk.PhysicalDevice,
 	format: vk.Format,
 ) -> (
@@ -359,7 +359,7 @@ get_drm_modifiers :: proc(
 
 @(private = "file")
 check_physical_device_ext_support :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	physical_device: vk.PhysicalDevice,
 ) -> Error {
 	count: u32
@@ -381,7 +381,7 @@ check_physical_device_ext_support :: proc(
 
 @(private = "file")
 find_physical_device :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	instance: vk.Instance,
 ) -> (
 	physical_device: vk.PhysicalDevice,
@@ -392,7 +392,7 @@ find_physical_device :: proc(
 	devices := alloc([]vk.PhysicalDevice, device_count, ctx.tmp_allocator) or_return
 	vk.EnumeratePhysicalDevices(instance, &device_count, &devices[0])
 
-	suitability :: proc(ctx: ^VulkanContext, dev: vk.PhysicalDevice) -> u32 {
+	suitability :: proc(ctx: ^Vulkan_Context, dev: vk.PhysicalDevice) -> u32 {
 		props: vk.PhysicalDeviceProperties
 		features: vk.PhysicalDeviceFeatures
 
@@ -423,7 +423,7 @@ find_physical_device :: proc(
 
 @(private = "file")
 create_queues :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	device: vk.Device,
 	queue_indices: []u32,
 ) -> (
@@ -440,7 +440,7 @@ create_queues :: proc(
 
 @(private = "file")
 find_queue_indices :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	physical_device: vk.PhysicalDevice,
 ) -> (
 	indices: [2]u32,
@@ -485,7 +485,7 @@ create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandP
 
 @(private = "file")
 allocate_command_buffers :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	device: vk.Device,
 	command_pool: vk.CommandPool,
 	count: u32,

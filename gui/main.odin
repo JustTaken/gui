@@ -63,8 +63,8 @@ main :: proc() {
 	arena: mem.Arena
 	tmp_arena: mem.Arena
 
-	wl: WaylandContext
-	vk: VulkanContext
+	wl: Wayland_Context
+	vk: Vulkan_Context
 	// keymap: Keymap
 
 	width: u32 = 1920
@@ -102,8 +102,8 @@ main :: proc() {
 }
 
 init :: proc(
-	vk: ^VulkanContext,
-	wl: ^WaylandContext,
+	vk: ^Vulkan_Context,
+	wl: ^Wayland_Context,
 	width: u32,
 	height: u32,
 	frames: u32,
@@ -117,8 +117,8 @@ init :: proc(
 }
 
 loop :: proc(
-	vk: ^VulkanContext,
-	wl: ^WaylandContext,
+	vk: ^Vulkan_Context,
+	wl: ^Wayland_Context,
 	arena: ^mem.Arena,
 	tmp_arena: ^mem.Arena,
 ) -> Error {
@@ -192,9 +192,6 @@ loop :: proc(
 	for wl.running {
 		mark := mem.begin_arena_temp_memory(tmp_arena)
 		defer mem.end_arena_temp_memory(mark)
-
-		// widget_model[1, 3] = model[1, 3] - f32(i % 400)
-		// widget_update(vk, quad_widget, widget_model) or_return
 
 		if render(wl) != nil {
 			fmt.println("Failed to render frame")

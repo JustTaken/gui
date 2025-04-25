@@ -17,7 +17,7 @@ Vector :: struct(T: typeid) {
 	len:  u32,
 }
 
-Callback :: proc(_: ^WaylandContext, _: u32, _: []wl.Argument)
+Callback :: proc(_: ^Wayland_Context, _: u32, _: []wl.Argument)
 CallbackConfig :: struct {
 	name:     string,
 	function: Callback,
@@ -33,7 +33,7 @@ Modifier :: struct {
 	modifier: u64,
 }
 
-WaylandContext :: struct {
+Wayland_Context :: struct {
 	socket:                         posix.FD,
 	objects:                        Vector(InterfaceObject),
 	output_buffer:                  Vector(u8),
@@ -87,8 +87,8 @@ WaylandContext :: struct {
 	width:                          u32,
 	height:                         u32,
 	running:                        bool,
-	keymap:                         Keymap,
-	vk:                             ^VulkanContext,
+	keymap:                         Keymap_Context,
+	vk:                             ^Vulkan_Context,
 	arena:                          ^mem.Arena,
 	allocator:                      runtime.Allocator,
 	tmp_arena:                      ^mem.Arena,
@@ -96,8 +96,8 @@ WaylandContext :: struct {
 }
 
 init_wayland :: proc(
-	ctx: ^WaylandContext,
-	vk: ^VulkanContext,
+	ctx: ^Wayland_Context,
+	vk: ^Vulkan_Context,
 	width: u32,
 	height: u32,
 	frame_count: u32,
@@ -211,8 +211,8 @@ init_wayland :: proc(
 	return nil
 }
 
-deinit_wayland :: proc(ctx: ^WaylandContext) {}
-render :: proc(ctx: ^WaylandContext) -> Error {
+deinit_wayland :: proc(ctx: ^Wayland_Context) {}
+render :: proc(ctx: ^Wayland_Context) -> Error {
 	time.sleep(time.Millisecond * 60)
 
 	roundtrip(ctx) or_return
@@ -225,7 +225,7 @@ render :: proc(ctx: ^WaylandContext) -> Error {
 }
 
 @(private = "file")
-resize :: proc(ctx: ^WaylandContext, width: u32, height: u32) {
+resize :: proc(ctx: ^Wayland_Context, width: u32, height: u32) {
 	ctx.width = width
 	ctx.height = height
 
@@ -252,7 +252,7 @@ resize :: proc(ctx: ^WaylandContext, width: u32, height: u32) {
 }
 
 @(private = "file")
-roundtrip :: proc(ctx: ^WaylandContext) -> Error {
+roundtrip :: proc(ctx: ^Wayland_Context) -> Error {
 	recv(ctx) or_return
 	for read(ctx) {}
 
@@ -260,7 +260,7 @@ roundtrip :: proc(ctx: ^WaylandContext) -> Error {
 }
 
 @(private = "file")
-create_surface :: proc(ctx: ^WaylandContext) {
+create_surface :: proc(ctx: ^Wayland_Context) {
 	ctx.surface_id = get_id(
 		ctx,
 		"wl_surface",
@@ -281,7 +281,7 @@ create_surface :: proc(ctx: ^WaylandContext) {
 }
 
 @(private = "file")
-create_xdg_surface :: proc(ctx: ^WaylandContext) {
+create_xdg_surface :: proc(ctx: ^Wayland_Context) {
 	ctx.xdg_surface_id = get_id(
 		ctx,
 		"xdg_surface",
@@ -314,7 +314,7 @@ create_xdg_surface :: proc(ctx: ^WaylandContext) {
 }
 
 @(private = "file")
-create_dma :: proc(ctx: ^WaylandContext) {
+create_dma :: proc(ctx: ^Wayland_Context) {
 	ctx.dma_feedback_id = get_id(
 		ctx,
 		"zwp_linux_dmabuf_feedback_v1",
@@ -339,7 +339,7 @@ create_dma :: proc(ctx: ^WaylandContext) {
 }
 
 @(private = "file")
-dma_params_init :: proc(ctx: ^WaylandContext) {
+dma_params_init :: proc(ctx: ^Wayland_Context) {
 	ctx.dma_params_id = get_id(
 		ctx,
 		"zwp_linux_buffer_params_v1",
@@ -354,7 +354,7 @@ dma_params_init :: proc(ctx: ^WaylandContext) {
 	ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id)
 }
 
-write :: proc(ctx: ^WaylandContext, arguments: []wl.Argument, object_id: u32, opcode: u32) {
+write :: proc(ctx: ^Wayland_Context, arguments: []wl.Argument, object_id: u32, opcode: u32) {
 	object := get_object(ctx, object_id)
 	request := get_request(object, opcode)
 	// fmt.println("->", object.interface.name, object_id, opcode, request.name, arguments)
@@ -396,7 +396,7 @@ write :: proc(ctx: ^WaylandContext, arguments: []wl.Argument, object_id: u32, op
 }
 
 @(private = "file")
-read :: proc(ctx: ^WaylandContext) -> bool {
+read :: proc(ctx: ^Wayland_Context) -> bool {
 	ctx.values.len = 0
 	bytes_len: u32 = 0
 
@@ -441,7 +441,7 @@ read :: proc(ctx: ^WaylandContext) -> bool {
 }
 
 @(private = "file")
-read_and_write :: proc(ctx: ^WaylandContext, $T: typeid) -> bool {
+read_and_write :: proc(ctx: ^Wayland_Context, $T: typeid) -> bool {
 	value := vec_read(&ctx.input_buffer, T) or_return
 	vec_append(&ctx.values, value)
 
@@ -449,13 +449,13 @@ read_and_write :: proc(ctx: ^WaylandContext, $T: typeid) -> bool {
 }
 
 @(private = "file")
-read_fd_and_write :: proc(ctx: ^WaylandContext) -> bool {
+read_fd_and_write :: proc(ctx: ^Wayland_Context) -> bool {
 	vec_append(&ctx.values, ctx.in_fds[ctx.in_fd_index])
 	return true
 }
 
 @(private = "file")
-read_and_write_collection :: proc(ctx: ^WaylandContext, $T: typeid, length_ptr: ^u32) -> bool {
+read_and_write_collection :: proc(ctx: ^Wayland_Context, $T: typeid, length_ptr: ^u32) -> bool {
 	start := length_ptr^
 
 	length := vec_read(&ctx.input_buffer, u32) or_return
@@ -473,7 +473,7 @@ read_and_write_collection :: proc(ctx: ^WaylandContext, $T: typeid, length_ptr: 
 }
 
 @(private = "file")
-recv :: proc(ctx: ^WaylandContext) -> Error {
+recv :: proc(ctx: ^Wayland_Context) -> Error {
 	iovec := posix.iovec {
 		iov_base = raw_data(ctx.input_buffer.data),
 		iov_len  = 4096,
@@ -513,13 +513,13 @@ recv :: proc(ctx: ^WaylandContext) -> Error {
 }
 
 @(private = "file")
-insert_fd :: proc(ctx: ^WaylandContext, fd: wl.Fd) {
+insert_fd :: proc(ctx: ^Wayland_Context, fd: wl.Fd) {
 	ctx.out_fds[ctx.out_fds_len] = fd
 	ctx.out_fds_len += 1
 }
 
 @(private = "file")
-send :: proc(ctx: ^WaylandContext) -> Error {
+send :: proc(ctx: ^Wayland_Context) -> Error {
 	if ctx.output_buffer.len == 0 {
 		return nil
 	}
@@ -558,7 +558,7 @@ send :: proc(ctx: ^WaylandContext) -> Error {
 }
 
 @(private = "file")
-ctx_append :: proc(ctx: ^WaylandContext, callbacks: []CallbackConfig, interface: ^wl.Interface) {
+ctx_append :: proc(ctx: ^Wayland_Context, callbacks: []CallbackConfig, interface: ^wl.Interface) {
 	if len(callbacks) != len(interface.events) {
 		panic("Incorrect callback length")
 	}
@@ -577,7 +577,7 @@ ctx_append :: proc(ctx: ^WaylandContext, callbacks: []CallbackConfig, interface:
 }
 
 @(private = "file")
-get_object :: proc(ctx: ^WaylandContext, id: u32) -> InterfaceObject {
+get_object :: proc(ctx: ^Wayland_Context, id: u32) -> InterfaceObject {
 	if len(ctx.objects.data) < int(id) {
 		panic("OBject out of bounds")
 	}
@@ -587,7 +587,7 @@ get_object :: proc(ctx: ^WaylandContext, id: u32) -> InterfaceObject {
 
 @(private = "file")
 get_id :: proc(
-	ctx: ^WaylandContext,
+	ctx: ^Wayland_Context,
 	name: string,
 	callbacks: []CallbackConfig,
 	interfaces: []wl.Interface,
@@ -602,7 +602,7 @@ get_id :: proc(
 	panic("Failed to get id")
 }
 
-copy_id :: proc(ctx: ^WaylandContext, id: u32) -> u32 {
+copy_id :: proc(ctx: ^Wayland_Context, id: u32) -> u32 {
 	defer vec_append(&ctx.objects, get_object(ctx, id))
 	return ctx.objects.len + 1
 }
@@ -635,7 +635,7 @@ get_event_opcode :: proc(interface: ^wl.Interface, name: string) -> u32 {
 	panic("event  opcode not found")
 }
 
-get_request_opcode :: proc(ctx: ^WaylandContext, name: string, object_id: u32) -> u32 {
+get_request_opcode :: proc(ctx: ^Wayland_Context, name: string, object_id: u32) -> u32 {
 	requests := get_object(ctx, object_id).interface.requests
 
 	for request, i in requests {
@@ -653,7 +653,7 @@ new_callback :: proc(name: string, callback: Callback) -> CallbackConfig {
 }
 
 @(private = "file")
-global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+global_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	ok: bool
 	str := arguments[1].(wl.String)
 	version := arguments[2].(wl.Uint)
@@ -758,15 +758,13 @@ global_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument)
 			ctx.registry_bind_opcode,
 		)
 	}
-
-	// fmt.println("interface:", string(([]u8)(str)))
 }
 
 @(private = "file")
-global_remove_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+global_remove_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 
 @(private = "file")
-seat_capabilities :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+seat_capabilities :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	SeatCapability :: enum {
 		Pointer  = 0,
 		Keyboard = 1,
@@ -820,7 +818,7 @@ seat_capabilities :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argumen
 }
 
 @(private = "file")
-keyboard_keymap_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	err: Error
 	size := uint(arguments[2].(wl.Uint))
 	data := ([^]u8)(
@@ -832,7 +830,7 @@ keyboard_keymap_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.
 		panic("Mapped data is null")
 	}
 
-	ctx.keymap, err = keymap_from_bytes(data, ctx.allocator)
+	ctx.keymap, err = keymap_from_bytes(data, ctx.allocator, ctx.tmp_allocator)
 
 	if err != nil {
 		fmt.println("Failed to create keymap")
@@ -842,69 +840,74 @@ keyboard_keymap_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.
 }
 
 @(private = "file")
-keyboard_enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+keyboard_enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-keyboard_leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+keyboard_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-keyboard_key_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
-	code := get_code(ctx.keymap, u32(arguments[2].(wl.Uint)))
-	fmt.println("key pressed:", code)
+keyboard_key_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
+	code := get_code(&ctx.keymap, u32(arguments[2].(wl.Uint)))
+
+	if code != nil {
+		fmt.println("key pressed:", code)
+	}
 }
 @(private = "file")
-keyboard_modifiers_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+keyboard_modifiers_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
+	set_modifiers(&ctx.keymap, u32(arguments[1].(wl.Uint)))
+}
 @(private = "file")
-keyboard_repeat_info_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+keyboard_repeat_info_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 
 @(private = "file")
-pointer_enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_motion_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_motion_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_button_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_button_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_axis_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_axis_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_frame_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_frame_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_axis_source_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_axis_source_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_axis_stop_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_axis_stop_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_axis_discrete_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_axis_discrete_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_axis_create_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_axis_create_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-pointer_axis_value120_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+pointer_axis_value120_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
 pointer_axis_relative_direction_callback :: proc(
-	ctx: ^WaylandContext,
+	ctx: ^Wayland_Context,
 	id: u32,
 	arguments: []wl.Argument,
 ) {}
 
 @(private = "file")
-seat_name :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+seat_name :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 
 }
 
 @(private = "file")
-dma_modifier_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+dma_modifier_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-dma_format_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+dma_format_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+configure_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	write(ctx, {arguments[0]}, id, ctx.ack_configure_opcode)
 }
 
 @(private = "file")
-ping_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+ping_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	write(ctx, {arguments[0]}, ctx.xdg_wm_base_id, ctx.pong_opcode)
 }
 
 @(private = "file")
-toplevel_configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+toplevel_configure_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	width := u32(arguments[0].(wl.Int))
 	height := u32(arguments[1].(wl.Int))
 
@@ -915,46 +918,50 @@ toplevel_configure_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []
 }
 
 @(private = "file")
-toplevel_close_callback :: proc(ctx: ^WaylandContext, id: u32, arugments: []wl.Argument) {
+toplevel_close_callback :: proc(ctx: ^Wayland_Context, id: u32, arugments: []wl.Argument) {
 	ctx.running = false
 }
 
 @(private = "file")
 toplevel_configure_bounds_callback :: proc(
-	ctx: ^WaylandContext,
+	ctx: ^Wayland_Context,
 	id: u32,
 	arugments: []wl.Argument,
 ) {}
 
 @(private = "file")
 toplevel_wm_capabilities_callback :: proc(
-	ctx: ^WaylandContext,
+	ctx: ^Wayland_Context,
 	id: u32,
 	arugments: []wl.Argument,
 ) {}
 
 @(private = "file")
-buffer_release_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+buffer_release_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	ctx.buffers[id - ctx.buffers[0].id].released = true
 }
 
 @(private = "file")
-enter_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-leave_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-preferred_buffer_scale_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+preferred_buffer_scale_callback :: proc(
+	ctx: ^Wayland_Context,
+	id: u32,
+	arguments: []wl.Argument,
+) {}
 @(private = "file")
 preferred_buffer_transform_callback :: proc(
-	ctx: ^WaylandContext,
+	ctx: ^Wayland_Context,
 	id: u32,
 	arguments: []wl.Argument,
 ) {}
 
 @(private = "file")
-dma_tranche_flags_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+dma_tranche_flags_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
-dma_format_table_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+dma_format_table_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	fd := posix.FD(arguments[0].(wl.Fd))
 	size := u32(arguments[1].(wl.Uint))
 
@@ -986,24 +993,24 @@ dma_format_table_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl
 }
 
 @(private = "file")
-dma_main_device_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+dma_main_device_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	ctx.dma_main_device = intrinsics.unaligned_load((^u64)(raw_data(arguments[0].(wl.Array))))
 }
 
 @(private = "file")
-dma_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+dma_done_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	write(ctx, {}, id, ctx.dma_feedback_destroy_opcode)
 }
 
 @(private = "file")
 dma_tranche_target_device_callback :: proc(
-	ctx: ^WaylandContext,
+	ctx: ^Wayland_Context,
 	id: u32,
 	arguments: []wl.Argument,
 ) {}
 
 @(private = "file")
-dma_tranche_formats_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+dma_tranche_formats_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	array := arguments[0].(wl.Array)
 	indices := ([^]u16)(raw_data(array))[0:len(array) / 2]
 
@@ -1017,21 +1024,21 @@ dma_tranche_formats_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: [
 }
 
 @(private = "file")
-dma_tranche_done_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+dma_tranche_done_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 
 @(private = "file")
-param_created_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+param_created_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 
 @(private = "file")
-param_failed_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+param_failed_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	panic("Failed to create dma buf server side")
 }
 
 @(private = "file")
-delete_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {}
+delete_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 
 @(private = "file")
-error_callback :: proc(ctx: ^WaylandContext, id: u32, arguments: []wl.Argument) {
+error_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
 	fmt.println("error:", string(arguments[2].(wl.String)))
 }
 

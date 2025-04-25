@@ -24,7 +24,7 @@ Buffer :: struct {
 	next:     ^Buffer,
 }
 
-staging_buffer_init :: proc(ctx: ^VulkanContext, size: vk.DeviceSize) -> Error {
+staging_buffer_init :: proc(ctx: ^Vulkan_Context, size: vk.DeviceSize) -> Error {
 	ctx.staging.buffer = vulkan_buffer_create(ctx.device, size, {.TRANSFER_SRC}) or_return
 	ctx.staging.memory = vulkan_buffer_create_memory(
 		ctx.device,
@@ -38,7 +38,7 @@ staging_buffer_init :: proc(ctx: ^VulkanContext, size: vk.DeviceSize) -> Error {
 	return nil
 }
 
-update_projection :: proc(ctx: ^VulkanContext, projection: Projection) -> Error {
+update_projection :: proc(ctx: ^Vulkan_Context, projection: Projection) -> Error {
 	m := [?]Projection{projection}
 	offset := vulkan_buffer_copy_data(Projection, ctx, m[:])
 
@@ -100,7 +100,7 @@ vulkan_buffer_create_memory :: proc(
 }
 
 vulkan_buffer_copy :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	dst_buffer: vk.Buffer,
 	size: vk.DeviceSize,
 	dst_offset: vk.DeviceSize,
@@ -128,7 +128,7 @@ vulkan_buffer_copy :: proc(
 	return nil
 }
 
-vulkan_buffer_copy_data :: proc($T: typeid, ctx: ^VulkanContext, data: []T) -> vk.DeviceSize {
+vulkan_buffer_copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T) -> vk.DeviceSize {
 	l := len(data)
 	size := u32(l * size_of(T))
 	offset := vk.DeviceSize(ctx.staging.len)
@@ -144,7 +144,7 @@ vulkan_buffer_copy_data :: proc($T: typeid, ctx: ^VulkanContext, data: []T) -> v
 }
 
 wayland_buffer_write_swap :: proc(
-	ctx: ^WaylandContext,
+	ctx: ^Wayland_Context,
 	buffer: ^Buffer,
 	width: u32,
 	height: u32,
@@ -184,7 +184,7 @@ wayland_buffer_write_swap :: proc(
 	return nil
 }
 
-wayland_buffers_init :: proc(ctx: ^WaylandContext) {
+wayland_buffers_init :: proc(ctx: ^Wayland_Context) {
 	ctx.buffers[0].id = ctx.buffer_base_id
 	for i in 0 ..< len(ctx.buffers) {
 		buffer := &ctx.buffers[i]
@@ -199,7 +199,7 @@ wayland_buffers_init :: proc(ctx: ^WaylandContext) {
 	}
 }
 
-wayland_buffer_create :: proc(ctx: ^WaylandContext, buffer: ^Buffer, width: u32, height: u32) {
+wayland_buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) {
 	buffer.bound = true
 
 	write(ctx, {wl.BoundNewId(ctx.dma_params_id)}, ctx.dma_id, ctx.dma_create_param_opcode)

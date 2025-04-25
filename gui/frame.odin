@@ -19,7 +19,7 @@ Frame :: struct {
 	height:       u32,
 }
 
-frames_init :: proc(ctx: ^VulkanContext, count: u32, width: u32, height: u32) -> Error {
+frames_init :: proc(ctx: ^Vulkan_Context, count: u32, width: u32, height: u32) -> Error {
 	ctx.frames = alloc([]Frame, count, ctx.allocator) or_return
 
 	for i in 0 ..< count {
@@ -32,7 +32,7 @@ frames_init :: proc(ctx: ^VulkanContext, count: u32, width: u32, height: u32) ->
 	return nil
 }
 
-create_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> Error {
+create_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
 	frame.width = width
 	frame.height = height
 
@@ -150,18 +150,18 @@ create_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32
 	return nil
 }
 
-get_frame :: proc(ctx: ^VulkanContext, index: u32) -> ^Frame {
+get_frame :: proc(ctx: ^Vulkan_Context, index: u32) -> ^Frame {
 	return &ctx.frames[index]
 }
 
-resize_frame :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> Error {
+resize_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
 	destroy_frame(ctx.device, frame)
 	create_frame(ctx, frame, width, height) or_return
 
 	return nil
 }
 
-submit_staging_data :: proc(ctx: ^VulkanContext) -> Error {
+submit_staging_data :: proc(ctx: ^Vulkan_Context) -> Error {
 	if !ctx.staging.recording do return nil
 
 	if vk.EndCommandBuffer(ctx.command_buffers[1]) != .SUCCESS do return .EndCommandBufferFailed
@@ -195,7 +195,7 @@ submit_staging_data :: proc(ctx: ^VulkanContext) -> Error {
 	return nil
 }
 
-frame_draw :: proc(ctx: ^VulkanContext, frame: ^Frame, width: u32, height: u32) -> Error {
+frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
 	submit_staging_data(ctx) or_return
 
 	cmd := ctx.command_buffers[0]

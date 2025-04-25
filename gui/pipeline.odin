@@ -5,7 +5,7 @@ import "core:os"
 import vk "vendor:vulkan"
 
 create_pipeline :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	device: vk.Device,
 	layout: vk.PipelineLayout,
 	render_pass: vk.RenderPass,
@@ -168,7 +168,7 @@ create_pipeline :: proc(
 	return pipeline, nil
 }
 
-create_render_pass :: proc(ctx: ^VulkanContext) -> (vk.RenderPass, Error) {
+create_render_pass :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, Error) {
 	render_pass_attachments := [?]vk.AttachmentDescription {
 		{
 			format = ctx.format,
@@ -273,7 +273,7 @@ create_shader_module :: proc(
 }
 
 create_set_layouts :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	device: vk.Device,
 ) -> (
 	set_layouts: []vk.DescriptorSetLayout,
@@ -355,7 +355,7 @@ create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, Error) 
 }
 
 allocate_descriptor_sets :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	device: vk.Device,
 	layouts: []vk.DescriptorSetLayout,
 	pool: vk.DescriptorPool,
@@ -377,7 +377,7 @@ allocate_descriptor_sets :: proc(
 }
 
 update_descriptor_set :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Vulkan_Context,
 	set: vk.DescriptorSet,
 	buffers: []vk.Buffer,
 	bindings: []u32,
