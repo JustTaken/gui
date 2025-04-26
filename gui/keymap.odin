@@ -261,26 +261,27 @@ Xkb_Symbols :: struct {
 
 @(private = "file")
 Tokenizer :: struct {
-	line:           u32,
-	offset:         u32,
-	token:          Token,
-	bytes:          []u8,
-	keycodes:       Xkb_Keycodes,
-	types:          Xkb_Types,
-	compatibility:  Xkb_Compatibility,
-	symbols:        Xkb_Symbols,
-	xkb_types:      [dynamic]Xkb_Type,
-	xkb_maps:       [dynamic]Xkb_Type_Map,
-	xkb_levels:     [dynamic]Xkb_Type_Level,
-	xkb_preserves:  [dynamic]Xkb_Type_Preserve,
-	xkb_interprets: [dynamic]Xkb_Compatibility_Interpret,
-	xkb_indicators: [dynamic]Xkb_Compatibility_Indicator,
-	pairs:          [dynamic]Xkb_Symbols_Pair,
-	maps:           [dynamic]Xkb_Symbols_Map,
-	codes:          [dynamic]Code,
-	identifiers:    [dynamic]Identifier,
-	modifiers:      [dynamic]Modifier,
-	numbers:        [dynamic]u32,
+	line:            u32,
+	offset:          u32,
+	token:           Token,
+	bytes:           []u8,
+	keycodes:        Xkb_Keycodes,
+	types:           Xkb_Types,
+	compatibility:   Xkb_Compatibility,
+	symbols:         Xkb_Symbols,
+	xkb_types:       [dynamic]Xkb_Type,
+	xkb_maps:        [dynamic]Xkb_Type_Map,
+	xkb_levels:      [dynamic]Xkb_Type_Level,
+	xkb_preserves:   [dynamic]Xkb_Type_Preserve,
+	xkb_interprets:  [dynamic]Xkb_Compatibility_Interpret,
+	xkb_indicators:  [dynamic]Xkb_Compatibility_Indicator,
+	pairs:           [dynamic]Xkb_Symbols_Pair,
+	maps:            [dynamic]Xkb_Symbols_Map,
+	codes:           [dynamic]Code,
+	identifiers:     [dynamic]Identifier,
+	modifiers:       [dynamic]Modifier,
+	numbers:         [dynamic]u32,
+	code_equivalent: map[string]Code,
 }
 
 @(private = "file")
@@ -338,8 +339,14 @@ get_code :: proc(keymap: ^Keymap_Context, id: u32) -> Code {
 	value, ok := keymap.codes[id + 8]
 
 	if ok && len(value) > 0 {
-		fmt.println("COMMING ID:", id, "GOT", value)
-		return value[0]
+		l := 0
+
+		if .Shift in keymap.modifiers {
+			l = 1
+		}
+
+		code := value[l % len(value)]
+		return code
 	} else {
 		return nil
 	}
@@ -347,7 +354,6 @@ get_code :: proc(keymap: ^Keymap_Context, id: u32) -> Code {
 
 set_modifiers :: proc(keymap: ^Keymap_Context, mask: u32) {
 	keymap.modifiers = transmute(Modifiers)(mask)
-	fmt.println("seting modifiers:", mask, keymap.modifiers)
 }
 
 @(private = "file")
@@ -377,7 +383,100 @@ parse_keymap :: proc(
 	tokenizer.modifiers = make([dynamic]Modifier, 500, allocator)
 
 	tokenizer.keycodes.pairs = make(map[u32]u32, 1000, allocator)
+	tokenizer.code_equivalent = make(map[string]Code, 500, allocator)
 
+	tokenizer.code_equivalent["Escape"] = .Escape
+	tokenizer.code_equivalent["exclam"] = .Exclamation
+	tokenizer.code_equivalent["space"] = .Space
+	tokenizer.code_equivalent["quotedbl"] = .DoubleQuote
+	tokenizer.code_equivalent["numbersign"] = .NumberSign
+	tokenizer.code_equivalent["dolarsign"] = .DolarSign
+	tokenizer.code_equivalent["percent"] = .Percent
+	tokenizer.code_equivalent["asciicircum"] = .AsciiCircum
+	tokenizer.code_equivalent["asterisk"] = .Asterisk
+	tokenizer.code_equivalent["parenleft"] = .ParenLeft
+	tokenizer.code_equivalent["parenright"] = .ParenRight
+	tokenizer.code_equivalent["minus"] = .Minus
+	tokenizer.code_equivalent["underscore"] = .Underscore
+	tokenizer.code_equivalent["equal"] = .Equal
+	tokenizer.code_equivalent["Return"] = .Return
+
+	tokenizer.code_equivalent["1"] = .One
+	tokenizer.code_equivalent["2"] = .Two
+	tokenizer.code_equivalent["3"] = .Three
+	tokenizer.code_equivalent["4"] = .Four
+	tokenizer.code_equivalent["5"] = .Five
+	tokenizer.code_equivalent["6"] = .Six
+	tokenizer.code_equivalent["7"] = .Seven
+	tokenizer.code_equivalent["8"] = .Eight
+	tokenizer.code_equivalent["9"] = .Nine
+	tokenizer.code_equivalent["0"] = .Zero
+
+	tokenizer.code_equivalent["semicolon"] = .Semicolon
+	tokenizer.code_equivalent["colon"] = .Colon
+	tokenizer.code_equivalent["apostrophe"] = .AsciiCircum
+	tokenizer.code_equivalent["plus"] = .Plus
+	tokenizer.code_equivalent["comma"] = .Comma
+	tokenizer.code_equivalent["period"] = .Dot
+	tokenizer.code_equivalent["slash"] = .Bar
+	tokenizer.code_equivalent["question"] = .QuestioMark
+	tokenizer.code_equivalent["backslash"] = .CounterBar
+	tokenizer.code_equivalent["bar"] = .Pipe
+	tokenizer.code_equivalent["less"] = .Less
+	tokenizer.code_equivalent["greater"] = .Greater
+
+	tokenizer.code_equivalent["q"] = .q
+	tokenizer.code_equivalent["Q"] = .Q
+	tokenizer.code_equivalent["w"] = .w
+	tokenizer.code_equivalent["W"] = .W
+	tokenizer.code_equivalent["e"] = .e
+	tokenizer.code_equivalent["E"] = .E
+	tokenizer.code_equivalent["r"] = .r
+	tokenizer.code_equivalent["R"] = .R
+	tokenizer.code_equivalent["t"] = .t
+	tokenizer.code_equivalent["T"] = .T
+	tokenizer.code_equivalent["y"] = .y
+	tokenizer.code_equivalent["Y"] = .Y
+	tokenizer.code_equivalent["u"] = .u
+	tokenizer.code_equivalent["U"] = .U
+	tokenizer.code_equivalent["i"] = .i
+	tokenizer.code_equivalent["I"] = .I
+	tokenizer.code_equivalent["o"] = .o
+	tokenizer.code_equivalent["O"] = .O
+	tokenizer.code_equivalent["p"] = .p
+	tokenizer.code_equivalent["P"] = .P
+	tokenizer.code_equivalent["a"] = .a
+	tokenizer.code_equivalent["A"] = .A
+	tokenizer.code_equivalent["s"] = .s
+	tokenizer.code_equivalent["S"] = .S
+	tokenizer.code_equivalent["d"] = .d
+	tokenizer.code_equivalent["D"] = .D
+	tokenizer.code_equivalent["f"] = .f
+	tokenizer.code_equivalent["F"] = .F
+	tokenizer.code_equivalent["g"] = .g
+	tokenizer.code_equivalent["G"] = .G
+	tokenizer.code_equivalent["h"] = .h
+	tokenizer.code_equivalent["H"] = .H
+	tokenizer.code_equivalent["j"] = .j
+	tokenizer.code_equivalent["J"] = .J
+	tokenizer.code_equivalent["k"] = .k
+	tokenizer.code_equivalent["K"] = .K
+	tokenizer.code_equivalent["l"] = .l
+	tokenizer.code_equivalent["L"] = .L
+	tokenizer.code_equivalent["z"] = .z
+	tokenizer.code_equivalent["Z"] = .Z
+	tokenizer.code_equivalent["x"] = .x
+	tokenizer.code_equivalent["X"] = .X
+	tokenizer.code_equivalent["c"] = .c
+	tokenizer.code_equivalent["C"] = .C
+	tokenizer.code_equivalent["v"] = .v
+	tokenizer.code_equivalent["V"] = .V
+	tokenizer.code_equivalent["b"] = .b
+	tokenizer.code_equivalent["B"] = .B
+	tokenizer.code_equivalent["n"] = .n
+	tokenizer.code_equivalent["N"] = .N
+	tokenizer.code_equivalent["m"] = .m
+	tokenizer.code_equivalent["M"] = .M
 
 	advance(&tokenizer) or_return
 	assert_type(&tokenizer, Keyword) or_return
@@ -854,7 +953,7 @@ parse_interpret_match :: proc(
 ) {
 	assert_type(tokenizer, Identifier) or_return
 
-	match.key = code_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
+	match.key = code_from_bytes(tokenizer, cast([]u8)(tokenizer.token.(Identifier)))
 
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Symbol) or_return
@@ -1497,7 +1596,10 @@ parse_key :: proc(tokenizer: ^Tokenizer, is_array: bool, allocator: runtime.Allo
 	}
 
 	pair.codes = tokenizer.codes[start:]
-	append(&tokenizer.pairs, pair)
+
+	if len(tokenizer.codes) > start {
+		append(&tokenizer.pairs, pair)
+	}
 
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .BraceClose) or_return
@@ -1545,8 +1647,11 @@ parse_modifier_map :: proc(tokenizer: ^Tokenizer) -> Error {
 @(private = "file")
 parse_key_symbols :: proc(tokenizer: ^Tokenizer) -> Error {
 	for assert_type(tokenizer, Identifier) == nil {
-		code := code_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
-		append(&tokenizer.codes, code)
+		code := code_from_bytes(tokenizer, cast([]u8)(tokenizer.token.(Identifier)))
+
+		if code != nil {
+			append(&tokenizer.codes, code)
+		}
 
 		advance(tokenizer) or_return
 		assert_type(tokenizer, Symbol) or_return
@@ -1877,24 +1982,22 @@ is_upper_ascci :: proc(u: u8) -> bool {
 }
 
 @(private = "file")
-code_from_bytes :: proc(bytes: []u8) -> Code {
-	if len(bytes) == 1 {
-		c := Code(bytes[0])
-		return c
-	}
-
-	return nil
+code_from_bytes :: proc(tokenizer: ^Tokenizer, bytes: []u8) -> Code {
+	code := tokenizer.code_equivalent[string(bytes)]
+	return code
 }
 
 Code :: enum {
+	Null = 0,
+	Escape = 27,
 	Space = 32,
 	Exclamation,
 	DoubleQuote,
-	HashTag,
+	NumberSign,
 	DolarSign,
 	Percent,
-	And,
-	Quote,
+	AsciiCircum,
+	Asterisk,
 	ParenLeft,
 	ParenRight,
 	Star,
@@ -1913,9 +2016,9 @@ Code :: enum {
 	Seven,
 	Eight,
 	Nine,
-	Doublecolon,
+	Colon,
 	Semicolon,
-	LessThan,
+	Less,
 	Equal,
 	Greater,
 	QuestioMark,
@@ -1983,6 +2086,7 @@ Code :: enum {
 	CurlyRight,
 	Tilde,
 	Del,
+	Return,
 }
 
 @(private = "file")

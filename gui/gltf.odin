@@ -7,20 +7,6 @@ import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 
-// main :: proc() {
-// 	mesh: Mesh
-// 	err: Error
-
-// 	if mesh, err = gltf_from_file("assets/cube.gltf", context.temp_allocator); err != nil {
-// 		fmt.println("Failed to read gltf file", err)
-// 	}
-
-// 	fmt.println("Position", mesh.position)
-// 	fmt.println("Normal", mesh.normal)
-// 	fmt.println("Texture", mesh.texture)
-// 	fmt.println("Indice", mesh.indice)
-// }
-
 @(private = "file")
 GltfBuffer :: struct {
 	fd:  os.Handle,
@@ -185,48 +171,3 @@ read_buffer := proc(
 
 	return data, nil
 }
-
-// Error :: enum {
-// 	OutOfMemory,
-// 	FileNotFound,
-// 	AttributeKindNotFound,
-// 	ReadFileFailed,
-// 	NumberParseFailed,
-// 	CreateInstanceFailed,
-// 	CreateBuffer,
-// 	BeginCommandBufferFailed,
-// 	EndCommandBufferFailed,
-// 	AllocateCommandBufferFailed,
-// 	VulkanLib,
-// 	LayerNotFound,
-// 	PhysicalDeviceNotFound,
-// 	FamilyIndiceNotComplete,
-// 	MemoryNotFound,
-// 	EnviromentVariablesNotSet,
-// 	WaylandSocketNotAvaiable,
-// 	SendMessageFailed,
-// 	BufferNotReleased,
-// 	CreateDescriptorSetLayoutFailed,
-// 	CreatePipelineFailed,
-// 	GetImageModifier,
-// 	AllocateDeviceMemory,
-// 	CreateImageFailed,
-// 	WaitFencesFailed,
-// 	QueueSubmitFailed,
-// 	CreateImageViewFailed,
-// 	CreatePipelineLayouFailed,
-// 	CreateDescriptorPoolFailed,
-// 	CreateFramebufferFailed,
-// 	GetFdFailed,
-// 	SizeNotMatch,
-// 	CreateShaderModuleFailed,
-// 	AllocateDescriptorSetFailed,
-// 	ExtensionNotFound,
-// 	CreateDeviceFailed,
-// 	CreateRenderPassFailed,
-// 	CreateSemaphoreFailed,
-// 	CreateFenceFailed,
-// 	CreateCommandPoolFailed,
-// 	SocketConnectFailed,
-// 	GltfLoadFailed,
-// }
