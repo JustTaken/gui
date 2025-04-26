@@ -830,7 +830,9 @@ keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl
 		panic("Mapped data is null")
 	}
 
+	mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
 	ctx.keymap, err = keymap_from_bytes(data, ctx.allocator, ctx.tmp_allocator)
+	mem.end_arena_temp_memory(mark)
 
 	if err != nil {
 		fmt.println("Failed to create keymap")
@@ -845,11 +847,7 @@ keyboard_enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.
 keyboard_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
 keyboard_key_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
-	code := get_code(&ctx.keymap, u32(arguments[2].(wl.Uint)))
-
-	if code != nil {
-		fmt.println("key pressed:", code)
-	}
+	register_code(&ctx.keymap, u32(arguments[2].(wl.Uint)), u32(arguments[1].(wl.Uint)))
 }
 @(private = "file")
 keyboard_modifiers_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {

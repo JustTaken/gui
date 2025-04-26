@@ -68,7 +68,6 @@ main :: proc() {
 
 	wl: Wayland_Context
 	vk: Vulkan_Context
-	// keymap: Keymap
 
 	width: u32 = 1920
 	height: u32 = 1080

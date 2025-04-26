@@ -309,8 +309,10 @@ Modifier :: enum {
 Modifiers :: bit_set[Modifier;u32]
 
 Keymap_Context :: struct {
-	codes:     map[u32][]Code,
-	modifiers: Modifiers,
+	codes:         map[u32][]Code,
+	modifiers:     Modifiers,
+	pressed_map:   #sparse[Code]bool,
+	pressed_array: [dynamic]Code,
 }
 
 keymap_from_bytes :: proc(
@@ -324,6 +326,7 @@ keymap_from_bytes :: proc(
 	tokenizer := parse_keymap(bytes, tmp_allocator) or_return
 
 	keymap.codes = make(map[u32][]Code, 100, allocator)
+	keymap.pressed_array = make([dynamic]Code, 20, allocator)
 
 	for pair in tokenizer.pairs[:] {
 		if len(pair.codes) != 0 {
@@ -335,21 +338,34 @@ keymap_from_bytes :: proc(
 	return keymap, nil
 }
 
-get_code :: proc(keymap: ^Keymap_Context, id: u32) -> Code {
+register_code :: proc(keymap: ^Keymap_Context, id: u32, state: u32) {
 	value, ok := keymap.codes[id + 8]
 
 	if ok && len(value) > 0 {
-		l := 0
+		index := 0
 
 		if .Shift in keymap.modifiers {
-			l = 1
+			index = 1
 		}
 
-		code := value[l % len(value)]
-		return code
-	} else {
-		return nil
+		code := value[index % len(value)]
+
+		if state == 1 {
+			keymap.pressed_map[code] = true
+			append(&keymap.pressed_array, code)
+		} else if state == 0 {
+			unordered_remove(&keymap.pressed_array, code)
+			keymap.pressed_map[code] = false
+		}
 	}
+}
+
+get_pressed_keys :: proc(keymap: ^Keymap_Context) -> []Code {
+	return keymap.pressed_array[:]
+}
+
+is_key_pressed :: proc(keymap: ^Keymap_Context, code: Code) -> bool {
+	return keymap.pressed_map[code]
 }
 
 set_modifiers :: proc(keymap: ^Keymap_Context, mask: u32) {
