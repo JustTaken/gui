@@ -144,7 +144,7 @@ Xkb_Compatibility_Action_SetControls :: distinct Xkb_Compatibility_Action_Contro
 
 @(private = "file")
 Xkb_Compatibility_Action_Group :: struct {
-	value: u32,
+	value: i32,
 }
 
 @(private = "file")
@@ -166,7 +166,7 @@ Xkb_Compatibility_Action_Switch :: struct {
 
 @(private = "file")
 Xkb_Compatibility_Action_Private :: struct {
-	kind:       u32,
+	kind:       Identifier,
 	attributes: Identifier,
 	data:       []Identifier,
 }
@@ -174,15 +174,22 @@ Xkb_Compatibility_Action_Private :: struct {
 @(private = "file")
 Xkb_Compatibility_Action_Ptr :: struct {
 	affect: Identifier,
-	button: Identifier,
+	button: i32,
+	count:  u32,
 }
 
 @(private = "file")
 Xkb_Compatibility_Action_SetPtr :: distinct Xkb_Compatibility_Action_Ptr
 @(private = "file")
-Xkb_Compatibility_Action_LockPtr :: distinct Xkb_Compatibility_Action_Ptr
+Xkb_Compatibility_Action_LockPtrBtn :: distinct Xkb_Compatibility_Action_Ptr
 @(private = "file")
 Xkb_Compatibility_Action_PtrBtn :: distinct Xkb_Compatibility_Action_Ptr
+
+@(private = "file")
+Xkb_Compatibility_Action_SwitchScreen :: struct {
+	value: u32,
+	same:  bool,
+}
 
 @(private = "file")
 Xkb_Compatibility_Interpret_Action :: union {
@@ -199,8 +206,9 @@ Xkb_Compatibility_Interpret_Action :: union {
 	Xkb_Compatibility_Action_Terminate,
 	Xkb_Compatibility_Action_Private,
 	Xkb_Compatibility_Action_SetPtr,
-	Xkb_Compatibility_Action_LockPtr,
+	Xkb_Compatibility_Action_LockPtrBtn,
 	Xkb_Compatibility_Action_PtrBtn,
+	Xkb_Compatibility_Action_SwitchScreen,
 }
 
 @(private = "file")
@@ -233,15 +241,22 @@ Xkb_Compatibility :: struct {
 }
 
 @(private = "file")
-Xkb_Symbol_Pair :: struct {
+Xkb_Symbols_Pair :: struct {
 	key:   u32,
 	codes: []Code,
 }
 
 @(private = "file")
+Xkb_Symbols_Map :: struct {
+	modifier: Modifier,
+	codes:    []u32,
+}
+
+@(private = "file")
 Xkb_Symbols :: struct {
-	name: String,
-	pair: []Xkb_Symbol_Pair,
+	name:  String,
+	pairs: []Xkb_Symbols_Pair,
+	maps:  []Xkb_Symbols_Map,
 }
 
 @(private = "file")
@@ -260,10 +275,12 @@ Tokenizer :: struct {
 	xkb_preserves:  [dynamic]Xkb_Type_Preserve,
 	xkb_interprets: [dynamic]Xkb_Compatibility_Interpret,
 	xkb_indicators: [dynamic]Xkb_Compatibility_Indicator,
-	pairs:          [dynamic]Xkb_Symbol_Pair,
+	pairs:          [dynamic]Xkb_Symbols_Pair,
+	maps:           [dynamic]Xkb_Symbols_Map,
 	codes:          [dynamic]Code,
 	identifiers:    [dynamic]Identifier,
 	modifiers:      [dynamic]Modifier,
+	numbers:        [dynamic]u32,
 }
 
 @(private = "file")
@@ -347,6 +364,21 @@ parse_keymap :: proc(
 		line   = 0,
 	}
 
+	tokenizer.xkb_types = make([dynamic]Xkb_Type, 1000, allocator)
+	tokenizer.xkb_maps = make([dynamic]Xkb_Type_Map, 1000, allocator)
+	tokenizer.xkb_levels = make([dynamic]Xkb_Type_Level, 500, allocator)
+	tokenizer.xkb_preserves = make([dynamic]Xkb_Type_Preserve, 500, allocator)
+	tokenizer.xkb_interprets = make([dynamic]Xkb_Compatibility_Interpret, 256, allocator)
+	tokenizer.xkb_indicators = make([dynamic]Xkb_Compatibility_Indicator, 100, allocator)
+	tokenizer.codes = make([dynamic]Code, 0, 1000, allocator)
+	tokenizer.pairs = make([dynamic]Xkb_Symbols_Pair, 0, 500, allocator)
+	tokenizer.maps = make([dynamic]Xkb_Symbols_Map, 0, 500, allocator)
+	tokenizer.identifiers = make([dynamic]Identifier, 1000, allocator)
+	tokenizer.modifiers = make([dynamic]Modifier, 500, allocator)
+
+	tokenizer.keycodes.pairs = make(map[u32]u32, 1000, allocator)
+
+
 	advance(&tokenizer) or_return
 	assert_type(&tokenizer, Keyword) or_return
 	assert_keyword(&tokenizer, .Keymap) or_return
@@ -362,9 +394,9 @@ parse_keymap :: proc(
 		case .Keycodes:
 			parse_keycodes(&tokenizer, allocator) or_return
 		case .Types:
-			parse_types(&tokenizer) or_return
+			parse_types(&tokenizer, allocator) or_return
 		case .Compatibility:
-			parse_compatibility(&tokenizer) or_return
+			parse_compatibility(&tokenizer, allocator) or_return
 		case .Symbols:
 			parse_symbols(&tokenizer, allocator) or_return
 		case:
@@ -436,7 +468,7 @@ parse_keycodes_property :: proc(tokenizer: ^Tokenizer) -> Error {
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Identifier) or_return
 
-	out^ = to_number(tokenizer.token.(Identifier))
+	out^ = to_number(tokenizer.token.(Identifier)) or_return
 
 	return nil
 }
@@ -453,7 +485,7 @@ parse_keycodes_pair :: proc(tokenizer: ^Tokenizer) -> Error {
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Identifier) or_return
 
-	tokenizer.keycodes.pairs[key] = to_number(tokenizer.token.(Identifier))
+	tokenizer.keycodes.pairs[key] = to_number(tokenizer.token.(Identifier)) or_return
 
 	return nil
 }
@@ -467,8 +499,6 @@ parse_keycodes :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> E
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .BraceOpen) or_return
-
-	tokenizer.keycodes.pairs = make(map[u32]u32, 1000, allocator)
 
 	advance(tokenizer) or_return
 	for assert_type(tokenizer, Symbol) != nil {
@@ -580,7 +610,7 @@ parse_map :: proc(tokenizer: ^Tokenizer) -> Error {
 
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Identifier) or_return
-	xkb_map.number = to_number(tokenizer.token.(Identifier))
+	xkb_map.number = to_number(tokenizer.token.(Identifier)) or_return
 
 	advance(tokenizer) or_return
 
@@ -639,7 +669,7 @@ parse_level_name :: proc(tokenizer: ^Tokenizer) -> Error {
 
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Identifier) or_return
-	level.number = to_number(tokenizer.token.(Identifier))
+	level.number = to_number(tokenizer.token.(Identifier)) or_return
 
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Symbol) or_return
@@ -722,7 +752,7 @@ parse_type :: proc(tokenizer: ^Tokenizer) -> Error {
 }
 
 @(private = "file")
-parse_types :: proc(tokenizer: ^Tokenizer) -> Error {
+parse_types :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> Error {
 	advance(tokenizer) or_return
 	assert_type(tokenizer, String) or_return
 	tokenizer.types.name = tokenizer.token.(String)
@@ -869,8 +899,8 @@ parse_interpret_action_arguments :: proc(tokenizer: ^Tokenizer) -> Error {
 
 		assert_type(tokenizer, Identifier) or_return
 		append(&tokenizer.identifiers, tokenizer.token.(Identifier))
-
 		advance(tokenizer) or_return
+
 	}
 	return nil
 }
@@ -896,7 +926,7 @@ parse_interpret_action_mods :: proc(
 	mods.modifiers, ok = modifier_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
 
 	if !ok {
-		return mods, .ModifierNotFound
+		// return mods, .ModifierNotFound
 	}
 
 	start := len(tokenizer.identifiers)
@@ -921,9 +951,7 @@ parse_interpret_action_group :: proc(
 	assert_symbol(tokenizer, .Equal) or_return
 
 	advance(tokenizer) or_return
-	assert_type(tokenizer, Identifier) or_return
-	group.value = to_number(tokenizer.token.(Identifier))
-
+	group.value = parse_integer(tokenizer) or_return
 	advance(tokenizer) or_return
 
 	return group, nil
@@ -966,10 +994,21 @@ parse_interpret_action_ptr :: proc(
 		assert_type(tokenizer, Symbol) or_return
 		assert_symbol(tokenizer, .Equal) or_return
 
+		advance(tokenizer) or_return
+		// assert_type(tokenizer, Identifier) or_return
 		if eql(property, button_word[:]) {
-			ptr.button = tokenizer.token.(Identifier)
+			b, e := parse_integer(tokenizer)
+			if e != nil {
+				ptr.button = 0
+			} else {
+				ptr.button = b
+			}
 		} else if eql(property, affect_word[:]) {
+			assert_type(tokenizer, Identifier) or_return
 			ptr.affect = tokenizer.token.(Identifier)
+		} else if eql(property, count_word[:]) {
+			assert_type(tokenizer, Identifier) or_return
+			ptr.count = to_number(tokenizer.token.(Identifier)) or_return
 		}
 
 		advance(tokenizer)
@@ -981,10 +1020,165 @@ parse_interpret_action_ptr :: proc(
 		}
 
 		assert_symbol(tokenizer, .Comma) or_return
+		advance(tokenizer) or_return
 	}
 
 	return ptr, nil
 }
+
+@(private = "file")
+parse_integer :: proc(tokenizer: ^Tokenizer) -> (i: i32, err: Error) {
+	if assert_type(tokenizer, Symbol) == nil {
+		symbol := tokenizer.token.(Symbol)
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Identifier) or_return
+		i = i32(to_number(tokenizer.token.(Identifier)) or_return)
+
+		if symbol == .Minus {
+			i *= -1
+		}
+	} else {
+		assert_type(tokenizer, Identifier) or_return
+		i = i32(to_number(tokenizer.token.(Identifier)) or_return)
+	}
+
+	return i, nil
+}
+
+@(private = "file")
+parse_interpret_private :: proc(
+	tokenizer: ^Tokenizer,
+) -> (
+	private: Xkb_Compatibility_Action_Private,
+	err: Error,
+) {
+	assert_type(tokenizer, Identifier) or_return
+	assert_identifier(tokenizer, Identifier(type_word[:])) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Equal) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Identifier) or_return
+	private.kind = tokenizer.token.(Identifier)
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Comma) or_return
+
+	start := len(tokenizer.identifiers)
+	advance(tokenizer) or_return
+	for assert_type(tokenizer, Identifier) == nil {
+		assert_identifier(tokenizer, Identifier(data_word[:])) or_return
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+		assert_symbol(tokenizer, .SquareOpen) or_return
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Identifier) or_return
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+		assert_symbol(tokenizer, .SquareClose) or_return
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+		assert_symbol(tokenizer, .Equal) or_return
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Identifier) or_return
+		append(&tokenizer.identifiers, tokenizer.token.(Identifier))
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+
+		if tokenizer.token.(Symbol) != .Comma {
+			break
+		}
+
+		advance(tokenizer) or_return
+	}
+
+	private.data = tokenizer.identifiers[start:]
+
+	return private, nil
+}
+
+@(private = "file")
+parse_interpret_move_ptr :: proc(
+	tokenizer: ^Tokenizer,
+) -> (
+	move_ptr: Xkb_Compatibility_Action_MovePtr,
+	err: Error,
+) {
+	assert_type(tokenizer, Identifier) or_return
+	assert_identifier(tokenizer, Identifier(x_word[:])) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Equal) or_return
+
+	advance(tokenizer) or_return
+	move_ptr.x = parse_integer(tokenizer) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Comma) or_return
+
+	advance(tokenizer) or_return
+	assert_identifier(tokenizer, Identifier(y_word[:])) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Equal) or_return
+
+	advance(tokenizer) or_return
+	move_ptr.y = parse_integer(tokenizer) or_return
+
+	advance(tokenizer) or_return
+
+	return move_ptr, nil
+
+}
+
+@(private = "file")
+parse_interpret_switch_screen :: proc(
+	tokenizer: ^Tokenizer,
+) -> (
+	screen: Xkb_Compatibility_Action_SwitchScreen,
+	err: Error,
+) {
+	assert_type(tokenizer, Identifier) or_return
+	assert_identifier(tokenizer, Identifier(screen_word[:])) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Equal) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Identifier) or_return
+
+	screen.value = to_number(tokenizer.token.(Identifier)) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Comma) or_return
+
+	advance(tokenizer) or_return
+	screen.same = assert_type(tokenizer, Symbol) == nil
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Identifier) or_return
+	assert_identifier(tokenizer, Identifier(same_word[:])) or_return
+
+	advance(tokenizer) or_return
+
+	return screen, nil
+}
+
 
 @(private = "file")
 parse_interpret_action :: proc(
@@ -1034,25 +1228,39 @@ parse_interpret_action :: proc(
 			parse_interpret_action_controls(tokenizer) or_return,
 		)
 	} else if eql(kind, set_controls_word[:]) {
-	} else if eql(kind, set_ptr_dflt_word[:]) {
 		action = Xkb_Compatibility_Action_SetControls(
 			parse_interpret_action_controls(tokenizer) or_return,
 		)
+	} else if eql(kind, set_ptr_dflt_word[:]) {
+		action = Xkb_Compatibility_Action_SetPtr(parse_interpret_action_ptr(tokenizer) or_return)
 	} else if eql(kind, lock_ptr_btn_word[:]) {
-		action = Xkb_Compatibility_Action_PtrBtn(parse_interpret_action_ptr(tokenizer) or_return)
+		action = Xkb_Compatibility_Action_LockPtrBtn(
+			parse_interpret_action_ptr(tokenizer) or_return,
+		)
 	} else if eql(kind, ptr_btn_word[:]) {
+		action = Xkb_Compatibility_Action_PtrBtn(parse_interpret_action_ptr(tokenizer) or_return)
 	} else if eql(kind, terminate_word[:]) {
 		action = Xkb_Compatibility_Action_Terminate({})
+	} else if eql(kind, move_ptr_word[:]) {
+		action = parse_interpret_move_ptr(tokenizer) or_return
+	} else if eql(kind, switch_screen_word[:]) {
+		action = parse_interpret_switch_screen(tokenizer) or_return
+	} else if eql(kind, private_word[:]) {
+		action = parse_interpret_private(tokenizer) or_return
+	} else {
+		log.error("Failed to parse action:", string(kind))
+		return action, .TypeAssertionFailed
 	}
 
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .ParenClose) or_return
 
-	return nil, .TypeAssertionFailed
+	return action, nil
 }
 
 @(private = "file")
 parse_interpret :: proc(tokenizer: ^Tokenizer) -> Error {
+	ok: bool
 	interpret: Xkb_Compatibility_Interpret
 	interpret.match = parse_interpret_match(tokenizer) or_return
 	interpret.action = nil
@@ -1072,11 +1280,13 @@ parse_interpret :: proc(tokenizer: ^Tokenizer) -> Error {
 
 		advance(tokenizer) or_return
 		if eql(property, virtual_modifier_word[:]) {
+			interpret.modifier, ok = modifier_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
 		} else if eql(property, action_word[:]) {
 			interpret.action = parse_interpret_action(tokenizer) or_return
 		} else if eql(property, use_mod_map_mods_word[:]) {
 			interpret.mods = parse_interpret_mods(tokenizer) or_return
 		} else if eql(property, repeat_word[:]) {
+			interpret.repeat = assert_identifier(tokenizer, Identifier(true_word[:])) == nil
 		}
 
 		advance(tokenizer) or_return
@@ -1086,31 +1296,60 @@ parse_interpret :: proc(tokenizer: ^Tokenizer) -> Error {
 		advance(tokenizer) or_return
 	}
 
+	append(&tokenizer.xkb_interprets, interpret)
+
 	return nil
 }
 
 @(private = "file")
 parse_indicator :: proc(tokenizer: ^Tokenizer) -> Error {
 	assert_type(tokenizer, String) or_return
+	ok: bool
+
+	indicator: Xkb_Compatibility_Indicator
+	indicator.name = tokenizer.token.(String)
 
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .BraceOpen) or_return
 
 	advance(tokenizer) or_return
-	for {
-		if assert_type(tokenizer, Symbol) == nil {
-			if assert_symbol(tokenizer, .BraceClose) == nil do break
+	for assert_type(tokenizer, Identifier) == nil {
+		property := cast([]u8)(tokenizer.token.(Identifier))
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+		assert_symbol(tokenizer, .Equal) or_return
+
+		advance(tokenizer) or_return
+		if eql(property, modifiers_word[:]) {
+			assert_type(tokenizer, Identifier) or_return
+			indicator.modifier, ok = modifier_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
+		} else if eql(property, which_mod_state_word[:]) {
+			assert_type(tokenizer, Identifier) or_return
+			indicator.state = tokenizer.token.(Identifier)
+		} else if eql(property, groups_word[:]) {
+			assert_type(tokenizer, Identifier) or_return
+			indicator.groups = tokenizer.token.(Identifier)
+		} else if eql(property, controls_word[:]) {
+			assert_type(tokenizer, Identifier) or_return
+			indicator.controls = tokenizer.token.(Identifier)
 		}
 
 		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+		assert_symbol(tokenizer, .Semicolon) or_return
+
+		advance(tokenizer) or_return
 	}
+
+	append(&tokenizer.xkb_indicators, indicator)
 
 	return nil
 }
 
 @(private = "file")
-parse_compatibility :: proc(tokenizer: ^Tokenizer) -> Error {
+parse_compatibility :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> Error {
 	advance(tokenizer) or_return
 	assert_type(tokenizer, String) or_return
 	tokenizer.compatibility.name = tokenizer.token.(String)
@@ -1150,7 +1389,9 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer) -> Error {
 
 	advance(tokenizer) or_return
 	for assert_type(tokenizer, Identifier) == nil {
-		if assert_identifier(tokenizer, Identifier(interpret[:])) == nil {
+		word := cast([]u8)(tokenizer.token.(Identifier))
+
+		if eql(word, interpret[:]) {
 			advance(tokenizer) or_return
 
 			#partial switch _ in tokenizer.token {
@@ -1162,7 +1403,7 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer) -> Error {
 			case:
 				return .TypeAssertionFailed
 			}
-		} else if assert_identifier(tokenizer, Identifier(indicator[:])) == nil {
+		} else if eql(word, indicator[:]) {
 			advance(tokenizer) or_return
 			parse_indicator(tokenizer) or_return
 		} else {
@@ -1175,71 +1416,8 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer) -> Error {
 		advance(tokenizer) or_return
 	}
 
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Symbol) or_return
-	assert_symbol(tokenizer, .Semicolon) or_return
-
-	return nil
-}
-
-@(private = "file")
-parse_symbols :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> Error {
-	advance(tokenizer) or_return
-	assert_type(tokenizer, String) or_return
-	tokenizer.symbols.name = tokenizer.token.(String)
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Symbol)
-	assert_symbol(tokenizer, .BraceOpen) or_return
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Identifier) or_return
-	assert_identifier(tokenizer, Identifier(name_word[:])) or_return
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Symbol) or_return
-	assert_symbol(tokenizer, .SquareOpen) or_return
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Identifier) or_return
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Symbol) or_return
-	assert_symbol(tokenizer, .SquareClose) or_return
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Symbol) or_return
-	assert_symbol(tokenizer, .Equal) or_return
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, String) or_return
-
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Symbol) or_return
-	assert_symbol(tokenizer, .Semicolon) or_return
-
-	advance(tokenizer) or_return
-
-	tokenizer.codes = make([dynamic]Code, 0, 1000, allocator)
-	tokenizer.pairs = make([dynamic]Xkb_Symbol_Pair, 0, 500, allocator)
-
-	for assert_type(tokenizer, Identifier) == nil {
-		// log.info("ITERATING LOOP")
-		if assert_identifier(tokenizer, Identifier(key_word[:])) == nil {
-			// log.info("KEY WORD")
-			parse_key(tokenizer, false, allocator) or_return
-		} else if assert_identifier(tokenizer, Identifier(modifier_map_word[:])) == nil {
-			// log.info("MODIFIER MAP WORD")
-			parse_modifier_map(tokenizer) or_return
-		} else {
-			panic("SHOULD NOT BE HERE")
-		}
-
-		advance(tokenizer) or_return
-	}
-
-
-	// log.info("ENDING LOOP")
+	tokenizer.compatibility.interprets = tokenizer.xkb_interprets[interpret_start:]
+	tokenizer.compatibility.indicators = tokenizer.xkb_indicators[indicator_start:]
 
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .BraceClose) or_return
@@ -1253,9 +1431,9 @@ parse_symbols :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> Er
 
 @(private = "file")
 parse_key :: proc(tokenizer: ^Tokenizer, is_array: bool, allocator: runtime.Allocator) -> Error {
-	pair: Xkb_Symbol_Pair
+	pair: Xkb_Symbols_Pair
 
-	advance(tokenizer) or_return
+	assert_type(tokenizer, Name) or_return
 	pair.key = key_pair_from_bytes(([]u8)(tokenizer.token.(Name)))
 	start := len(tokenizer.codes)
 
@@ -1303,6 +1481,7 @@ parse_key :: proc(tokenizer: ^Tokenizer, is_array: bool, allocator: runtime.Allo
 		assert_symbol(tokenizer, .SquareOpen) or_return
 
 		advance(tokenizer) or_return
+
 		parse_key_symbols(tokenizer) or_return
 
 		assert_symbol(tokenizer, .SquareClose) or_return
@@ -1323,30 +1502,121 @@ parse_key :: proc(tokenizer: ^Tokenizer, is_array: bool, allocator: runtime.Allo
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .BraceClose) or_return
 
-	advance(tokenizer) or_return
-	assert_type(tokenizer, Symbol) or_return
-	assert_symbol(tokenizer, .Semicolon) or_return
-
 	return nil
 }
 
 @(private = "file")
 parse_modifier_map :: proc(tokenizer: ^Tokenizer) -> Error {
-	advance(tokenizer) or_return
+	ok: bool
+	symbols_map: Xkb_Symbols_Map
+
 	assert_type(tokenizer, Identifier) or_return
+	symbols_map.modifier, ok = modifier_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
 
 	advance(tokenizer) or_return
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .BraceOpen) or_return
 
+	start := len(tokenizer.numbers)
+
 	advance(tokenizer) or_return
 	for assert_type(tokenizer, Name) == nil {
+		append(&tokenizer.numbers, key_pair_from_bytes(([]u8)(tokenizer.token.(Name))))
+
 		advance(tokenizer) or_return
 
 		assert_type(tokenizer, Symbol) or_return
-		if assert_symbol(tokenizer, .Comma) != nil {
+		if tokenizer.token.(Symbol) == .BraceClose do break
+
+		assert_symbol(tokenizer, .Comma) or_return
+		advance(tokenizer) or_return
+	}
+
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .BraceClose) or_return
+
+	symbols_map.codes = tokenizer.numbers[start:]
+
+	append(&tokenizer.maps, symbols_map)
+
+	return nil
+}
+
+@(private = "file")
+parse_key_symbols :: proc(tokenizer: ^Tokenizer) -> Error {
+	for assert_type(tokenizer, Identifier) == nil {
+		code := code_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
+		append(&tokenizer.codes, code)
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+
+		if tokenizer.token.(Symbol) != .Comma {
 			break
 		}
+
+		advance(tokenizer) or_return
+	}
+
+
+	return nil
+}
+
+@(private = "file")
+parse_symbols :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> Error {
+	advance(tokenizer) or_return
+	assert_type(tokenizer, String) or_return
+	tokenizer.symbols.name = tokenizer.token.(String)
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol)
+	assert_symbol(tokenizer, .BraceOpen) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Identifier) or_return
+	assert_identifier(tokenizer, Identifier(name_word[:])) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .SquareOpen) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Identifier) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .SquareClose) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Equal) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, String) or_return
+
+	advance(tokenizer) or_return
+	assert_type(tokenizer, Symbol) or_return
+	assert_symbol(tokenizer, .Semicolon) or_return
+
+	pairs_start := len(tokenizer.pairs)
+	maps_start := len(tokenizer.maps)
+
+	advance(tokenizer) or_return
+	for assert_type(tokenizer, Identifier) == nil {
+		iden := cast([]u8)(tokenizer.token.(Identifier))
+		advance(tokenizer) or_return
+
+		if eql(iden, key_word[:]) {
+			parse_key(tokenizer, false, allocator) or_return
+		} else if eql(iden, modifier_map_word[:]) {
+			parse_modifier_map(tokenizer) or_return
+		} else {
+			return .TypeAssertionFailed
+		}
+
+		advance(tokenizer) or_return
+		assert_type(tokenizer, Symbol) or_return
+		assert_symbol(tokenizer, .Semicolon) or_return
 
 		advance(tokenizer) or_return
 	}
@@ -1358,31 +1628,8 @@ parse_modifier_map :: proc(tokenizer: ^Tokenizer) -> Error {
 	assert_type(tokenizer, Symbol) or_return
 	assert_symbol(tokenizer, .Semicolon) or_return
 
-	return nil
-}
-
-@(private = "file")
-parse_key_symbols :: proc(tokenizer: ^Tokenizer) -> Error {
-	for {
-		if assert_type(tokenizer, Symbol) == nil do return .TypeAssertionFailed
-
-		assert_type(tokenizer, Identifier) or_return
-		code := code_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
-
-		if code != nil {
-			append(&tokenizer.codes, code)
-		}
-
-		advance(tokenizer) or_return
-		if assert_type(tokenizer, Symbol) == nil {
-			if assert_symbol(tokenizer, .Comma) == nil {
-				advance(tokenizer) or_return
-			} else {
-				break
-			}
-		}
-	}
-
+	tokenizer.symbols.maps = tokenizer.maps[maps_start:]
+	tokenizer.symbols.pairs = tokenizer.pairs[pairs_start:]
 
 	return nil
 }
@@ -1394,7 +1641,7 @@ assert_identifier :: proc(
 	loc := #caller_location,
 ) -> Error {
 	if !eql(([]u8)(tokenizer.token.(Identifier)), ([]u8)(identifier)) {
-		log.error(
+		log.info(
 			#procedure,
 			"expected:",
 			identifier,
@@ -1413,7 +1660,7 @@ assert_identifier :: proc(
 @(private = "file")
 assert_keyword :: proc(tokenizer: ^Tokenizer, keyword: Keyword, loc := #caller_location) -> Error {
 	if tokenizer.token.(Keyword) != keyword {
-		log.error(
+		log.info(
 			#procedure,
 			"expected:",
 			keyword,
@@ -1433,7 +1680,7 @@ assert_keyword :: proc(tokenizer: ^Tokenizer, keyword: Keyword, loc := #caller_l
 @(private = "file")
 assert_symbol :: proc(tokenizer: ^Tokenizer, symbol: Symbol, loc := #caller_location) -> Error {
 	if tokenizer.token.(Symbol) != symbol {
-		log.error(
+		log.info(
 			#procedure,
 			"expected",
 			symbol,
@@ -1456,7 +1703,7 @@ assert_type :: proc(tokenizer: ^Tokenizer, $T: typeid, loc := #caller_location) 
 	if !ok {
 		#partial switch t in tokenizer.token {
 		case:
-			log.error(
+			log.info(
 				#procedure,
 				"expected",
 				typeid_of(T),
@@ -1478,7 +1725,7 @@ advance :: proc(tokenizer: ^Tokenizer, loc := #caller_location) -> Error {
 	tokenizer.token = next(tokenizer)
 
 	if tokenizer.token == nil {
-		log.error(#procedure, "called by", loc.procedure, loc.line)
+		log.info(#procedure, "called by", loc.procedure, loc.line)
 		return .InvalidToken
 	}
 
@@ -1602,15 +1849,16 @@ is_number :: proc(u: u8) -> bool {
 }
 
 @(private = "file")
-to_number :: proc(bytes: Identifier) -> u32 {
+to_number :: proc(bytes: Identifier) -> (u32, Error) {
 	number: u32
 
 	for b in bytes {
+		if !is_number(b) do return 0, .NotANumber
 		number *= 10
 		number += u32(b) - '0'
 	}
 
-	return number
+	return number, nil
 }
 
 @(private = "file")
@@ -1742,6 +1990,8 @@ key_word := [?]u8{'k', 'e', 'y'}
 @(private = "file")
 type_word := [?]u8{'t', 'y', 'p', 'e'}
 @(private = "file")
+data_word := [?]u8{'d', 'a', 't', 'a'}
+@(private = "file")
 name_word := [?]u8{'n', 'a', 'm', 'e'}
 @(private = "file")
 symbols_word := [?]u8{'s', 'y', 'm', 'b', 'o', 'l', 's'}
@@ -1797,9 +2047,27 @@ lock_ptr_btn_word := [?]u8{'L', 'o', 'c', 'k', 'P', 't', 'r', 'B', 't', 'n'}
 ptr_btn_word := [?]u8{'P', 't', 'r', 'B', 't', 'n'}
 @(private = "file")
 terminate_word := [?]u8{'T', 'e', 'r', 'm', 'i', 'n', 'a', 't', 'e'}
+@(private = "file")
+move_ptr_word := [?]u8{'M', 'o', 'v', 'e', 'P', 't', 'r'}
+@(private = "file")
+switch_screen_word := [?]u8{'S', 'w', 'i', 't', 'c', 'h', 'S', 'c', 'r', 'e', 'e', 'n'}
+@(private = "file")
+private_word := [?]u8{'P', 'r', 'i', 'v', 'a', 't', 'e'}
+@(private = "file")
+screen_word := [?]u8{'s', 'c', 'r', 'e', 'e', 'n'}
+@(private = "file")
+same_word := [?]u8{'s', 'a', 'm', 'e'}
+@(private = "file")
+x_word := [?]u8{'x'}
+@(private = "file")
+y_word := [?]u8{'y'}
 
 @(private = "file")
 modifiers_word := [?]u8{'m', 'o', 'd', 'i', 'f', 'i', 'e', 'r', 's'}
+@(private = "file")
+which_mod_state_word := [?]u8{'w', 'h', 'i', 'c', 'h', 'M', 'o', 'd', 'S', 't', 'a', 't', 'e'}
+@(private = "file")
+groups_word := [?]u8{'g', 'r', 'o', 'u', 'p', 's'}
 @(private = "file")
 group_word := [?]u8{'g', 'r', 'o', 'u', 'p'}
 @(private = "file")
@@ -1808,6 +2076,8 @@ controls_word := [?]u8{'c', 'o', 'n', 't', 'r', 'o', 'l', 's'}
 button_word := [?]u8{'b', 'u', 't', 't', 'o', 'n'}
 @(private = "file")
 affect_word := [?]u8{'a', 'f', 'f', 'e', 'c', 't'}
+@(private = "file")
+count_word := [?]u8{'c', 'o', 'u', 'n', 't'}
 @(private = "file")
 preserve_word := [?]u8{'p', 'r', 'e', 's', 'e', 'r', 'v', 'e'}
 @(private = "file")
@@ -1968,7 +2238,7 @@ symbols_parse_test :: proc(t: ^testing.T) {
 @(test)
 compatibility_parse_test :: proc(t: ^testing.T) {
 	bytes: []u8
-	keymap: Keymap_Context
+	tokenizer: Tokenizer
 
 	err: Error
 	content := `xkb_keymap {
@@ -1980,10 +2250,13 @@ compatibility_parse_test :: proc(t: ^testing.T) {
 			interpret ISO_Level2_Latch+Exactly(Shift) {
 				useModMapMods=level1;
 				action= LatchMods(modifiers=Shift,clearLocks,latchToLock);
+				repeat= True;
 			};
 			indicator "Shift Lock" {
 				whichModState= locked;
 				modifiers= Shift;
+				groups= 0xfe;
+				controls= MouseKeys;
 			};
 			interpret Shift_Lock+AnyOf(Shift+Lock) {
 				action= LockMods(modifiers=Shift);
@@ -2015,9 +2288,16 @@ compatibility_parse_test :: proc(t: ^testing.T) {
     };`
 
 
-	_, err = parse_keymap(transmute([]u8)(content), context.allocator)
+	tokenizer, err = parse_keymap(transmute([]u8)(content), context.allocator)
 
-	log.error("ERROR HERE", err)
+	for interpret in tokenizer.compatibility.interprets {
+		log.info(interpret)
+	}
+
+	for indicator in tokenizer.compatibility.indicators {
+		log.info(indicator)
+	}
+
 	testing.expect(t, err == nil, "AN ERROR OCCOURED")
 }
 
@@ -2123,6 +2403,7 @@ Error :: enum {
 	CodeNotFound,
 	ModifierNotFound,
 	UnregisteredKey,
+	NotANumber,
 }
 
 main :: proc() {
