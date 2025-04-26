@@ -134,16 +134,17 @@ loop :: proc(
 
 	update_view(vk, view)
 
-	mesh := gltf_from_file("assets/cube.gltf", vk.tmp_allocator) or_return
+	// cube := gltf_from_file("assets/cube.gltf", vk.tmp_allocator) or_return
+	cone := gltf_from_file("assets/cone.gltf", vk.tmp_allocator) or_return
 
-	count := u32(len(mesh.position.([][3]f32)))
+	count := u32(len(cone.position.([][3]f32)))
 	vertices := alloc([]Vertex, count, vk.tmp_allocator) or_return
-	indices := mesh.indice.([]u16)
+	indices := cone.indice.([]u16)
 
 	{
-		positions := mesh.position.([][3]f32)
-		normals := mesh.normal.([][3]f32)
-		textures := mesh.texture.([][2]f32)
+		positions := cone.position.([][3]f32)
+		normals := cone.normal.([][3]f32)
+		textures := cone.texture.([][2]f32)
 
 		for i in 0 ..< count {
 			vertices[i] = Vertex {
@@ -167,37 +168,37 @@ loop :: proc(
 
 	color := Color{1.0, 0.0, 0.0, 1.0}
 
-	model1 := matrix[4, 4]f32{
-		300, 0, 0, 100, 
-		0, 50, 0, -50, 
-		0, 0, 1, 0, 
-		0, 0, 0, 1, 
-	}
+	// model1 := matrix[4, 4]f32{
+	// 	300, 0, 0, 100, 
+	// 	0, 50, 0, -50, 
+	// 	0, 0, 1, 0, 
+	// 	0, 0, 0, 1, 
+	// }
 
-	model2 := matrix[4, 4]f32{
-		300, 0, 0, 100, 
-		0, 50, 0, -(50 + 5) * 2 - 50, 
-		0, 0, 1, 0, 
-		0, 0, 0, 1, 
-	}
+	// model2 := matrix[4, 4]f32{
+	// 	300, 0, 0, 100, 
+	// 	0, 50, 0, -(50 + 5) * 2 - 50, 
+	// 	0, 0, 1, 0, 
+	// 	0, 0, 0, 1, 
+	// }
 
-	model3 := matrix[4, 4]f32{
-		300, 0, 0, 100, 
-		0, 50, 0, -(50 + 5) * 4 - 50, 
-		0, 0, 1, 0, 
-		0, 0, 0, 1, 
-	}
+	// model3 := matrix[4, 4]f32{
+	// 	300, 0, 0, 100, 
+	// 	0, 50, 0, -(50 + 5) * 4 - 50, 
+	// 	0, 0, 1, 0, 
+	// 	0, 0, 0, 1, 
+	// }
 
-	color1 := Color{1.0, 1.0, 1.0, 1.0}
-	color2 := Color{0.0, 0.0, 1.0, 1.0}
-	color3 := Color{1.0, 0.0, 1.0, 1.0}
+	// color1 := Color{1.0, 1.0, 1.0, 1.0}
+	// color2 := Color{0.0, 0.0, 1.0, 1.0}
+	// color3 := Color{1.0, 0.0, 1.0, 1.0}
 
 	geometry := geometry_create(vk, vertices, indices, 4) or_return
 	widget := widget_create(vk, geometry, widget_model, color, 3) or_return
 
-	instance1 := widget_add_child(vk, widget, geometry, model1, color1) or_return
-	instance2 := widget_add_child(vk, widget, geometry, model2, color2) or_return
-	instance3 := widget_add_child(vk, widget, geometry, model3, color3) or_return
+	// instance1 := widget_add_child(vk, widget, geometry, model1, color1) or_return
+	// instance2 := widget_add_child(vk, widget, geometry, model2, color2) or_return
+	// instance3 := widget_add_child(vk, widget, geometry, model3, color3) or_return
 
 	i: i32 = 0
 
@@ -224,7 +225,6 @@ loop :: proc(
 			view[0, 3] += velocity
 			update_view(vk, view) or_return
 		}
-
 
 		if render(wl) != nil {
 			fmt.println("Failed to render frame")
