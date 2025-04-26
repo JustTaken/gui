@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 
+
 Error :: enum {
 	OutOfMemory,
 	FileNotFound,
@@ -54,7 +55,9 @@ Error :: enum {
 	SymbolAssertionFailed,
 	InvalidToken,
 	CodeNotFound,
+	ModifierNotFound,
 	UnregisteredKey,
+	NotANumber,
 }
 
 main :: proc() {
