@@ -38,11 +38,19 @@ staging_buffer_init :: proc(ctx: ^Vulkan_Context, size: vk.DeviceSize) -> Error 
 	return nil
 }
 
-update_projection :: proc(ctx: ^Vulkan_Context, projection: Projection) -> Error {
-	m := [?]Projection{projection}
-	offset := vulkan_buffer_copy_data(Projection, ctx, m[:])
+update_projection :: proc(ctx: ^Vulkan_Context, projection: Matrix) -> Error {
+	m := [?]Matrix{projection}
+	offset := vulkan_buffer_copy_data(Matrix, ctx, m[:])
 
-	vulkan_buffer_copy(ctx, ctx.uniform_buffer, size_of(Projection), 0, offset) or_return
+	vulkan_buffer_copy(ctx, ctx.uniform_buffer, size_of(Matrix), 0, offset) or_return
+
+	return nil
+}
+
+update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> Error {
+	m := [?]Matrix{view}
+	offset := vulkan_buffer_copy_data(Matrix, ctx, m[:])
+	vulkan_buffer_copy(ctx, ctx.uniform_buffer, size_of(Matrix), size_of(Matrix), offset) or_return
 
 	return nil
 }

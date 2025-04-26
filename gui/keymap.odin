@@ -354,7 +354,12 @@ register_code :: proc(keymap: ^Keymap_Context, id: u32, state: u32) {
 			keymap.pressed_map[code] = true
 			append(&keymap.pressed_array, code)
 		} else if state == 0 {
-			unordered_remove(&keymap.pressed_array, code)
+			for i in 0 ..< len(keymap.pressed_array) {
+				if keymap.pressed_array[i] == code {
+					unordered_remove(&keymap.pressed_array, i)
+					break
+				}
+			}
 			keymap.pressed_map[code] = false
 		}
 	}

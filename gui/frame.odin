@@ -186,7 +186,7 @@ submit_staging_data :: proc(ctx: ^Vulkan_Context) -> Error {
 		{0, 1, 2},
 		{.UNIFORM_BUFFER, .STORAGE_BUFFER, .STORAGE_BUFFER},
 		{
-			size_of(Projection),
+			size_of(Matrix) * 2,
 			vk.DeviceSize(size_of(InstanceModel) * ctx.max_instances),
 			vk.DeviceSize(size_of(Color) * ctx.max_instances),
 		},

@@ -124,6 +124,16 @@ loop :: proc(
 	arena: ^mem.Arena,
 	tmp_arena: ^mem.Arena,
 ) -> Error {
+	velocity: f32 = 50
+	view := matrix[4, 4]f32{
+		1, 0, 0, 0, 
+		0, 1, 0, 0, 
+		0, 0, 1, 0, 
+		0, 0, 0, 1, 
+	}
+
+	update_view(vk, view)
+
 	mesh := gltf_from_file("assets/cube.gltf", vk.tmp_allocator) or_return
 
 	count := u32(len(mesh.position.([][3]f32)))
@@ -147,8 +157,8 @@ loop :: proc(
 	width := f32(400)
 	height := f32(400)
 	model := matrix[4, 4]f32{
-		width, 0, 0, width, 
-		0, height, 0, -height, 
+		width, 0, 0, width * 2, 
+		0, height, 0, -height * 2, 
 		0, 0, 1, 1, 
 		0, 0, 0, 1, 
 	}
@@ -194,6 +204,27 @@ loop :: proc(
 	for wl.running {
 		mark := mem.begin_arena_temp_memory(tmp_arena)
 		defer mem.end_arena_temp_memory(mark)
+
+		if is_key_pressed(&wl.keymap, .j) {
+			view[2, 3] += 0.1
+			update_view(vk, view) or_return
+		}
+
+		if is_key_pressed(&wl.keymap, .k) {
+			view[2, 3] -= 0.1
+			update_view(vk, view) or_return
+		}
+
+		if is_key_pressed(&wl.keymap, .l) {
+			view[0, 3] -= velocity
+			update_view(vk, view) or_return
+		}
+
+		if is_key_pressed(&wl.keymap, .h) {
+			view[0, 3] += velocity
+			update_view(vk, view) or_return
+		}
+
 
 		if render(wl) != nil {
 			fmt.println("Failed to render frame")

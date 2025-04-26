@@ -24,7 +24,7 @@ PLANE_INDICES := [?]vk.ImageAspectFlag {
 	.MEMORY_PLANE_3_EXT,
 }
 
-Projection :: matrix[4, 4]f32
+Matrix :: matrix[4, 4]f32
 
 Vulkan_Context :: struct {
 	instance:              vk.Instance,
@@ -122,7 +122,7 @@ init_vulkan :: proc(
 	ctx.copy_fence = create_fence(ctx.device) or_return
 	ctx.semaphore = create_semaphore(ctx.device) or_return
 
-	staging_buffer_init(ctx, size_of(Projection) * 100) or_return
+	staging_buffer_init(ctx, size_of(Matrix) * 100) or_return
 	frames_init(ctx, frame_count, width, height) or_return
 	geometries_init(ctx, 10, 20) or_return
 	widgets_init(ctx, 10) or_return

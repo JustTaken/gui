@@ -130,7 +130,7 @@ geometries_init :: proc(ctx: ^Vulkan_Context, count: u32, max_instances: u32) ->
 
 	ctx.uniform_buffer = vulkan_buffer_create(
 		ctx.device,
-		size_of(Projection),
+		size_of(Matrix) * 2,
 		{.UNIFORM_BUFFER, .TRANSFER_DST},
 	) or_return
 

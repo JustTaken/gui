@@ -50,6 +50,8 @@ create_pipeline :: proc(
 
 	vertex_attribute_descriptions := [?]vk.VertexInputAttributeDescription {
 		{location = 0, binding = 0, offset = 0, format = .R32G32B32_SFLOAT},
+		{location = 1, binding = 0, offset = size_of([3]f32), format = .R32G32B32_SFLOAT},
+		{location = 2, binding = 0, offset = size_of([3]f32) * 2, format = .R32G32_SFLOAT},
 	}
 
 	vert_input_state := vk.PipelineVertexInputStateCreateInfo {

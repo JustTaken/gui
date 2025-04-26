@@ -847,7 +847,7 @@ keyboard_enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.
 keyboard_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {}
 @(private = "file")
 keyboard_key_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
-	register_code(&ctx.keymap, u32(arguments[2].(wl.Uint)), u32(arguments[1].(wl.Uint)))
+	register_code(&ctx.keymap, u32(arguments[2].(wl.Uint)), u32(arguments[3].(wl.Uint)))
 }
 @(private = "file")
 keyboard_modifiers_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []wl.Argument) {
