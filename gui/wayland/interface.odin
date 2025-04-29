@@ -1,4 +1,5 @@
-package protocol
+package wayland
+
 Int :: distinct i32
 Uint :: distinct u32
 Fixed :: distinct i32
@@ -9,8 +10,8 @@ String :: distinct []u8
 Array :: distinct []u8
 UnBoundNewId :: struct {
   interface: String,
-  version: Uint,
-  id: BoundNewId,
+  version:   Uint,
+  id:  BoundNewId,
 }
 ArgumentKind :: enum {
   Int,
@@ -35,15 +36,15 @@ Argument :: union {
   Array,
 }
 Request :: struct {
-  name: string,
+  name:      string,
   arguments: []ArgumentKind,
 }
 Event :: struct {
-  name: string,
+  name:      string,
   arguments: []ArgumentKind,
 }
 Interface :: struct {
-  name: string,
+  name:     string,
   requests: []Request,
-  events: []Event,
+  events:   []Event,
 }

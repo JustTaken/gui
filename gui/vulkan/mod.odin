@@ -1,4 +1,4 @@
-package main
+package vulk
 
 import "base:runtime"
 import "core:dynlib"
@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:mem"
 import "core:sys/posix"
 import vk "vendor:vulkan"
+import "./../collection"
 
 library: dynlib.Library
 
@@ -24,45 +25,49 @@ PLANE_INDICES := [?]vk.ImageAspectFlag {
 	.MEMORY_PLANE_3_EXT,
 }
 
+
+InstanceModel :: matrix[4, 4]f32
+Color :: [4]f32
+Light :: [3]f32
+
+Vertex :: struct {
+  position: [3]f32,
+  normal:   [3]f32,
+  texture:  [2]f32,
+}
+
 Matrix :: matrix[4, 4]f32
 
 Vulkan_Context :: struct {
-	instance:              vk.Instance,
-	device:                vk.Device,
-	physical_device:       vk.PhysicalDevice,
-	queues:                []vk.Queue,
-	queue_indices:         [2]u32,
-	set_layouts:           []vk.DescriptorSetLayout,
-	layout:                vk.PipelineLayout,
-	pipeline:              vk.Pipeline,
-	render_pass:           vk.RenderPass,
-	command_pool:          vk.CommandPool,
-	command_buffers:       []vk.CommandBuffer,
-	staging:               StagingBuffer,
-	model_buffer:          vk.Buffer,
-	model_buffer_memory:   vk.DeviceMemory,
-	color_buffer:          vk.Buffer,
-	color_buffer_memory:   vk.DeviceMemory,
-	uniform_buffer:        vk.Buffer,
-	uniform_buffer_memory: vk.DeviceMemory,
-	descriptor_pool:       vk.DescriptorPool,
-	descriptor_sets:       []vk.DescriptorSet,
-	frames:                []Frame,
-	widgets:               []Widget,
-	widgets_len:           u32,
-	geometries:            []Geometry,
-	geometries_len:        u32,
-	max_instances:         u32,
-	copy_fence:            vk.Fence,
-	draw_fence:            vk.Fence,
-	semaphore:             vk.Semaphore,
-	format:                vk.Format,
-	depth_format:          vk.Format,
-	modifiers:             []vk.DrmFormatModifierPropertiesEXT,
-	arena:                 ^mem.Arena,
-	allocator:             runtime.Allocator,
-	tmp_arena:             ^mem.Arena,
-	tmp_allocator:         runtime.Allocator,
+	instance:        vk.Instance,
+	device:          vk.Device,
+	physical_device: vk.PhysicalDevice,
+	queues:          []vk.Queue,
+	queue_indices:   [2]u32,
+	set_layout:     Descriptor_Set_Layout,
+	layout:          vk.PipelineLayout,
+	pipeline:        vk.Pipeline,
+	render_pass:     vk.RenderPass,
+	command_pool:    vk.CommandPool,
+	command_buffers: []vk.CommandBuffer,
+	staging:         StagingBuffer,
+	descriptor_pool: vk.DescriptorPool,
+	descriptor_set: Descriptor_Set,
+	frames:          []Frame,
+	widgets:         collection.Vector(Widget),
+	geometries:      collection.Vector(Geometry),
+	instances: collection.Vector(Instance),
+	max_instances:   u32,
+	copy_fence:      vk.Fence,
+	draw_fence:      vk.Fence,
+	semaphore:       vk.Semaphore,
+	format:          vk.Format,
+	depth_format:    vk.Format,
+	modifiers:       []vk.DrmFormatModifierPropertiesEXT,
+	arena:           ^mem.Arena,
+	allocator:       runtime.Allocator,
+	tmp_arena:       ^mem.Arena,
+	tmp_allocator:   runtime.Allocator,
 }
 
 init_vulkan :: proc(
@@ -96,24 +101,15 @@ init_vulkan :: proc(
 	ctx.device = create_device(ctx, ctx.physical_device, ctx.queue_indices[:]) or_return
 	ctx.render_pass = create_render_pass(ctx) or_return
 	ctx.descriptor_pool = create_descriptor_pool(ctx.device) or_return
-	ctx.set_layouts = create_set_layouts(ctx, ctx.device) or_return
-	ctx.layout = create_layout(ctx.device, ctx.set_layouts) or_return
+	ctx.set_layout = create_set_layout(ctx, ctx.device) or_return
+	ctx.layout = create_layout(ctx.device, ctx.set_layout.handle) or_return
 
-	ctx.descriptor_sets = allocate_descriptor_sets(
-		ctx,
-		ctx.device,
-		ctx.set_layouts,
-		ctx.descriptor_pool,
-	) or_return
+	// ctx.descriptor_set = make([]Descriptor_Set, len(ctx.set_layouts), ctx.allocator)
 
-	ctx.pipeline = create_pipeline(
-		ctx,
-		ctx.device,
-		ctx.layout,
-		ctx.render_pass,
-		width,
-		height,
-	) or_return
+	ctx.pipeline = create_pipeline(ctx, ctx.device, ctx.layout, ctx.render_pass, width, height) or_return
+
+	ctx.geometries = collection.new_vec(Geometry, 20, ctx.allocator)
+	ctx.widgets = collection.new_vec(Widget, 20, ctx.allocator)
 
 	ctx.queues = create_queues(ctx, ctx.device, ctx.queue_indices[:]) or_return
 	ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
@@ -122,10 +118,9 @@ init_vulkan :: proc(
 	ctx.copy_fence = create_fence(ctx.device) or_return
 	ctx.semaphore = create_semaphore(ctx.device) or_return
 
-	staging_buffer_init(ctx, size_of(Matrix) * 100) or_return
+	ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 4 * 10, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
 	frames_init(ctx, frame_count, width, height) or_return
-	geometries_init(ctx, 10, 20) or_return
-	widgets_init(ctx, 10) or_return
+	descriptor_set_create(ctx, ctx.set_layout, {{.UNIFORM_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}}, {{.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}}, {2, 20, 20, 1}) or_return
 
 	return nil
 }
@@ -134,20 +129,19 @@ deinit_vulkan :: proc(ctx: ^Vulkan_Context) {
 	vk.WaitForFences(ctx.device, 1, &ctx.draw_fence, true, 0xFFFFFF)
 	vk.WaitForFences(ctx.device, 1, &ctx.copy_fence, true, 0xFFFFFF)
 
-	vk.DestroyBuffer(ctx.device, ctx.staging.buffer, nil)
-	vk.FreeMemory(ctx.device, ctx.staging.memory, nil)
-	vk.DestroyBuffer(ctx.device, ctx.uniform_buffer, nil)
-	vk.FreeMemory(ctx.device, ctx.uniform_buffer_memory, nil)
-	vk.DestroyBuffer(ctx.device, ctx.model_buffer, nil)
-	vk.FreeMemory(ctx.device, ctx.model_buffer_memory, nil)
-	vk.DestroyBuffer(ctx.device, ctx.color_buffer, nil)
-	vk.FreeMemory(ctx.device, ctx.color_buffer_memory, nil)
+	vk.DestroyBuffer(ctx.device, ctx.staging.buffer.handle, nil)
+	vk.FreeMemory(ctx.device, ctx.staging.buffer.memory, nil)
 	vk.DestroySemaphore(ctx.device, ctx.semaphore, nil)
 	vk.DestroyFence(ctx.device, ctx.draw_fence, nil)
 	vk.DestroyFence(ctx.device, ctx.copy_fence, nil)
 
-	for i in 0 ..< ctx.geometries_len {
-		destroy_geometry(ctx.device, &ctx.geometries[i])
+	for descriptor in ctx.descriptor_set.descriptors {
+		vk.DestroyBuffer(ctx.device, descriptor.buffer.handle, nil)
+		vk.FreeMemory(ctx.device, descriptor.buffer.memory, nil)
+	}
+
+	for i in 0 ..< ctx.geometries.len {
+		destroy_geometry(ctx.device, &ctx.geometries.data[i])
 	}
 
 	for &frame in ctx.frames {
@@ -159,9 +153,7 @@ deinit_vulkan :: proc(ctx: ^Vulkan_Context) {
 	vk.DestroyPipeline(ctx.device, ctx.pipeline, nil)
 	vk.DestroyPipelineLayout(ctx.device, ctx.layout, nil)
 
-	for set_layout in ctx.set_layouts {
-		vk.DestroyDescriptorSetLayout(ctx.device, set_layout, nil)
-	}
+	vk.DestroyDescriptorSetLayout(ctx.device, ctx.set_layout.handle, nil)
 
 	vk.DestroyRenderPass(ctx.device, ctx.render_pass, nil)
 	vk.DestroyDevice(ctx.device, nil)
@@ -174,7 +166,7 @@ deinit_vulkan :: proc(ctx: ^Vulkan_Context) {
 create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: Error) {
 	layer_count: u32
 	vk.EnumerateInstanceLayerProperties(&layer_count, nil)
-	layers := alloc([]vk.LayerProperties, layer_count, ctx.tmp_allocator) or_return
+	layers := make([]vk.LayerProperties, layer_count, ctx.tmp_allocator)
 	vk.EnumerateInstanceLayerProperties(&layer_count, &layers[0])
 
 	check :: proc(v: cstring, availables: []vk.LayerProperties) -> Error {
@@ -223,11 +215,7 @@ create_device :: proc(
 		unique_indices[i] += 1
 	}
 
-	queue_create_infos := alloc(
-		[]vk.DeviceQueueCreateInfo,
-		u32(len(indices)),
-		ctx.tmp_allocator,
-	) or_return
+	queue_create_infos := make([]vk.DeviceQueueCreateInfo, u32(len(indices)), ctx.tmp_allocator)
 	defer delete(queue_create_infos)
 
 	count: u32 = 0
@@ -293,12 +281,12 @@ get_drm_modifiers :: proc(
 	vk.GetPhysicalDeviceFormatProperties2(physical_device, format, &properties)
 	count := modifier_properties_list.drmFormatModifierCount
 
-	modifiers = alloc([]vk.DrmFormatModifierPropertiesEXT, count, ctx.allocator) or_return
-	drmFormatModifierProperties := alloc(
+	modifiers = make([]vk.DrmFormatModifierPropertiesEXT, count, ctx.allocator)
+	drmFormatModifierProperties := make(
 		[]vk.DrmFormatModifierPropertiesEXT,
 		count,
 		ctx.tmp_allocator,
-	) or_return
+	)
 	modifier_properties_list.pDrmFormatModifierProperties = &drmFormatModifierProperties[0]
 
 	vk.GetPhysicalDeviceFormatProperties2(physical_device, format, &properties)
@@ -365,7 +353,7 @@ check_physical_device_ext_support :: proc(
 	count: u32
 
 	vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, nil)
-	available_extensions := alloc([]vk.ExtensionProperties, count, ctx.tmp_allocator) or_return
+	available_extensions := make([]vk.ExtensionProperties, count, ctx.tmp_allocator)
 	vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, &available_extensions[0])
 
 	check :: proc(e: cstring, availables: []vk.ExtensionProperties) -> bool {
@@ -389,7 +377,7 @@ find_physical_device :: proc(
 ) {
 	device_count: u32
 	vk.EnumeratePhysicalDevices(instance, &device_count, nil)
-	devices := alloc([]vk.PhysicalDevice, device_count, ctx.tmp_allocator) or_return
+	devices := make([]vk.PhysicalDevice, device_count, ctx.tmp_allocator)
 	vk.EnumeratePhysicalDevices(instance, &device_count, &devices[0])
 
 	suitability :: proc(ctx: ^Vulkan_Context, dev: vk.PhysicalDevice) -> u32 {
@@ -430,7 +418,7 @@ create_queues :: proc(
 	queues: []vk.Queue,
 	err: Error,
 ) {
-	queues = alloc([]vk.Queue, u32(len(queue_indices)), ctx.allocator) or_return
+	queues = make([]vk.Queue, u32(len(queue_indices)), ctx.allocator)
 	for &q, i in &queues {
 		vk.GetDeviceQueue(device, u32(queue_indices[i]), 0, &q)
 	}
@@ -451,7 +439,7 @@ find_queue_indices :: proc(
 
 	queue_count: u32
 	vk.GetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_count, nil)
-	available_queues := alloc([]vk.QueueFamilyProperties, queue_count, ctx.tmp_allocator) or_return
+	available_queues := make([]vk.QueueFamilyProperties, queue_count, ctx.tmp_allocator)
 	vk.GetPhysicalDeviceQueueFamilyProperties(
 		physical_device,
 		&queue_count,
@@ -499,7 +487,7 @@ allocate_command_buffers :: proc(
 	alloc_info.level = .PRIMARY
 	alloc_info.commandBufferCount = count
 
-	command_buffers = alloc([]vk.CommandBuffer, count, ctx.allocator) or_return
+	command_buffers = make([]vk.CommandBuffer, count, ctx.allocator)
 	if res := vk.AllocateCommandBuffers(device, &alloc_info, &command_buffers[0]); res != .SUCCESS do return command_buffers, .AllocateCommandBufferFailed
 
 	return command_buffers, nil

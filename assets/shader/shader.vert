@@ -19,10 +19,15 @@ layout(binding = 2) readonly buffer InstanceColor {
   vec4 colors[];
 };
 
+layout(binding = 3) readonly buffer Light {
+  vec3 light;
+};
+
 void main() {
   int index = gl_InstanceIndex;
   gl_Position = projection * view * models[index] * vec4(in_position, 1.0);
 
-  out_color = colors[index];
+  vec3 ligth_direction = light - gl_Position.xyz;
+  out_color = vec4(normalize(dot(in_normal, ligth_direction)) * colors[index].rgb, colors[index].a);
 }
 
