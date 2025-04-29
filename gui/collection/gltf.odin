@@ -1,4 +1,4 @@
-package main
+package collection
 
 import "base:runtime"
 import "core:encoding/json"

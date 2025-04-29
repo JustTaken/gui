@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 
+import collection "collection"
 import vk "vulkan"
 import wl "wayland"
 
@@ -122,8 +123,8 @@ init :: proc(
 }
 
 loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> vk.Error {
-  err: Error
-  monkey: Mesh
+  err: collection.Error
+  monkey: collection.Mesh
 
   velocity: f32 = 50
   view := matrix[4, 4]f32{
@@ -136,7 +137,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
   vk.update_view(v, view)
   vk.update_light(v, {0, 0, 0})
 
-  if monkey, err = gltf_from_file("assets/monkey.gltf", v.tmp_allocator); err != nil {
+  if monkey, err = collection.gltf_from_file("assets/monkey.gltf", v.tmp_allocator); err != nil {
     return .ReadFileFailed
   }
 
