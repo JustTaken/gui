@@ -27,7 +27,7 @@ void main() {
   int index = gl_InstanceIndex;
   gl_Position = projection * view * models[index] * vec4(in_position, 1.0);
 
-  vec3 ligth_direction = light - gl_Position.xyz;
-  out_color = vec4(normalize(dot(in_normal, ligth_direction)) * colors[index].rgb, colors[index].a);
+  vec3 ligth_direction = normalize(light - gl_Position.xyz);
+  out_color = vec4(length(dot(in_normal, ligth_direction)) * colors[index].rgb, colors[index].a);
 }
 
