@@ -32,7 +32,7 @@ glslc assets/shader/shader.frag -o assets/output/frag.spv
 ```
 
 # Run
-First compile the [shaders](#markdown-header-compile-shaders) then:
+First compile the [shaders](#compile-shaders) then:
 
 ```bash
 odin run gui
