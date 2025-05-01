@@ -141,7 +141,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
     }
   }
 
-  angle_velocity: f32 = 3.14 / 8
+  angle_velocity: f32 = 3.14 / 32
   immaculated_view := matrix[4, 4]f32{
     1, 0, 0, 0,
     0, 1, 0, 0,
@@ -174,8 +174,8 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
   rotate_left := linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, -1, 0})
   rotate_right := linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, 1, 0})
 
-  translate_right := linalg.matrix4_translate_f32({0, translation_velocity, 0})
-  translate_left := linalg.matrix4_translate_f32({0, -translation_velocity, 0})
+  translate_right := linalg.matrix4_translate_f32({translation_velocity, 0, 0})
+  translate_left := linalg.matrix4_translate_f32({-translation_velocity, 0, 0})
   translate_back := linalg.matrix4_translate_f32({0, 0, -translation_velocity / 4})
   translate_for := linalg.matrix4_translate_f32({0, 0, translation_velocity / 4})
 
@@ -187,28 +187,28 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
     view_update := false
 
     if wl.is_key_pressed(&w.keymap, .w) {
-      widget_model = widget_model * rotate_up 
+      widget_model = widget_model * rotate_up
       model_update = true
     }
 
     if wl.is_key_pressed(&w.keymap, .ArrowRight) {
-      widget_model = widget_model * translate_left
-      model_update = true
+      view = translate_left * view
+      view_update = true
     }
 
     if wl.is_key_pressed(&w.keymap, .ArrowLeft) {
-      widget_model = widget_model * translate_right
-      model_update = true
+      view = translate_right * view
+      view_update = true
     }
 
     if wl.is_key_pressed(&w.keymap, .ArrowDown) {
-      widget_model = widget_model * translate_back
-      model_update = true
+      view = translate_back * view
+      view_update = true
     }
 
     if wl.is_key_pressed(&w.keymap, .ArrowUp) {
-      widget_model = widget_model * translate_for
-      model_update = true
+      view = translate_for * view
+      view_update = true
     }
 
     if wl.is_key_pressed(&w.keymap, .r) {
@@ -217,34 +217,9 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
     }
 
     if wl.is_key_pressed(&w.keymap, .a) {
-      view = view * rotate_up
+      view = rotate_up * view
       view_update = true
     }
-
-    // if wl.is_key_pressed(&w.keymap, .ArrowLeft) {
-    //   view = view * translate_right
-    //   view_update = true
-    // }
-
-    // if wl.is_key_pressed(&w.keymap, .ArrowRight) {
-    //   view = view * translate_left
-    //   view_update = true
-    // }
-
-    // if wl.is_key_pressed(&w.keymap, .ArrowDown) {
-    //   view = view * translate_back
-    //   view_update = true
-    // }
-
-    // if wl.is_key_pressed(&w.keymap, .ArrowUp) {
-    //   view = view * translate_for
-    //   view_update = true
-    // }
-
-    // if wl.is_key_pressed(&w.keymap, .j) {
-    //   view = view * rotate_up
-    //   view_update = true
-    // }
 
     if view_update {
       vk.update_view(v, view) or_return
