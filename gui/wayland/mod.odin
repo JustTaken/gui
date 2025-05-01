@@ -32,12 +32,20 @@ Modifier :: struct {
   modifier: u64,
 }
 
+Listen :: proc(ptr: rawptr, keymap: ^Keymap_Context)
+
+KeyListener :: struct {
+  ptr: rawptr,
+  f: Listen,
+}
+
 Wayland_Context :: struct {
   socket:       posix.FD,
   objects:      collection.Vector(InterfaceObject),
   output_buffer:      collection.Vector(u8),
   input_buffer:       collection.Vector(u8),
   values:       collection.Vector(Argument),
+  listeners: collection.Vector(KeyListener),
   bytes:        []u8,
   in_fds:       []Fd,
   in_fds_len:         u32,
@@ -94,15 +102,7 @@ Wayland_Context :: struct {
   tmp_allocator:      runtime.Allocator,
 }
 
-init_wayland :: proc(
-  ctx: ^Wayland_Context,
-  v: ^vk.Vulkan_Context,
-  width: u32,
-  height: u32,
-  frame_count: u32,
-  arena: ^mem.Arena,
-  tmp_arena: ^mem.Arena,
-) -> Error {
+init_wayland :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> Error {
   ctx.arena = arena
   ctx.allocator = mem.arena_allocator(arena)
   ctx.tmp_arena = tmp_arena
@@ -146,6 +146,7 @@ init_wayland :: proc(
   ctx.output_buffer = collection.new_vec(u8, 4096, ctx.allocator)
   ctx.input_buffer = collection.new_vec(u8, 4096, ctx.allocator)
   ctx.modifiers = collection.new_vec(Modifier, 512, ctx.allocator)
+  ctx.listeners = collection.new_vec(KeyListener, 10, ctx.allocator)
   ctx.bytes = make([]u8, 1024, ctx.allocator)
   ctx.header = make([]u8, 512, ctx.allocator)
   ctx.out_fds = ([^]Fd)(raw_data(ctx.header[mem.align_formula(size_of(posix.cmsghdr), size_of(uint)):]))
@@ -190,11 +191,12 @@ init_wayland :: proc(
   return nil
 }
 
-deinit_wayland :: proc(ctx: ^Wayland_Context) {}
 render :: proc(ctx: ^Wayland_Context) -> Error {
-  time.sleep(time.Millisecond * 60)
+  time.sleep(time.Millisecond * 30)
 
   roundtrip(ctx) or_return
+
+  handle_input(ctx)
 
   wayland_buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
 
@@ -202,6 +204,19 @@ render :: proc(ctx: ^Wayland_Context) -> Error {
 
   return nil
 }
+
+handle_input :: proc(ctx: ^Wayland_Context) {
+  for i in 0..<ctx.listeners.len {
+    listener := &ctx.listeners.data[i]
+    listener.f(listener.ptr, &ctx.keymap)
+  }
+}
+
+add_listener :: proc(ctx: ^Wayland_Context, ptr: rawptr, f: Listen) {
+  collection.vec_append(&ctx.listeners, KeyListener { ptr = ptr, f = f})
+}
+
+deinit_wayland :: proc(ctx: ^Wayland_Context) {}
 
 @(private = "file")
 resize :: proc(ctx: ^Wayland_Context, width: u32, height: u32) {
@@ -235,7 +250,6 @@ resize :: proc(ctx: ^Wayland_Context, width: u32, height: u32) {
   projection := scale * translate
 
   vk.update_projection(ctx.vk, projection)
-  fmt.println("projection:", projection)
 }
 
 @(private = "file")

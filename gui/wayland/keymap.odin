@@ -315,14 +315,7 @@ Keymap_Context :: struct {
   pressed_array: [dynamic]Code,
 }
 
-keymap_from_bytes :: proc(
-  bytes: []u8,
-  allocator: runtime.Allocator,
-  tmp_allocator: runtime.Allocator,
-) -> (
-  keymap: Keymap_Context,
-  err: Error,
-) {
+keymap_from_bytes :: proc(bytes: []u8, allocator: runtime.Allocator, tmp_allocator: runtime.Allocator) -> (keymap: Keymap_Context, err: Error) {
   tokenizer := parse_keymap(bytes, tmp_allocator) or_return
 
   keymap.codes = make(map[u32][]Code, 100, allocator)
@@ -360,6 +353,7 @@ register_code :: proc(keymap: ^Keymap_Context, id: u32, state: u32) {
           break
         }
       }
+
       keymap.pressed_map[code] = false
     }
   }

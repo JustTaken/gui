@@ -54,10 +54,8 @@ Vulkan_Context :: struct {
 	descriptor_pool: vk.DescriptorPool,
 	descriptor_set: Descriptor_Set,
 	frames:          []Frame,
-	widgets:         collection.Vector(Widget),
 	geometries:      collection.Vector(Geometry),
 	instances: collection.Vector(Instance),
-	max_instances:   u32,
 	copy_fence:      vk.Fence,
 	draw_fence:      vk.Fence,
 	semaphore:       vk.Semaphore,
@@ -70,14 +68,7 @@ Vulkan_Context :: struct {
 	tmp_allocator:   runtime.Allocator,
 }
 
-init_vulkan :: proc(
-	ctx: ^Vulkan_Context,
-	width: u32,
-	height: u32,
-	frame_count: u32,
-	arena: ^mem.Arena,
-	tmp_arena: ^mem.Arena,
-) -> Error {
+init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> Error {
 	mark := mem.begin_arena_temp_memory(tmp_arena)
 	defer mem.end_arena_temp_memory(mark)
 
@@ -107,7 +98,7 @@ init_vulkan :: proc(
 	ctx.pipeline = create_pipeline(ctx, ctx.device, ctx.layout, ctx.render_pass, width, height) or_return
 
 	ctx.geometries = collection.new_vec(Geometry, 20, ctx.allocator)
-	ctx.widgets = collection.new_vec(Widget, 20, ctx.allocator)
+	ctx.instances = collection.new_vec(Instance, 20, ctx.allocator)
 
 	ctx.queues = create_queues(ctx, ctx.device, ctx.queue_indices[:]) or_return
 	ctx.command_pool = create_command_pool(ctx.device, ctx.queue_indices[1]) or_return
@@ -197,14 +188,7 @@ create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: Err
 }
 
 @(private = "file")
-create_device :: proc(
-	ctx: ^Vulkan_Context,
-	physical_device: vk.PhysicalDevice,
-	indices: []u32,
-) -> (
-	device: vk.Device,
-	err: Error,
-) {
+create_device :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDevice, indices: []u32) -> (device: vk.Device, err: Error) {
 	queue_priority := f32(1.0)
 
 	unique_indices: [10]u32 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
@@ -255,15 +239,9 @@ create_device :: proc(
 }
 
 @(private = "file")
-get_drm_modifiers :: proc(
-	ctx: ^Vulkan_Context,
-	physical_device: vk.PhysicalDevice,
-	format: vk.Format,
-) -> (
-	modifiers: []vk.DrmFormatModifierPropertiesEXT,
-	err: Error,
-) {
+get_drm_modifiers :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDevice, format: vk.Format) -> (modifiers: []vk.DrmFormatModifierPropertiesEXT, err: Error) {
 	l: u32 = 0
+
 	render_features: vk.FormatFeatureFlags = {.COLOR_ATTACHMENT, .COLOR_ATTACHMENT_BLEND}
 	texture_features: vk.FormatFeatureFlags = {.SAMPLED_IMAGE, .SAMPLED_IMAGE_FILTER_LINEAR}
 
@@ -280,11 +258,7 @@ get_drm_modifiers :: proc(
 	count := modifier_properties_list.drmFormatModifierCount
 
 	modifiers = make([]vk.DrmFormatModifierPropertiesEXT, count, ctx.allocator)
-	drmFormatModifierProperties := make(
-		[]vk.DrmFormatModifierPropertiesEXT,
-		count,
-		ctx.tmp_allocator,
-	)
+	drmFormatModifierProperties := make([]vk.DrmFormatModifierPropertiesEXT, count, ctx.tmp_allocator)
 	modifier_properties_list.pDrmFormatModifierProperties = &drmFormatModifierProperties[0]
 
 	vk.GetPhysicalDeviceFormatProperties2(physical_device, format, &properties)
@@ -344,10 +318,7 @@ get_drm_modifiers :: proc(
 }
 
 @(private = "file")
-check_physical_device_ext_support :: proc(
-	ctx: ^Vulkan_Context,
-	physical_device: vk.PhysicalDevice,
-) -> Error {
+check_physical_device_ext_support :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDevice) -> Error {
 	count: u32
 
 	vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, nil)
@@ -366,13 +337,7 @@ check_physical_device_ext_support :: proc(
 }
 
 @(private = "file")
-find_physical_device :: proc(
-	ctx: ^Vulkan_Context,
-	instance: vk.Instance,
-) -> (
-	physical_device: vk.PhysicalDevice,
-	err: Error,
-) {
+find_physical_device :: proc(ctx: ^Vulkan_Context, instance: vk.Instance) -> (physical_device: vk.PhysicalDevice, err: Error) {
 	device_count: u32
 	vk.EnumeratePhysicalDevices(instance, &device_count, nil)
 	devices := make([]vk.PhysicalDevice, device_count, ctx.tmp_allocator)
@@ -408,14 +373,7 @@ find_physical_device :: proc(
 }
 
 @(private = "file")
-create_queues :: proc(
-	ctx: ^Vulkan_Context,
-	device: vk.Device,
-	queue_indices: []u32,
-) -> (
-	queues: []vk.Queue,
-	err: Error,
-) {
+create_queues :: proc(ctx: ^Vulkan_Context, device: vk.Device, queue_indices: []u32) -> (queues: []vk.Queue, err: Error) {
 	queues = make([]vk.Queue, u32(len(queue_indices)), ctx.allocator)
 	for &q, i in &queues {
 		vk.GetDeviceQueue(device, u32(queue_indices[i]), 0, &q)
@@ -425,13 +383,7 @@ create_queues :: proc(
 }
 
 @(private = "file")
-find_queue_indices :: proc(
-	ctx: ^Vulkan_Context,
-	physical_device: vk.PhysicalDevice,
-) -> (
-	indices: [2]u32,
-	err: Error,
-) {
+find_queue_indices :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDevice) -> (indices: [2]u32, err: Error) {
 	MAX: u32 = 0xFF
 	indices = [2]u32{MAX, MAX}
 
@@ -470,15 +422,7 @@ create_command_pool :: proc(device: vk.Device, queue_index: u32) -> (vk.CommandP
 }
 
 @(private = "file")
-allocate_command_buffers :: proc(
-	ctx: ^Vulkan_Context,
-	device: vk.Device,
-	command_pool: vk.CommandPool,
-	count: u32,
-) -> (
-	command_buffers: []vk.CommandBuffer,
-	err: Error,
-) {
+allocate_command_buffers :: proc(ctx: ^Vulkan_Context, device: vk.Device, command_pool: vk.CommandPool, count: u32) -> (command_buffers: []vk.CommandBuffer, err: Error) {
 	alloc_info: vk.CommandBufferAllocateInfo
 	alloc_info.sType = .COMMAND_BUFFER_ALLOCATE_INFO
 	alloc_info.commandPool = command_pool
@@ -526,14 +470,7 @@ drm_format :: proc(format: vk.Format) -> u32 {
 	return 0
 }
 
-find_memory_type :: proc(
-	physical_device: vk.PhysicalDevice,
-	type_filter: u32,
-	properties: vk.MemoryPropertyFlags,
-) -> (
-	u32,
-	Error,
-) {
+find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, Error) {
 	mem_properties: vk.PhysicalDeviceMemoryProperties
 	vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
 

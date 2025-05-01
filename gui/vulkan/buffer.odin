@@ -15,14 +15,12 @@ StagingBuffer :: struct {
 }
 
 buffer_create :: proc(ctx: ^Vulkan_Context, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) -> (buffer: Buffer, err: Error) {
-  //buffer.buffer = vulkan_buffer_create(ctx.device, size, {.TRANSFER_SRC}) or_return
   buffer.handle = vulkan_buffer_create(ctx.device, size, usage) or_return
   buffer.memory = vulkan_buffer_create_memory(
     ctx.device,
     ctx.physical_device,
     buffer.handle,
     properties,
-    //{.HOST_COHERENT, .HOST_VISIBLE},
   ) or_return
 
   buffer.len = 0

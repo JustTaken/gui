@@ -70,37 +70,10 @@ gltf_from_file :: proc(path: string, allocator: runtime.Allocator) -> (mesh: Mes
     primitive := primitives[0].(json.Object)
     attributes := primitive["attributes"].(json.Object)
 
-    mesh.position = read_attribute(
-      u32(attributes["POSITION"].(f64)),
-      accessors,
-      buffer_views,
-      buffers,
-      allocator,
-    ) or_return
-
-    mesh.normal = read_attribute(
-      u32(attributes["NORMAL"].(f64)),
-      accessors,
-      buffer_views,
-      buffers,
-      allocator,
-    ) or_return
-
-    mesh.texture = read_attribute(
-      u32(attributes["TEXCOORD_0"].(f64)),
-      accessors,
-      buffer_views,
-      buffers,
-      allocator,
-    ) or_return
-
-    mesh.indice = read_attribute(
-      u32(primitive["indices"].(f64)),
-      accessors,
-      buffer_views,
-      buffers,
-      allocator,
-    ) or_return
+    mesh.position = read_attribute(u32(attributes["POSITION"].(f64)), accessors, buffer_views, buffers, allocator) or_return
+    mesh.normal = read_attribute(u32(attributes["NORMAL"].(f64)), accessors, buffer_views, buffers, allocator) or_return
+    mesh.texture = read_attribute(u32(attributes["TEXCOORD_0"].(f64)), accessors, buffer_views, buffers, allocator) or_return
+    mesh.indice = read_attribute(u32(primitive["indices"].(f64)), accessors, buffer_views, buffers, allocator) or_return
   }
 
   for buffer in buffers {
@@ -138,14 +111,7 @@ read_attribute :: proc(index: u32, accessors: json.Array, views: json.Array, buf
 }
 
 @(private = "file")
-read_buffer := proc(
-  view: json.Object,
-  buffers: []GltfBuffer,
-  allocator: runtime.Allocator,
-) -> (
-  []u8,
-  Error,
-) {
+read_buffer := proc(view: json.Object, buffers: []GltfBuffer, allocator: runtime.Allocator) -> ([]u8, Error) {
   index := u32(view["buffer"].(f64))
   offset := i64(view["byteOffset"].(f64))
   length := u32(view["byteLength"].(f64))

@@ -227,19 +227,12 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
   for i in 0 ..< ctx.geometries.len {
     geometry := &ctx.geometries.data[i]
 
-    if geometry.instance_count == 0 do continue
+    if geometry.instances == 0 do continue
 
     offset := vk.DeviceSize(0)
     vk.CmdBindVertexBuffers(cmd, 0, 1, &geometry.vertex.handle, &offset)
     vk.CmdBindIndexBuffer(cmd, geometry.indice.handle, 0, .UINT16)
-    vk.CmdDrawIndexed(
-      cmd,
-      geometry.count,
-      geometry.instance_count,
-      0,
-      0,
-      geometry.instance_offset,
-    )
+    vk.CmdDrawIndexed(cmd, geometry.count, geometry.instances, 0, 0, geometry.offset)
   }
 
   vk.CmdEndRenderPass(cmd)

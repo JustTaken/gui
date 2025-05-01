@@ -8,12 +8,19 @@ MODELS :: 1
 COLORS :: 2
 LIGHTS :: 3
 
+Instance :: struct {
+  // geometry: ^Geometry,
+  model:       InstanceModel,
+  // id: u32,
+}
+
 Geometry :: struct {
   vertex:    Buffer,
   indice:    Buffer,
-  count:     u32,
-  instance_offset: u32,
-  instance_count:  u32,
+  // instances: collection.Vector(Instance),
+  count: u32,
+  offset: u32,
+  instances: u32,
 }
 
 geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []Vertex, indices: []u16, max_instances: u32) -> (id: u32, err: Error) {
@@ -27,38 +34,39 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []Vertex, indices: []u16
   geometry.indice = buffer_create(ctx, size, {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
   vulkan_copy_data(u16, ctx, indices[:], geometry.indice.handle, 0) or_return
 
-  geometry.instance_offset = ctx.max_instances
-  geometry.instance_count = 0
   geometry.count = u32(len(indices))
+  geometry.offset = ctx.instances.len
+  geometry.instances = 0
+  ctx.instances.len += max_instances
 
-  ctx.max_instances += max_instances
   id = ctx.geometries.len
   collection.vec_append(&ctx.geometries, geometry)
 
   return id, nil
 }
 
-geometry_add_instance :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: InstanceModel, color: Color) -> (id: u32, ok: Error) {
+geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: InstanceModel, color: Color) -> (id: u32, ok: Error) {
   geometry := &ctx.geometries.data[geometry_id]
-  id = geometry.instance_count
+  id = geometry.offset + geometry.instances
 
-  geometry_update_instance(ctx, geometry_id, id, model, color) or_return
-  geometry.instance_count += 1
+  instance: Instance
+  instance.model = model
+
+  instance_update(ctx, id, model, color) or_return
+  geometry.instances += 1
 
   return id, nil
 }
 
-geometry_update_instance :: proc(ctx: ^Vulkan_Context, geometry_id: u32, id: u32, model: Maybe(InstanceModel), color: Maybe(Color)) -> Error {
-  geometry := &ctx.geometries.data[geometry_id]
-
+instance_update :: proc(ctx: ^Vulkan_Context, id: u32, model: Maybe(InstanceModel), color: Maybe(Color)) -> Error {
   if model != nil {
     models := [?]InstanceModel{model.?}
-    vulkan_copy_data(InstanceModel, ctx, models[:], ctx.descriptor_set.descriptors[MODELS].buffer.handle, vk.DeviceSize(geometry.instance_offset + id) * size_of(InstanceModel)) or_return
+    vulkan_copy_data(InstanceModel, ctx, models[:], ctx.descriptor_set.descriptors[MODELS].buffer.handle, vk.DeviceSize(id) * size_of(InstanceModel)) or_return
   }
 
   if color != nil {
     colors := [?]Color{color.?}
-    vulkan_copy_data(Color, ctx, colors[:], ctx.descriptor_set.descriptors[COLORS].buffer.handle, vk.DeviceSize(geometry.instance_offset + id) * size_of(Color)) or_return
+    vulkan_copy_data(Color, ctx, colors[:], ctx.descriptor_set.descriptors[COLORS].buffer.handle, vk.DeviceSize(id) * size_of(Color)) or_return
   }
 
   return nil
