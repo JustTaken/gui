@@ -6,6 +6,8 @@ import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:sys/posix"
+import "core:math/linalg"
+import "core:math"
 
 import "core:fmt"
 import "core:time"
@@ -190,7 +192,7 @@ init_wayland :: proc(
 
 deinit_wayland :: proc(ctx: ^Wayland_Context) {}
 render :: proc(ctx: ^Wayland_Context) -> Error {
-  time.sleep(time.Millisecond * 17)
+  time.sleep(time.Millisecond * 60)
 
   roundtrip(ctx) or_return
 
@@ -206,26 +208,34 @@ resize :: proc(ctx: ^Wayland_Context, width: u32, height: u32) {
   ctx.width = width
   ctx.height = height
 
-  f_width := f32(width)
-  f_height := f32(height)
-  far := f32(1000)
+  far := f32(10)
   near := f32(1)
 
+  fovy := f32(3.14 / 4)
+  tan_fovy := math.tan(0.5 * fovy)
+
+  f_width := f32(width)
+  f_height := f32(height)
+  aspect := f32(width) / f32(height)
+
   scale := matrix[4, 4]f32{
-    1 / f_width, 0, 0, 0, 
-    0, -1 / f_height, 0, 0, 
+    1 / (aspect * tan_fovy), 0, 0, 0, 
+    0, -1 / (tan_fovy), 0, 0, 
     0, 0, 1 / (far - near), 0, 
     0, 0, 0, 1, 
   }
 
   translate := matrix[4, 4]f32{
-    1, 0, 0, -f_width, 
-    0, 1, 0, f_height, 
-    0, 0, 1, -near / (far - near), 
-    0, 0, 0.2, 0, 
+    1, 0, 0, 0, 
+    0, 1, 0, 0, 
+    0, 0, -1, -near / (far - near), 
+    0, 0, -1, 0, 
   }
 
-  vk.update_projection(ctx.vk, scale * translate)
+  projection := scale * translate
+
+  vk.update_projection(ctx.vk, projection)
+  fmt.println("projection:", projection)
 }
 
 @(private = "file")
@@ -650,8 +660,6 @@ keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Ar
 
   if err != nil {
     fmt.println("Failed to create keymap")
-  } else {
-    fmt.println("Successfully read keymap file data")
   }
 }
 

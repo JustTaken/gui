@@ -104,8 +104,6 @@ init_vulkan :: proc(
 	ctx.set_layout = create_set_layout(ctx, ctx.device) or_return
 	ctx.layout = create_layout(ctx.device, ctx.set_layout.handle) or_return
 
-	// ctx.descriptor_set = make([]Descriptor_Set, len(ctx.set_layouts), ctx.allocator)
-
 	ctx.pipeline = create_pipeline(ctx, ctx.device, ctx.layout, ctx.render_pass, width, height) or_return
 
 	ctx.geometries = collection.new_vec(Geometry, 20, ctx.allocator)
@@ -118,9 +116,11 @@ init_vulkan :: proc(
 	ctx.copy_fence = create_fence(ctx.device) or_return
 	ctx.semaphore = create_semaphore(ctx.device) or_return
 
-	ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 4 * 10, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
+	ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 1000, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
 	frames_init(ctx, frame_count, width, height) or_return
 	descriptor_set_create(ctx, ctx.set_layout, {{.UNIFORM_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}}, {{.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}}, {2, 20, 20, 1}) or_return
+
+	ctx.max_instances = 0
 
 	return nil
 }

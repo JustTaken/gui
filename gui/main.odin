@@ -3,6 +3,7 @@ package main
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:math/linalg"
 
 import collection "collection"
 import vk "vulkan"
@@ -107,15 +108,7 @@ main :: proc() {
   fmt.println("MAIN", arena.offset - len(tmp_arena.data), arena.peak_used - len(tmp_arena.data))
 }
 
-init :: proc(
-    v: ^vk.Vulkan_Context,
-    w: ^wl.Wayland_Context,
-    width: u32,
-    height: u32,
-    frames: u32,
-    arena: ^mem.Arena,
-    tmp_arena: ^mem.Arena,
-) -> bool {
+init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: u32, frames: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
     vulkan_ok := vk.init_vulkan(v, 1920, 1080, frames, arena, tmp_arena) == nil
     wayland_ok := wl.init_wayland(w, v, width, height, frames, arena, tmp_arena) == nil
 
@@ -126,17 +119,6 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
   err: collection.Error
   monkey: collection.Mesh
 
-  velocity: f32 = 50
-  view := matrix[4, 4]f32{
-    1, 0, 0, -100,
-    0, 1, 0, -100,
-    0, 0, 1, 10,
-    0, 0, 0, 1,
-  }
-
-  vk.update_view(v, view)
-  vk.update_light(v, {0, 0, 0})
-
   if monkey, err = collection.gltf_from_file("assets/monkey.gltf", v.tmp_allocator); err != nil {
     return .ReadFileFailed
   }
@@ -144,8 +126,6 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
   count := u32(len(monkey.position.([][3]f32)))
   vertices := make([]vk.Vertex, count, v.tmp_allocator)
   indices := monkey.indice.([]u16)
-
-  // fmt.println("Normals:", monkey.normal)
 
   {
     positions := monkey.position.([][3]f32)
@@ -161,82 +141,122 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, arena: ^mem.Arena, t
     }
   }
 
-  width := f32(400)
-  height := f32(400)
-  model := matrix[4, 4]f32{
-    width, 0, 0, width * 2, 
-    0, height, 0, -height * 2, 
-    0, 0, 1, 1, 
+  angle_velocity: f32 = 3.14 / 8
+  immaculated_view := matrix[4, 4]f32{
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  }
+
+  width := f32(1)
+  height := f32(1)
+  translation_velocity: f32 = 0.5
+  widget_model := matrix[4, 4]f32{
+    width, 0, 0, 0, 
+    0, height, 0, 0, 
+    0, 0, 1, -1, 
     0, 0, 0, 1, 
   }
 
-  widget_model := model
+  view := immaculated_view
 
   color := vk.Color{1.0, 0.0, 0.0, 1.0}
 
-  // model1 := matrix[4, 4]f32{
-  //      300, 0, 0, 100, 
-  //      0, 50, 0, -50, 
-  //      0, 0, 1, 0, 
-  //      0, 0, 0, 1, 
-  // }
-
-  // model2 := matrix[4, 4]f32{
-  //      300, 0, 0, 100, 
-  //      0, 50, 0, -(50 + 5) * 2 - 50, 
-  //      0, 0, 1, 0, 
-  //      0, 0, 0, 1, 
-  // }
-
-  // model3 := matrix[4, 4]f32{
-  //      300, 0, 0, 100, 
-  //      0, 50, 0, -(50 + 5) * 4 - 50, 
-  //      0, 0, 1, 0, 
-  //      0, 0, 0, 1, 
-  // }
-
-  // color1 := Color{1.0, 1.0, 1.0, 1.0}
-  // color2 := Color{0.0, 0.0, 1.0, 1.0}
-  // color3 := Color{1.0, 0.0, 1.0, 1.0}
+  vk.update_view(v, view)
+  vk.update_light(v, {0, 0, 0})
 
   geometry := vk.geometry_create(v, vertices, indices, 4) or_return
   widget := vk.widget_create(v, geometry, widget_model, color, 3) or_return
 
-  // instance1 := widget_add_child(vk, widget, geometry, model1, color1) or_return
-  // instance2 := widget_add_child(vk, widget, geometry, model2, color2) or_return
-  // instance3 := widget_add_child(vk, widget, geometry, model3, color3) or_return
+  rotate_up := linalg.matrix4_rotate_f32(angle_velocity, [3]f32{1, 0, 0})
+  rotate_down := linalg.matrix4_rotate_f32(angle_velocity, [3]f32{-1, 0, 0})
+  rotate_left := linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, -1, 0})
+  rotate_right := linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, 1, 0})
 
-  i: i32 = 0
+  translate_right := linalg.matrix4_translate_f32({0, translation_velocity, 0})
+  translate_left := linalg.matrix4_translate_f32({0, -translation_velocity, 0})
+  translate_back := linalg.matrix4_translate_f32({0, 0, -translation_velocity / 4})
+  translate_for := linalg.matrix4_translate_f32({0, 0, translation_velocity / 4})
 
   for w.running {
     mark := mem.begin_arena_temp_memory(tmp_arena)
     defer mem.end_arena_temp_memory(mark)
 
-    if wl.is_key_pressed(&w.keymap, .j) {
-      view[2, 3] += 0.1
+    model_update := false
+    view_update := false
+
+    if wl.is_key_pressed(&w.keymap, .w) {
+      widget_model = widget_model * rotate_up 
+      model_update = true
+    }
+
+    if wl.is_key_pressed(&w.keymap, .ArrowRight) {
+      widget_model = widget_model * translate_left
+      model_update = true
+    }
+
+    if wl.is_key_pressed(&w.keymap, .ArrowLeft) {
+      widget_model = widget_model * translate_right
+      model_update = true
+    }
+
+    if wl.is_key_pressed(&w.keymap, .ArrowDown) {
+      widget_model = widget_model * translate_back
+      model_update = true
+    }
+
+    if wl.is_key_pressed(&w.keymap, .ArrowUp) {
+      widget_model = widget_model * translate_for
+      model_update = true
+    }
+
+    if wl.is_key_pressed(&w.keymap, .r) {
+      view = immaculated_view
+      view_update = true
+    }
+
+    if wl.is_key_pressed(&w.keymap, .a) {
+      view = view * rotate_up
+      view_update = true
+    }
+
+    // if wl.is_key_pressed(&w.keymap, .ArrowLeft) {
+    //   view = view * translate_right
+    //   view_update = true
+    // }
+
+    // if wl.is_key_pressed(&w.keymap, .ArrowRight) {
+    //   view = view * translate_left
+    //   view_update = true
+    // }
+
+    // if wl.is_key_pressed(&w.keymap, .ArrowDown) {
+    //   view = view * translate_back
+    //   view_update = true
+    // }
+
+    // if wl.is_key_pressed(&w.keymap, .ArrowUp) {
+    //   view = view * translate_for
+    //   view_update = true
+    // }
+
+    // if wl.is_key_pressed(&w.keymap, .j) {
+    //   view = view * rotate_up
+    //   view_update = true
+    // }
+
+    if view_update {
       vk.update_view(v, view) or_return
     }
 
-    if wl.is_key_pressed(&w.keymap, .k) {
-      view[2, 3] -= 0.1
-      vk.update_view(v, view) or_return
-    }
-
-    if wl.is_key_pressed(&w.keymap, .l) {
-      view[0, 3] -= velocity
-      vk.update_view(v, view) or_return
-    }
-
-    if wl.is_key_pressed(&w.keymap, .h) {
-      view[0, 3] += velocity
-      vk.update_view(v, view) or_return
+    if model_update {
+      vk.widget_update(v, widget, widget_model, nil) or_return
     }
 
     if wl.render(w) != nil {
       fmt.println("Failed to render frame")
     }
-
-    i += 20
   }
 
   return nil

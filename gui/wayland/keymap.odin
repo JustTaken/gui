@@ -421,6 +421,10 @@ parse_keymap :: proc(
   tokenizer.code_equivalent["underscore"] = .Underscore
   tokenizer.code_equivalent["equal"] = .Equal
   tokenizer.code_equivalent["Return"] = .Return
+  tokenizer.code_equivalent["Up"] = .ArrowUp
+  tokenizer.code_equivalent["Down"] = .ArrowDown
+  tokenizer.code_equivalent["Left"] = .ArrowLeft
+  tokenizer.code_equivalent["Right"] = .ArrowRight
 
   tokenizer.code_equivalent["1"] = .One
   tokenizer.code_equivalent["2"] = .Two
@@ -2108,6 +2112,10 @@ Code :: enum {
   Tilde,
   Del,
   Return,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
 }
 
 @(private = "file")

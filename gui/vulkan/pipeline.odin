@@ -128,7 +128,7 @@ create_pipeline :: proc(
     rasterizerDiscardEnable = false,
     polygonMode       = .FILL,
     cullMode    = {.FRONT},
-    frontFace         = .COUNTER_CLOCKWISE,
+    frontFace         = .CLOCKWISE,
     depthBiasEnable   = false,
     depthBiasClamp    = 0.0,
     depthBiasConstantFactor = 0.0,
