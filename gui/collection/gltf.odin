@@ -6,6 +6,10 @@ import "core:log"
 import "core:encoding/json"
 import "core:path/filepath"
 import "core:math/linalg"
+import "core:fmt"
+import "core:strings"
+
+Matrix :: matrix[4, 4]f32
 
 Gltf_Buffer :: struct {
   fd:  os.Handle,
@@ -23,10 +27,16 @@ Gltf_Animation_Interpolation :: enum {
   CubicSpline,
 }
 
+Gltf_Animation_Sampler_Obj :: struct {
+  time: f32,
+  transform: Matrix,
+}
+
 Gltf_Animation_Sampler :: struct {
   interpolation: Gltf_Animation_Interpolation,
-  input: Gltf_Attribute,
-  output: Gltf_Attribute,
+  objs: []Gltf_Animation_Sampler_Obj,
+  // input: Gltf_Attribute,
+  // output: Gltf_Attribute,
 }
 
 Gltf_Animation_Path :: enum {
@@ -37,7 +47,7 @@ Gltf_Animation_Path :: enum {
 }
 
 Gltf_Animation_Target :: struct {
-  node: Gltf_Node,
+  node: u32,
   path: Gltf_Animation_Path,
 }
 
@@ -46,8 +56,15 @@ Gltf_Animation_Channel :: struct {
   target: Gltf_Animation_Target,
 }
 
+Gltf_Animation_Frame :: struct {
+  time: f32,
+  transforms: []Matrix,
+}
+
 Gltf_Animation :: struct {
   channels: []Gltf_Animation_Channel,
+  nodes: []u32,
+  frames: []Gltf_Animation_Frame,
 }
 
 Gltf_Attribute_Kind :: enum {
@@ -121,6 +138,7 @@ Gltf_Context :: struct {
   nodes: []Gltf_Node,
   buffers: []Gltf_Buffer,
   allocator: runtime.Allocator,
+  tmp_allocator: runtime.Allocator,
 }
 
 Gltf :: struct {
@@ -129,7 +147,7 @@ Gltf :: struct {
   animations: map[string]Gltf_Animation,
 }
 
-gltf_from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, err: Error) {
+gltf_from_file :: proc(path: string, allocator: runtime.Allocator, tmp_allocator: runtime.Allocator) -> (gltf: Gltf, err: Error) {
   value: json.Value
   j_err: json.Error
   bytes: []u8
@@ -140,10 +158,11 @@ gltf_from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Glt
 
   ctx: Gltf_Context
   ctx.allocator = allocator
+  ctx.tmp_allocator = tmp_allocator
 
   if bytes, ok = os.read_entire_file(path); !ok do return gltf, .FileNotFound
-  if value, j_err = json.parse(bytes, allocator = ctx.allocator); j_err != nil do return gltf, .GltfLoadFailed
-  dir := filepath.dir(path, ctx.allocator)
+  if value, j_err = json.parse(bytes, allocator = ctx.tmp_allocator); j_err != nil do return gltf, .GltfLoadFailed
+  dir := filepath.dir(path, ctx.tmp_allocator)
 
   ctx.obj = value.(json.Object)
 
@@ -157,14 +176,14 @@ gltf_from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Glt
   }
 
   raw_buffers := ctx.obj["buffers"].(json.Array)
-  ctx.buffers = make([]Gltf_Buffer, len(raw_buffers), ctx.allocator)
+  ctx.buffers = make([]Gltf_Buffer, len(raw_buffers), ctx.tmp_allocator)
 
   for i in 0 ..< len(raw_buffers) {
     buffer := &ctx.buffers[i]
     raw := &raw_buffers[i].(json.Object)
 
     uri_array := [?]string{dir, raw["uri"].(string)}
-    uri := filepath.join(uri_array[:], ctx.allocator)
+    uri := filepath.join(uri_array[:], ctx.tmp_allocator)
 
     if buffer.fd, os_err = os.open(uri); os_err != nil do return gltf, .FileNotFound
     buffer.len = u32(raw["byteLength"].(f64))
@@ -250,35 +269,21 @@ get_attribute_component_size :: proc(kind: Gltf_Attribute_Component) -> u32 {
   panic("Invalid size")
 }
 
-get_animation_frame :: proc(animation: ^Gltf_Animation, frame: u32) -> matrix[4, 4]f32 {
-  m := matrix[4, 4]f32 {
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, 0,
-    0, 0, 0, 1,
-  }
+get_animation_frame :: proc(animation: ^Gltf_Animation, time: f32, last: u32) -> (frame: Gltf_Animation_Frame, index: u32, repeat: bool, finished: bool) {
+  length := u32(len(animation.frames))
+  index = last
 
-  for c in animation.channels {
-    #partial switch c.target.path {
-      case .Translation:
-        vec := cast([^]f32)&c.sampler.output.bytes[frame * get_attribute_component_size(c.sampler.output.component) * c.sampler.output.component_size]
-        m[0, 3] += vec[0]
-        m[1, 3] += vec[1]
-        m[2, 3] += vec[2]
-      case .Scale:
-        vec := cast([^]f32)&c.sampler.output.bytes[frame * get_attribute_component_size(c.sampler.output.component) * c.sampler.output.component_size]
-        m[0, 0] *= vec[0]
-        m[1, 1] *= vec[1]
-        m[2, 2] *= vec[2]
-      case .Rotation:
-        vec := cast([^]f32)&c.sampler.output.bytes[frame * get_attribute_component_size(c.sampler.output.component) * c.sampler.output.component_size]
-        q: quaternion128 = quaternion(x = vec[0], y = -vec[1], z = -vec[2], w = vec[3])
-        mat := linalg.matrix3_from_quaternion_f32(q)
-        m = linalg.matrix4_from_matrix3_f32(mat) * m
+  for time > animation.frames[index].time {
+    next_index := index + 1
+
+    if next_index >= length {
+      return animation.frames[index], index, false, true
     }
+
+    index = next_index
   }
 
-  return m
+  return animation.frames[index], index, index == last, false
 }
 
 parse_asset :: proc(ctx: ^Gltf_Context) -> (asset: Gltf_Asset, err: Error) {
@@ -329,7 +334,7 @@ parse_node :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (node: Gltf_Node, er
 }
 
 parse_nodes :: proc(ctx: ^Gltf_Context) -> (nodes: []Gltf_Node, err: Error) {
-  nodes = make([]Gltf_Node, len(ctx.raw_nodes), ctx.allocator)
+  nodes = make([]Gltf_Node, len(ctx.raw_nodes), ctx.tmp_allocator)
 
   for i in 0..<len(ctx.raw_nodes) {
     nodes[i] = parse_node(ctx, ctx.raw_nodes[i].(json.Object)) or_return
@@ -338,9 +343,59 @@ parse_nodes :: proc(ctx: ^Gltf_Context) -> (nodes: []Gltf_Node, err: Error) {
   return nodes, nil
 }
 
-parse_animation_sampler :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (sampler: Gltf_Animation_Sampler, err: Error) {
-  sampler.input = parse_attribute(ctx, ctx.raw_accessors[u32(raw["input"].(f64))].(json.Object)) or_return
-  sampler.output = parse_attribute(ctx, ctx.raw_accessors[u32(raw["output"].(f64))].(json.Object)) or_return
+parse_animation_sampler :: proc(ctx: ^Gltf_Context, raw: json.Object, path: Gltf_Animation_Path) -> (sampler: Gltf_Animation_Sampler, err: Error) {
+  input := parse_attribute(ctx, ctx.raw_accessors[u32(raw["input"].(f64))].(json.Object)) or_return
+  output := parse_attribute(ctx, ctx.raw_accessors[u32(raw["output"].(f64))].(json.Object)) or_return
+
+  assert(input.component == .F32)
+  assert(output.component == .F32)
+  assert(input.component_size == 1)
+  assert(input.count == output.count)
+
+  sampler.objs = make([]Gltf_Animation_Sampler_Obj, input.count, ctx.tmp_allocator)
+  output_vec := cast([^]f32)&output.bytes[0]
+  input_vec := cast([^]f32)&input.bytes[0]//u32(i) * get_attribute_component_size(c.sampler.output.component) * c.sampler.output.component_size]
+
+  identity := Matrix {
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  }
+
+  #partial switch path {
+    case .Translation:
+      assert(output.component_size == 3)
+      for i in 0..<output.count {
+        sampler.objs[i].transform = identity
+        index := output.component_size * i
+        sampler.objs[i].transform[0, 3] = output_vec[index + 0]
+        sampler.objs[i].transform[1, 3] = output_vec[index + 1]
+        sampler.objs[i].transform[2, 3] = output_vec[index + 2]
+      }
+    case .Scale:
+      assert(output.component_size == 3)
+      for i in 0..<output.count {
+        sampler.objs[i].transform = identity
+        index := output.component_size * i
+        sampler.objs[i].transform[0, 0] = output_vec[index + 0]
+        sampler.objs[i].transform[1, 1] = output_vec[index + 1]
+        sampler.objs[i].transform[2, 2] = output_vec[index + 2]
+      }
+    case .Rotation:
+      assert(output.component_size == 4)
+      for i in 0..<output.count {
+        sampler.objs[i].transform = identity
+        index := output.component_size * i
+        q: quaternion128 = quaternion(x = output_vec[index + 0], y = -output_vec[index + 1], z = -output_vec[index + 2], w = output_vec[index + 3])
+        mat := linalg.matrix3_from_quaternion_f32(q)
+        sampler.objs[i].transform = linalg.matrix4_from_matrix3_f32(mat)
+      }
+  }
+
+  for i in 0..<input.count {
+    sampler.objs[i].time = input_vec[i]
+  }
 
   switch raw["interpolation"].(string) {
     case "LINEAR":
@@ -358,7 +413,7 @@ parse_animation_sampler :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (sample
 
 parse_animation_target :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (target: Gltf_Animation_Target, err: Error) {
   raw_node := u32(raw["node"].(f64))
-  target.node = ctx.nodes[raw_node]
+  target.node = raw_node
 
   switch raw["path"].(string) {
     case "translation":
@@ -379,22 +434,86 @@ parse_animation_target :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (target:
 parse_animation_channel :: proc(ctx: ^Gltf_Context, raw: json.Object, samplers: json.Array) -> (channel: Gltf_Animation_Channel, err: Error) {
   raw_sampler := samplers[u32(raw["sampler"].(f64))].(json.Object)
 
-  channel.sampler = parse_animation_sampler(ctx, raw_sampler) or_return
   channel.target = parse_animation_target(ctx, raw["target"].(json.Object)) or_return
+  channel.sampler = parse_animation_sampler(ctx, raw_sampler, channel.target.path) or_return
 
   return channel, err
 }
 
+parse_frames :: proc(ctx: ^Gltf_Context, animation: ^Gltf_Animation, frame_count: u32, frame_time: f32) -> Error {
+  NodeTransform :: [Gltf_Animation_Path]Maybe(Matrix)
+
+  node_count := len(ctx.nodes)
+
+  identity := Matrix { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, }
+  frames := make([]Gltf_Animation_Frame, frame_count, ctx.allocator)
+
+  for i in 0..<frame_count {
+    frames[i].time = f32(i + 1) * frame_time
+    frames[i].transforms = make([]Matrix, node_count, ctx.allocator)
+
+    for &t in frames[i].transforms {
+      t = identity
+    }
+  }
+
+  for c in animation.channels {
+    #partial switch c.sampler.interpolation {
+      case .Step:
+        i := 0
+
+        transform := identity
+
+        for k in 0..<len(c.sampler.objs) {
+          for greater(c.sampler.objs[k].time, frames[i].time) {
+            frames[i].transforms[c.target.node] = frames[i].transforms[c.target.node] * transform
+            i += 1
+          }
+
+          transform = c.sampler.objs[k].transform
+        }
+      case .Linear:
+        for i in 0..<len(c.sampler.objs) {
+          frames[i].transforms[c.target.node] = frames[i].transforms[c.target.node] * c.sampler.objs[i].transform
+        }
+      case:
+        panic("TODO")
+    }
+  }
+
+  nodes := make([dynamic]u32, len(ctx.nodes), ctx.allocator)
+
+  for c in animation.channels {
+    append(&nodes, c.target.node)
+  }
+
+  animation.nodes = nodes[:]
+  animation.frames = frames
+
+  return nil
+}
+
 parse_animation :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (name: string, animation: Gltf_Animation, err: Error) {
-  name = raw["name"].(string)
+  name = strings.clone(raw["name"].(string), ctx.allocator)
 
   raw_channels := raw["channels"].(json.Array)
   raw_samplers := raw["samplers"].(json.Array)
-  animation.channels = make([]Gltf_Animation_Channel, len(raw_channels), ctx.allocator)
+  animation.channels = make([]Gltf_Animation_Channel, len(raw_channels), ctx.tmp_allocator)
 
+  frame_count: u32 = 0
+  frame_time: f32 = 0
   for i in 0..<len(raw_channels) {
     animation.channels[i] = parse_animation_channel(ctx, raw_channels[i].(json.Object), raw_samplers) or_return
+
+    l := u32(len(animation.channels[i].sampler.objs))
+
+    if frame_count < l {
+      frame_count = l
+      frame_time = animation.channels[i].sampler.objs[l - 1].time / f32(frame_count)
+    }
   }
+
+  parse_frames(ctx, &animation, frame_count, frame_time) or_return
 
   return name, animation, err
 }
@@ -413,6 +532,7 @@ parse_animations :: proc(ctx: ^Gltf_Context) -> (animations: map[string]Gltf_Ani
     name, animation := parse_animation(ctx, raw_array[i].(json.Object)) or_return
     animations[name] = animation
   }
+
   return animations, nil
 }
 
@@ -458,7 +578,7 @@ parse_material :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (material: Gltf_
 
   if attrib, ok := raw["pbrMetallicRoughness"]; ok {
     factor := attrib.(json.Object)["baseColorFactor"].(json.Array)
-    material.metallic_roughness.base_color_factor = make([]f64, len(factor), ctx.allocator)
+    material.metallic_roughness.base_color_factor = make([]f64, len(factor), ctx.tmp_allocator)
 
     for i in 0..<len(factor) {
       material.metallic_roughness.base_color_factor[i] = factor[i].(f64)
@@ -547,7 +667,7 @@ parse_mesh :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (mesh: Gltf_Mesh, er
   mesh.name = raw["name"].(string)
 
   raw_primitives := raw["primitives"].(json.Array)
-  mesh.primitives = make([]Gltf_Mesh_Primitive, len(raw_primitives), ctx.allocator)
+  mesh.primitives = make([]Gltf_Mesh_Primitive, len(raw_primitives), ctx.tmp_allocator)
 
   for i in 0..<len(raw_primitives) {
     mesh.primitives[i] = parse_mesh_primitive(ctx, raw_primitives[i].(json.Object)) or_return
@@ -560,7 +680,7 @@ parse_scene :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (name: string, scen
   name = raw["name"].(string)
 
   raw_nodes := raw["nodes"].(json.Array)
-  scene.nodes = make([]Gltf_Node, len(raw_nodes), ctx.allocator)
+  scene.nodes = make([]Gltf_Node, len(raw_nodes), ctx.tmp_allocator)
 
   for i in 0..<len(raw_nodes) {
     index := u32(raw_nodes[i].(f64))
@@ -584,7 +704,7 @@ parse_scenes :: proc(ctx: ^Gltf_Context) -> (scenes: map[string]Gltf_Scene, err:
 read_from_buffer :: proc(ctx: ^Gltf_Context, buffer: Gltf_Buffer, length: u32, offset: u32) -> (bytes: []u8, err: Error) {
   i: i64
   e: os.Error
-  bytes = make([]u8, length, ctx.allocator)
+  bytes = make([]u8, length, ctx.tmp_allocator)
 
   if i, e = os.seek(buffer.fd, i64(offset), os.SEEK_SET); e != nil do return bytes, .FileNotFound
 
@@ -593,4 +713,8 @@ read_from_buffer :: proc(ctx: ^Gltf_Context, buffer: Gltf_Buffer, length: u32, o
   if read != int(length) do return bytes, .ReadFileFailed
 
   return bytes, nil
+}
+
+greater :: proc(first, second: f32) -> bool {
+  return first > second + 0.001
 }

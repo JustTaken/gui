@@ -57,7 +57,7 @@ Vulkan_Context :: struct {
 	descriptor_set: Descriptor_Set,
 	frames:          []Frame,
 	geometries:      collection.Vector(Geometry),
-	instances: collection.Vector(Instance),
+	instances: u32,
 	copy_fence:      vk.Fence,
 	draw_fence:      vk.Fence,
 	semaphore:       vk.Semaphore,
@@ -112,7 +112,7 @@ init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 	ctx.frames = frames_create(ctx, frame_count, width, height) or_return
 
 	ctx.geometries = collection.new_vec(Geometry, 20, ctx.allocator)
-	ctx.instances = collection.new_vec(Instance, 20, ctx.allocator)
+	ctx.instances = 0
 
 	return nil
 }

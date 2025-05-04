@@ -15,23 +15,7 @@
 	"nodes":[
 		{
 			"mesh":0,
-			"name":"Cube",
-			"rotation":[
-				0.2588190734386444,
-				0,
-				0,
-				0.965925931930542
-			],
-			"scale":[
-				1.023743748664856,
-				1.023743748664856,
-				1.023743748664856
-			],
-			"translation":[
-				-0.6190423965454102,
-				1.683992624282837,
-				0.3928697407245636
-			]
+			"name":"Cube"
 		}
 	],
 	"animations":[
@@ -59,7 +43,7 @@
 					}
 				}
 			],
-			"name":"CubeAction.001",
+			"name":"CubeAction",
 			"samplers":[
 				{
 					"input":4,
@@ -72,16 +56,32 @@
 					"output":6
 				},
 				{
-					"input":4,
-					"interpolation":"LINEAR",
-					"output":7
+					"input":7,
+					"interpolation":"STEP",
+					"output":8
 				}
 			]
 		}
 	],
+	"materials":[
+		{
+			"doubleSided":true,
+			"name":"Material",
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.800000011920929,
+					0.800000011920929,
+					0.800000011920929,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0.5
+			}
+		}
+	],
 	"meshes":[
 		{
-			"name":"Cube.001",
+			"name":"Cube",
 			"primitives":[
 				{
 					"attributes":{
@@ -89,7 +89,8 @@
 						"NORMAL":1,
 						"TEXCOORD_0":2
 					},
-					"indices":3
+					"indices":3,
+					"material":0
 				}
 			]
 		}
@@ -132,9 +133,9 @@
 		{
 			"bufferView":4,
 			"componentType":5126,
-			"count":100,
+			"count":80,
 			"max":[
-				4.166666666666667
+				3.3333333333333335
 			],
 			"min":[
 				0.041666666666666664
@@ -144,19 +145,31 @@
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":100,
+			"count":80,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":100,
+			"count":80,
 			"type":"VEC4"
 		},
 		{
 			"bufferView":7,
 			"componentType":5126,
-			"count":100,
+			"count":2,
+			"max":[
+				3.3333333333333335
+			],
+			"min":[
+				0.041666666666666664
+			],
+			"type":"SCALAR"
+		},
+		{
+			"bufferView":8,
+			"componentType":5126,
+			"count":2,
 			"type":"VEC3"
 		}
 	],
@@ -187,28 +200,33 @@
 		},
 		{
 			"buffer":0,
-			"byteLength":400,
+			"byteLength":320,
 			"byteOffset":840
 		},
 		{
 			"buffer":0,
-			"byteLength":1200,
-			"byteOffset":1240
+			"byteLength":960,
+			"byteOffset":1160
 		},
 		{
 			"buffer":0,
-			"byteLength":1600,
-			"byteOffset":2440
+			"byteLength":1280,
+			"byteOffset":2120
 		},
 		{
 			"buffer":0,
-			"byteLength":1200,
-			"byteOffset":4040
+			"byteLength":8,
+			"byteOffset":3400
+		},
+		{
+			"buffer":0,
+			"byteLength":24,
+			"byteOffset":3408
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":5240,
+			"byteLength":3432,
 			"uri":"cube_animation.bin"
 		}
 	]

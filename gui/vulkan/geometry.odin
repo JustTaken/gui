@@ -9,10 +9,6 @@ MODELS :: 1
 COLORS :: 2
 LIGHTS :: 3
 
-Instance :: struct {
-  model:       InstanceModel,
-}
-
 Geometry :: struct {
   vertex:    Buffer,
   indice:    Buffer,
@@ -31,9 +27,9 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
   vulkan_copy_data(u8, ctx, indices, geometry.indice.handle, 0) or_return
 
   geometry.count = index_count
-  geometry.offset = ctx.instances.len
+  geometry.offset = ctx.instances
   geometry.instances = 0
-  ctx.instances.len += max_instances
+  ctx.instances += max_instances
 
   id = ctx.geometries.len
   collection.vec_append(&ctx.geometries, geometry)
@@ -44,9 +40,6 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
 geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: InstanceModel, color: Color) -> (id: u32, ok: Error) {
   geometry := &ctx.geometries.data[geometry_id]
   id = geometry.offset + geometry.instances
-
-  instance: Instance
-  instance.model = model
 
   instance_update(ctx, id, model, color) or_return
   geometry.instances += 1
