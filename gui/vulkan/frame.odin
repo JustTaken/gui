@@ -19,22 +19,20 @@ Frame :: struct {
   height:       u32,
 }
 
-frames_init :: proc(ctx: ^Vulkan_Context, count: u32, width: u32, height: u32) -> Error {
-  ctx.frames = make([]Frame, count, ctx.allocator)
+frames_create :: proc(ctx: ^Vulkan_Context, count: u32, width: u32, height: u32) -> (frames: []Frame, err: Error) {
+  frames = make([]Frame, count, ctx.allocator)
 
   for i in 0 ..< count {
-    frame := &ctx.frames[i]
-    frame.planes = make([]vk.SubresourceLayout, 3, ctx.allocator)
-
-    create_frame(ctx, frame, width, height) or_return
+    frames[i] = create_frame(ctx, width, height) or_return
   }
 
-  return nil
+  return frames, nil
 }
 
-create_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
+create_frame :: proc(ctx: ^Vulkan_Context, width: u32, height: u32) -> (frame: Frame, err: Error) {
   frame.width = width
   frame.height = height
+  frame.planes = make([]vk.SubresourceLayout, 3, ctx.allocator)
 
   modifiers := make([]u64, u32(len(ctx.modifiers)), ctx.tmp_allocator)
 
@@ -60,33 +58,15 @@ create_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u3
     handleTypes = {.DMA_BUF_EXT},
   }
 
-  frame.image = create_image(
-    ctx.device,
-    ctx.format,
-    .D2,
-    .DRM_FORMAT_MODIFIER_EXT,
-    {.COLOR_ATTACHMENT},
-    {},
-    &list_info,
-    width,
-    height,
-  ) or_return
-
-  frame.memory = create_image_memory(
-    ctx.device,
-    ctx.physical_device,
-    frame.image,
-    {.HOST_VISIBLE, .HOST_COHERENT},
-    &export_info,
-  ) or_return
-
+  frame.image = create_image(ctx.device, ctx.format, .D2, .DRM_FORMAT_MODIFIER_EXT, {.COLOR_ATTACHMENT}, {}, &list_info, width, height) or_return
+  frame.memory = create_image_memory(ctx.device, ctx.physical_device, frame.image, {.HOST_VISIBLE, .HOST_COHERENT}, &export_info) or_return
   frame.view = create_image_view(ctx.device, frame.image, ctx.format, {.COLOR}) or_return
 
   properties := vk.ImageDrmFormatModifierPropertiesEXT {
     sType = .IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
   }
 
-  if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device, frame.image, &properties) != .SUCCESS do return .GetImageModifier
+  if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device, frame.image, &properties) != .SUCCESS do return frame, .GetImageModifier
 
   for modifier in ctx.modifiers {
     if modifier.drmFormatModifier == properties.drmFormatModifier {
@@ -109,45 +89,14 @@ create_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u3
     handleType = {.DMA_BUF_EXT},
   }
 
-  if vk.GetMemoryFdKHR(ctx.device, &info, &frame.fd) != .SUCCESS do return .GetFdFailed
+  if vk.GetMemoryFdKHR(ctx.device, &info, &frame.fd) != .SUCCESS do return frame, .GetFdFailed
 
-  frame.depth = create_image(
-    ctx.device,
-    ctx.depth_format,
-    .D2,
-    .OPTIMAL,
-    {.DEPTH_STENCIL_ATTACHMENT},
-    {},
-    nil,
-    width,
-    height,
-  ) or_return
+  frame.depth = create_image(ctx.device, ctx.depth_format, .D2, .OPTIMAL, {.DEPTH_STENCIL_ATTACHMENT}, {}, nil, width, height) or_return
+  frame.depth_memory = create_image_memory(ctx.device, ctx.physical_device, frame.depth, {.DEVICE_LOCAL}, nil ) or_return
+  frame.depth_view = create_image_view(ctx.device, frame.depth, ctx.depth_format, {.DEPTH} ) or_return
+  frame.buffer = create_framebuffer(ctx.device, ctx.render_pass, frame.view, frame.depth_view, width, height) or_return
 
-  frame.depth_memory = create_image_memory(
-    ctx.device,
-    ctx.physical_device,
-    frame.depth,
-    {.DEVICE_LOCAL},
-    nil,
-  ) or_return
-
-  frame.depth_view = create_image_view(
-    ctx.device,
-    frame.depth,
-    ctx.depth_format,
-    {.DEPTH},
-  ) or_return
-
-  frame.buffer = create_framebuffer(
-    ctx.device,
-    ctx.render_pass,
-    frame.view,
-    frame.depth_view,
-    width,
-    height,
-  ) or_return
-
-  return nil
+  return frame, nil
 }
 
 get_frame :: proc(ctx: ^Vulkan_Context, index: u32) -> ^Frame {
@@ -156,7 +105,7 @@ get_frame :: proc(ctx: ^Vulkan_Context, index: u32) -> ^Frame {
 
 resize_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
   destroy_frame(ctx.device, frame)
-  create_frame(ctx, frame, width, height) or_return
+  frame^ = create_frame(ctx, width, height) or_return
 
   return nil
 }
@@ -164,12 +113,6 @@ resize_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u3
 frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
   submit_staging_data(ctx) or_return
   cmd := ctx.command_buffers[0]
-
-  // sets := make([]vk.DescriptorSet, len(ctx.descriptor_sets), ctx.tmp_allocator)
-
-  // for i in 0..<len(ctx.descriptor_sets) {
-    // sets[i] = ctx.descriptor_sets[i].handle
-  // }
 
   sets := [?]vk.DescriptorSet {
     ctx.descriptor_set.handle
@@ -213,16 +156,7 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
   vk.CmdBindPipeline(cmd, .GRAPHICS, ctx.pipeline)
   vk.CmdSetViewport(cmd, 0, 1, &viewport)
   vk.CmdSetScissor(cmd, 0, 1, &area)
-  vk.CmdBindDescriptorSets(
-    cmd,
-    .GRAPHICS,
-    ctx.layout,
-    0,
-    u32(len(sets)),
-    &sets[0],
-    0,
-    nil,
-  )
+  vk.CmdBindDescriptorSets(cmd, .GRAPHICS, ctx.layout, 0, u32(len(sets)), &sets[0], 0, nil)
 
   for i in 0 ..< ctx.geometries.len {
     geometry := &ctx.geometries.data[i]
@@ -254,18 +188,7 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
   return nil
 }
 
-create_image :: proc(
-  device: vk.Device,
-  format: vk.Format,
-  type: vk.ImageType,
-  tiling: vk.ImageTiling,
-  usage: vk.ImageUsageFlags,
-  flags: vk.ImageCreateFlags,
-  pNext: rawptr,
-  width: u32,
-  height: u32,
-) -> (image: vk.Image, err: Error) {
-
+create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, pNext: rawptr, width: u32, height: u32) -> (image: vk.Image, err: Error) {
   info := vk.ImageCreateInfo {
     sType = .IMAGE_CREATE_INFO,
     pNext = pNext,
@@ -291,13 +214,7 @@ create_image :: proc(
   return image, nil
 }
 
-create_image_memory :: proc(
-  device: vk.Device,
-  physical_device: vk.PhysicalDevice,
-  image: vk.Image,
-  properties: vk.MemoryPropertyFlags,
-  pNext: rawptr,
-) -> (memory: vk.DeviceMemory, err: Error) {
+create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, image: vk.Image, properties: vk.MemoryPropertyFlags, pNext: rawptr) -> (memory: vk.DeviceMemory, err: Error) {
   requirements: vk.MemoryRequirements
   vk.GetImageMemoryRequirements(device, image, &requirements)
 
@@ -319,12 +236,7 @@ create_image_memory :: proc(
   return memory, nil
 }
 
-create_image_view :: proc(
-  device: vk.Device,
-  image: vk.Image,
-  format: vk.Format,
-  aspect: vk.ImageAspectFlags,
-) -> (vk.ImageView, Error) {
+create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format, aspect: vk.ImageAspectFlags) -> (vk.ImageView, Error) {
   range := vk.ImageSubresourceRange {
     levelCount = 1,
     layerCount = 1,
@@ -347,17 +259,7 @@ create_image_view :: proc(
   return view, nil
 }
 
-create_framebuffer :: proc(
-  device: vk.Device,
-  render_pass: vk.RenderPass,
-  view: vk.ImageView,
-  depth: vk.ImageView,
-  width: u32,
-  height: u32,
-) -> (
-  vk.Framebuffer,
-  Error,
-) {
+create_framebuffer :: proc(device: vk.Device, render_pass: vk.RenderPass, view: vk.ImageView, depth: vk.ImageView, width: u32, height: u32) -> (vk.Framebuffer, Error) {
   attachments := [?]vk.ImageView{view, depth}
   info := vk.FramebufferCreateInfo {
     sType     = .FRAMEBUFFER_CREATE_INFO,

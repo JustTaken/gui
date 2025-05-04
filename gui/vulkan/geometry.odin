@@ -2,6 +2,7 @@ package vulk
 
 import vk "vendor:vulkan"
 import "./../collection"
+import "core:fmt"
 
 TRANSFORMS :: 0
 MODELS :: 1
@@ -9,32 +10,27 @@ COLORS :: 2
 LIGHTS :: 3
 
 Instance :: struct {
-  // geometry: ^Geometry,
   model:       InstanceModel,
-  // id: u32,
 }
 
 Geometry :: struct {
   vertex:    Buffer,
   indice:    Buffer,
-  // instances: collection.Vector(Instance),
   count: u32,
   offset: u32,
   instances: u32,
 }
 
-geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []Vertex, indices: []u16, max_instances: u32) -> (id: u32, err: Error) {
+geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, vertex_count: u32, indices: []u8, index_size: u32, index_count: u32, max_instances: u32) -> (id: u32, err: Error) {
   geometry: Geometry
 
-  size := vk.DeviceSize(size_of(Vertex) * len(vertices))
-  geometry.vertex = buffer_create(ctx, size, {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
-  vulkan_copy_data(Vertex, ctx, vertices[:], geometry.vertex.handle, 0) or_return
+  geometry.vertex = buffer_create(ctx, vk.DeviceSize(vertex_size * vertex_count), {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
+  vulkan_copy_data(u8, ctx, vertices, geometry.vertex.handle, 0) or_return
 
-  size = vk.DeviceSize(size_of(u16) * len(indices))
-  geometry.indice = buffer_create(ctx, size, {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
-  vulkan_copy_data(u16, ctx, indices[:], geometry.indice.handle, 0) or_return
+  geometry.indice = buffer_create(ctx, vk.DeviceSize(index_size * index_count), {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
+  vulkan_copy_data(u8, ctx, indices, geometry.indice.handle, 0) or_return
 
-  geometry.count = u32(len(indices))
+  geometry.count = index_count
   geometry.offset = ctx.instances.len
   geometry.instances = 0
   ctx.instances.len += max_instances

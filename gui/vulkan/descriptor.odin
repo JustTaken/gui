@@ -31,7 +31,7 @@ descriptor_create :: proc(ctx: ^Vulkan_Context, kind: vk.DescriptorType, size: v
   return descriptor, nil
 }
 
-descriptor_set_create :: proc(ctx: ^Vulkan_Context, layout: Descriptor_Set_Layout, usages: []vk.BufferUsageFlags, properties: []vk.MemoryPropertyFlags, counts: []u32) -> Error {
+descriptor_set_create :: proc(ctx: ^Vulkan_Context, layout: Descriptor_Set_Layout, usages: []vk.BufferUsageFlags, properties: []vk.MemoryPropertyFlags, counts: []u32) -> (descriptor_set: Descriptor_Set, err: Error) {
   binding_count := len(layout.bindings)
 
   assert(binding_count == len(layout.type_sizes))
@@ -47,12 +47,12 @@ descriptor_set_create :: proc(ctx: ^Vulkan_Context, layout: Descriptor_Set_Layou
     descriptors[i] = descriptor_create(ctx, layout.bindings[i].descriptorType, vk.DeviceSize(layout.type_sizes[i] * counts[i]), u32(layout.bindings[i].binding), usages[i], properties[i]) or_return
   }
 
-  ctx.descriptor_set = Descriptor_Set{handle = descriptor_handle, layout = ctx.set_layout, descriptors = descriptors}
+  descriptor_set = Descriptor_Set{handle = descriptor_handle, layout = ctx.set_layout, descriptors = descriptors}
 
-  return nil
+  return descriptor_set, nil
 }
 
-create_set_layout :: proc(ctx: ^Vulkan_Context, device: vk.Device) -> (set_layout: Descriptor_Set_Layout, err: Error) {
+create_set_layout :: proc(ctx: ^Vulkan_Context) -> (set_layout: Descriptor_Set_Layout, err: Error) {
   count :: 4
 
   set_layout.type_sizes = make([]u32, count, ctx.allocator)
@@ -95,15 +95,15 @@ create_set_layout :: proc(ctx: ^Vulkan_Context, device: vk.Device) -> (set_layou
       pBindings = &set_layout.bindings[0],
   }
 
-  if vk.CreateDescriptorSetLayout(device, &set_layout_info, nil, &set_layout.handle) != .SUCCESS {
+  if vk.CreateDescriptorSetLayout(ctx.device, &set_layout_info, nil, &set_layout.handle) != .SUCCESS {
     return set_layout, .CreateDescriptorSetLayoutFailed
   }
 
   return set_layout, nil
 }
 
-create_layout :: proc(device: vk.Device, set_layout: vk.DescriptorSetLayout) -> (vk.PipelineLayout, Error) {
-  set_layouts := [?]vk.DescriptorSetLayout{ set_layout }
+create_layout :: proc(ctx: ^Vulkan_Context, set_layout: Descriptor_Set_Layout) -> (vk.PipelineLayout, Error) {
+  set_layouts := [?]vk.DescriptorSetLayout{ set_layout.handle }
   layout_info := vk.PipelineLayoutCreateInfo {
     sType    = .PIPELINE_LAYOUT_CREATE_INFO,
     setLayoutCount = u32(len(set_layouts)),
@@ -111,14 +111,14 @@ create_layout :: proc(device: vk.Device, set_layout: vk.DescriptorSetLayout) -> 
   }
 
   layout: vk.PipelineLayout
-  if vk.CreatePipelineLayout(device, &layout_info, nil, &layout) != .SUCCESS {
+  if vk.CreatePipelineLayout(ctx.device, &layout_info, nil, &layout) != .SUCCESS {
     return layout, .CreatePipelineLayouFailed
   }
 
   return layout, nil
 }
 
-create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, Error) {
+create_descriptor_pool :: proc(ctx: ^Vulkan_Context) -> (vk.DescriptorPool, Error) {
   sizes := [?]vk.DescriptorPoolSize {
     {type = .UNIFORM_BUFFER, descriptorCount = 10},
     {type = .STORAGE_BUFFER, descriptorCount = 10},
@@ -132,7 +132,7 @@ create_descriptor_pool :: proc(device: vk.Device) -> (vk.DescriptorPool, Error) 
   }
 
   pool: vk.DescriptorPool
-  if vk.CreateDescriptorPool(device, &info, nil, &pool) != nil do return pool, .CreateDescriptorPoolFailed
+  if vk.CreateDescriptorPool(ctx.device, &info, nil, &pool) != nil do return pool, .CreateDescriptorPoolFailed
 
   return pool, nil
 }

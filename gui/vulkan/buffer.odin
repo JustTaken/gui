@@ -103,3 +103,14 @@ vulkan_copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer
 
   return nil
 }
+
+find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, Error) {
+	mem_properties: vk.PhysicalDeviceMemoryProperties
+	vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
+
+	for i in 0 ..< mem_properties.memoryTypeCount {
+		if (type_filter & (1 << i) != 0) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties do return i, nil
+	}
+
+	return 0, .MemoryNotFound
+}

@@ -4,30 +4,12 @@ import "base:runtime"
 import "core:os"
 import vk "vendor:vulkan"
 
-create_pipeline :: proc(
-  ctx: ^Vulkan_Context,
-  device: vk.Device,
-  layout: vk.PipelineLayout,
-  render_pass: vk.RenderPass,
-  width: u32,
-  height: u32,
-) -> (
-  pipeline: vk.Pipeline,
-  err: Error,
-) {
-  vert_module := create_shader_module(
-    device,
-    "assets/output/vert.spv",
-    ctx.tmp_allocator,
-  ) or_return
-  defer vk.DestroyShaderModule(device, vert_module, nil)
+create_pipeline :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32) -> (pipeline: vk.Pipeline, err: Error) {
+  vert_module := create_shader_module(ctx, "assets/output/vert.spv") or_return
+  defer vk.DestroyShaderModule(ctx.device, vert_module, nil)
 
-  frag_module := create_shader_module(
-    device,
-    "assets/output/frag.spv",
-    ctx.tmp_allocator,
-  ) or_return
-  defer vk.DestroyShaderModule(device, frag_module, nil)
+  frag_module := create_shader_module(ctx, "assets/output/frag.spv") or_return
+  defer vk.DestroyShaderModule(ctx.device, frag_module, nil)
 
   stages := [?]vk.PipelineShaderStageCreateInfo {
     {
@@ -165,7 +147,7 @@ create_pipeline :: proc(
     layout        = layout,
   }
 
-  if vk.CreateGraphicsPipelines(device, 0, 1, &info, nil, &pipeline) != .SUCCESS do return pipeline, .CreatePipelineFailed
+  if vk.CreateGraphicsPipelines(ctx.device, 0, 1, &info, nil, &pipeline) != .SUCCESS do return pipeline, .CreatePipelineFailed
 
   return pipeline, nil
 }
@@ -239,14 +221,7 @@ create_render_pass :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, Error) {
   return render_pass, nil
 }
 
-create_shader_module :: proc(
-  device: vk.Device,
-  path: string,
-  allocator: runtime.Allocator,
-) -> (
-  module: vk.ShaderModule,
-  err: Error,
-) {
+create_shader_module :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.ShaderModule, err: Error) {
   er: os.Error
   file: os.Handle
   size: i64
@@ -256,7 +231,7 @@ create_shader_module :: proc(
 
   if size, er = os.file_size(file); err != nil do return module, .FileNotFound
 
-  buf := make([]u8, u32(size), allocator)
+  buf := make([]u8, u32(size), ctx.tmp_allocator)
 
   l: int
   if l, er = os.read(file, buf); err != nil do return module, .ReadFileFailed
@@ -269,7 +244,7 @@ create_shader_module :: proc(
   }
 
   frag_module: vk.ShaderModule
-  if vk.CreateShaderModule(device, &info, nil, &module) != .SUCCESS do return module, .CreateShaderModuleFailed
+  if vk.CreateShaderModule(ctx.device, &info, nil, &module) != .SUCCESS do return module, .CreateShaderModuleFailed
 
   return module, nil
 }

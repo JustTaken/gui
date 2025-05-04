@@ -8,7 +8,7 @@ import "core:path/filepath"
 import "core:sys/posix"
 import "core:math/linalg"
 import "core:math"
-
+import "core:log"
 import "core:fmt"
 import "core:time"
 
@@ -103,6 +103,8 @@ Wayland_Context :: struct {
 }
 
 init_wayland :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> Error {
+  log.info("Initializing Wayland")
+
   ctx.arena = arena
   ctx.allocator = mem.arena_allocator(arena)
   ctx.tmp_arena = tmp_arena
@@ -419,7 +421,7 @@ read_and_write_collection :: proc(ctx: ^Wayland_Context, $T: typeid, length_ptr:
 recv :: proc(ctx: ^Wayland_Context) -> Error {
   iovec := posix.iovec {
     iov_base = raw_data(ctx.input_buffer.data),
-    iov_len  = 4096,
+    iov_len  = len(ctx.input_buffer.data),
   }
 
   t_size := size_of(posix.FD)
@@ -847,4 +849,3 @@ delete_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) {
 error_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) {
   fmt.println("error:", string(arguments[2].(String)))
 }
-

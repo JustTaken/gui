@@ -5,4 +5,10 @@ Error :: enum {
 	GltfLoadFailed,
 	AttributeKindNotFound,
 	ReadFileFailed,
+	InvalidInterpolation,
+	InvalidAnimationPath,
+	InvalidAttributeCount,
+	AttributeNotFound,
+	InvalidAttributeKind,
+	NoAnimation,
 }

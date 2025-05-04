@@ -1,21 +1,38 @@
 package vulk
 
-import "./../collection"
+import vk "vendor:vulkan"
 
-// instance_create :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: InstanceModel, color: Color) -> (id: u32, err: Error) {
-//   instance: Instance
-//   instance.geometry_id = geometry_id
-//   instance.model = model
-//   instance.id = geometry_add_instance(ctx, geometry_id, model, color) or_return
+create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: Error) {
+	layer_count: u32
+	vk.EnumerateInstanceLayerProperties(&layer_count, nil)
+	layers := make([]vk.LayerProperties, layer_count, ctx.tmp_allocator)
+	vk.EnumerateInstanceLayerProperties(&layer_count, &layers[0])
 
-//   collection.vec_append(&ctx.instances, instance)
+	check :: proc(v: cstring, availables: []vk.LayerProperties) -> Error {
+		for &available in availables do if v == cstring(&available.layerName[0]) do return nil
 
-//   return id, nil
-// }
+		return .LayerNotFound
+	}
 
-// instance_update :: proc(ctx: ^Vulkan_Context, instance_id: u32, model: Maybe(InstanceModel), color: Maybe(Color)) -> Error {
-//   geometry_update_instance(ctx, instance.geometry_id, instance.id, model, color) or_return
+	app_info := vk.ApplicationInfo {
+		sType              = .APPLICATION_INFO,
+		pApplicationName   = "Hello Triangle",
+		applicationVersion = vk.MAKE_VERSION(0, 0, 1),
+		pEngineName        = "No Engine",
+		engineVersion      = vk.MAKE_VERSION(0, 0, 1),
+		apiVersion         = vk.MAKE_VERSION(1, 4, 3),
+	}
 
-//   return nil
-// }
+	create_info := vk.InstanceCreateInfo {
+		sType               = .INSTANCE_CREATE_INFO,
+		pApplicationInfo    = &app_info,
+		ppEnabledLayerNames = &VALIDATION_LAYERS[0],
+		enabledLayerCount   = len(VALIDATION_LAYERS),
+	}
 
+	if vk.CreateInstance(&create_info, nil, &instance) != .SUCCESS do return instance, .CreateInstanceFailed
+
+	vk.load_proc_addresses_instance(instance)
+
+	return instance, nil
+}

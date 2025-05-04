@@ -1,7 +1,6 @@
 package wayland
 
 import "base:runtime"
-import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:reflect"
@@ -316,6 +315,8 @@ Keymap_Context :: struct {
 }
 
 keymap_from_bytes :: proc(bytes: []u8, allocator: runtime.Allocator, tmp_allocator: runtime.Allocator) -> (keymap: Keymap_Context, err: Error) {
+  log.info("Parsing Keymap")
+
   tokenizer := parse_keymap(bytes, tmp_allocator) or_return
 
   keymap.codes = make(map[u32][]Code, 100, allocator)
@@ -1765,16 +1766,16 @@ assert_identifier :: proc(
   loc := #caller_location,
 ) -> Error {
   if !eql(([]u8)(tokenizer.token.(Identifier)), ([]u8)(identifier)) {
-    log.info(
-      #procedure,
-      "expected:",
-      identifier,
-      "found",
-      tokenizer.token.(Identifier),
-      "called by",
-      loc.procedure,
-      loc.line,
-    )
+    // log.info(
+    //   #procedure,
+    //   "expected:",
+    //   identifier,
+    //   "found",
+    //   tokenizer.token.(Identifier),
+    //   "called by",
+    //   loc.procedure,
+    //   loc.line,
+    // )
     return .IdentifierAssertionFailed
   }
 
@@ -1784,16 +1785,16 @@ assert_identifier :: proc(
 @(private = "file")
 assert_keyword :: proc(tokenizer: ^Tokenizer, keyword: Keyword, loc := #caller_location) -> Error {
   if tokenizer.token.(Keyword) != keyword {
-    log.info(
-      #procedure,
-      "expected:",
-      keyword,
-      "found",
-      tokenizer.token.(Keyword),
-      "called by",
-      loc.procedure,
-      loc.line,
-    )
+    // log.info(
+    //   #procedure,
+    //   "expected:",
+    //   keyword,
+    //   "found",
+    //   tokenizer.token.(Keyword),
+    //   "called by",
+    //   loc.procedure,
+    //   loc.line,
+    // )
     return .KeywordAssertionFailed
   }
 
@@ -1804,16 +1805,16 @@ assert_keyword :: proc(tokenizer: ^Tokenizer, keyword: Keyword, loc := #caller_l
 @(private = "file")
 assert_symbol :: proc(tokenizer: ^Tokenizer, symbol: Symbol, loc := #caller_location) -> Error {
   if tokenizer.token.(Symbol) != symbol {
-    log.info(
-      #procedure,
-      "expected",
-      symbol,
-      "found",
-      tokenizer.token.(Symbol),
-      "called by",
-      loc.procedure,
-      loc.line,
-    )
+    // log.info(
+    //   #procedure,
+    //   "expected",
+    //   symbol,
+    //   "found",
+    //   tokenizer.token.(Symbol),
+    //   "called by",
+    //   loc.procedure,
+    //   loc.line,
+    // )
     return .SymbolAssertionFailed
   }
 
@@ -1827,16 +1828,16 @@ assert_type :: proc(tokenizer: ^Tokenizer, $T: typeid, loc := #caller_location) 
   if !ok {
     #partial switch t in tokenizer.token {
     case:
-      log.info(
-        #procedure,
-        "expected",
-        typeid_of(T),
-        "found",
-        reflect.union_variant_typeid(t),
-        "called by",
-        loc.procedure,
-        loc.line,
-      )
+      // log.info(
+      //   #procedure,
+      //   "expected",
+      //   typeid_of(T),
+      //   "found",
+      //   reflect.union_variant_typeid(t),
+      //   "called by",
+      //   loc.procedure,
+      //   loc.line,
+      // )
     }
     return .TypeAssertionFailed
   }
@@ -1849,7 +1850,7 @@ advance :: proc(tokenizer: ^Tokenizer, loc := #caller_location) -> Error {
   tokenizer.token = next(tokenizer)
 
   if tokenizer.token == nil {
-    log.info(#procedure, "called by", loc.procedure, loc.line)
+    // log.info(#procedure, "called by", loc.procedure, loc.line)
     return .InvalidToken
   }
 
@@ -2417,13 +2418,13 @@ compatibility_parse_test :: proc(t: ^testing.T) {
 
   tokenizer, err = parse_keymap(transmute([]u8)(content), context.allocator)
 
-  for interpret in tokenizer.compatibility.interprets {
-    log.info(interpret)
-  }
+  // for interpret in tokenizer.compatibility.interprets {
+  //   log.info(interpret)
+  // }
 
-  for indicator in tokenizer.compatibility.indicators {
-    log.info(indicator)
-  }
+  // for indicator in tokenizer.compatibility.indicators {
+  //   log.info(indicator)
+  // }
 
   testing.expect(t, err == nil, "AN ERROR OCCOURED")
 }

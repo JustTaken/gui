@@ -4,66 +4,11 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:math/linalg"
+import "core:log"
 
 import collection "collection"
 import vk "vulkan"
 import wl "wayland"
-
-Error :: enum {
-  OutOfMemory,
-  OutOfStagingMemory,
-  FileNotFound,
-  ReadFileFailed,
-  AttributeKindNotFound,
-  NumberParseFailed,
-  CreateInstanceFailed,
-  CreateBuffer,
-  BeginCommandBufferFailed,
-  EndCommandBufferFailed,
-  AllocateCommandBufferFailed,
-  VulkanLib,
-  LayerNotFound,
-  PhysicalDeviceNotFound,
-  FamilyIndiceNotComplete,
-  MemoryNotFound,
-  EnviromentVariablesNotSet,
-  WaylandSocketNotAvaiable,
-  SendMessageFailed,
-  BufferNotReleased,
-  CreateDescriptorSetLayoutFailed,
-  CreatePipelineFailed,
-  GetImageModifier,
-  AllocateDeviceMemory,
-  CreateImageFailed,
-  WaitFencesFailed,
-  QueueSubmitFailed,
-  CreateImageViewFailed,
-  CreatePipelineLayouFailed,
-  CreateDescriptorPoolFailed,
-  CreateFramebufferFailed,
-  GetFdFailed,
-  SizeNotMatch,
-  CreateShaderModuleFailed,
-  AllocateDescriptorSetFailed,
-  ExtensionNotFound,
-  CreateDeviceFailed,
-  CreateRenderPassFailed,
-  CreateSemaphoreFailed,
-  CreateFenceFailed,
-  CreateCommandPoolFailed,
-  SocketConnectFailed,
-  GltfLoadFailed,
-  InvalidKeymapInput,
-  TypeAssertionFailed,
-  IdentifierAssertionFailed,
-  KeywordAssertionFailed,
-  SymbolAssertionFailed,
-  InvalidToken,
-  CodeNotFound,
-  ModifierNotFound,
-  UnregisteredKey,
-  NotANumber,
-}
 
 Context :: struct {
   instances: collection.Vector(u32),
@@ -123,7 +68,7 @@ main :: proc() {
 }
 
 init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: u32, frames: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
-    vulkan_ok := vk.init_vulkan(v, 1920, 1080, frames, arena, tmp_arena) == nil
+    vulkan_ok := vk.init_vulkan(v, width, height, frames, arena, tmp_arena) == nil
     wayland_ok := wl.init_wayland(w, v, width, height, frames, arena, tmp_arena) == nil
 
     return vulkan_ok && wayland_ok
@@ -131,37 +76,29 @@ init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: 
 
 load_meshs :: proc(v: ^vk.Vulkan_Context, path: string, models: []vk.InstanceModel, colors: []vk.Color) -> (ids: []u32, err: vk.Error) {
   g_err: collection.Error
-  mesh: collection.Mesh
-
-  if mesh, g_err = collection.gltf_from_file(path, v.tmp_allocator); g_err != nil {
-    return ids, .ReadFileFailed
-  }
-
-  count := u32(len(mesh.position.([][3]f32)))
-  indices := mesh.indice.([]u16)
-  vertices := make([]vk.Vertex, count, v.tmp_allocator)
-
-  positions := mesh.position.([][3]f32)
-  normals := mesh.normal.([][3]f32)
-  textures := mesh.texture.([][2]f32)
-
-  for i in 0 ..< count {
-    vertices[i] = vk.Vertex {
-      position = positions[i],
-      normal   = normals[i],
-      texture  = textures[i],
-    }
-  }
+  gltf: collection.Gltf
 
   l := len(models)
   assert(l == len(colors))
 
-  id := vk.geometry_create(v, vertices, indices, u32(l)) or_return
+  ids = make([]u32, l, v.tmp_allocator)
 
-  ids = make([]u32, l, v.allocator)
+  if gltf, g_err = collection.gltf_from_file(path, v.tmp_allocator); g_err != nil {
+    return ids, .ReadFileFailed
+  }
+  node := &gltf.scenes["Scene"].nodes[0]
+  mesh := &node.mesh
+
+  positions := collection.get_mesh_attribute(mesh, .Position)
+  normals := collection.get_mesh_attribute(mesh, .Normal)
+  textures := collection.get_mesh_attribute(mesh, .Texture0)
+  indices := collection.get_mesh_indices(mesh)
+
+  vertices := collection.get_vertex_data({positions, normals, textures}, v.tmp_allocator)
+  id := vk.geometry_create(v, vertices.bytes, vertices.size, vertices.count, indices.bytes, indices.size, indices.count, u32(l)) or_return
 
   for i in 0..<l {
-    ids[i] = vk.geometry_instance_add(v, id, models[i], colors[i]) or_return
+    ids[i] = vk.geometry_instance_add(v, id, models[i] * node.transform, colors[i]) or_return
   }
 
   return ids, nil
@@ -195,6 +132,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
 
   {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
+    defer mem.end_arena_temp_memory(mark)
     monkeys := load_meshs(v, "assets/monkey.gltf",
       {matrix[4, 4]f32{
           1, 0, 0, 0,
@@ -205,16 +143,13 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
       {vk.Color{1.0, 0.0, 0.0, 1.0}},
     ) or_return
 
-    defer mem.end_arena_temp_memory(mark)
-
-    for m in monkeys {
-      collection.vec_append(&ctx.instances, m)
-    }
+    collection.vec_append_n(&ctx.instances, monkeys)
   }
 
   {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
-    cubes := load_meshs(v, "assets/cube.gltf",
+    defer mem.end_arena_temp_memory(mark)
+    cubes := load_meshs(v, "assets/cube_animation.gltf",
       {matrix[4, 4]f32{
           1, 0, 0, 3,
           0, 1, 0, 0,
@@ -223,15 +158,13 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
       }},
       {vk.Color{0.0, 1.0, 0.0, 1.0}},
     ) or_return
-    defer mem.end_arena_temp_memory(mark)
 
-    for c in cubes {
-      collection.vec_append(&ctx.instances, c)
-    }
+    collection.vec_append_n(&ctx.instances, cubes)
   }
 
   {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
+    defer mem.end_arena_temp_memory(mark)
     cones := load_meshs(v, "assets/cone.gltf",
       {matrix[4, 4]f32{
           1, 0, 0, -3,
@@ -241,11 +174,24 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
       }},
       {vk.Color{0.0, 0.0, 1.0, 1.0}},
     ) or_return
-    defer mem.end_arena_temp_memory(mark)
 
-    for c in cones {
-      collection.vec_append(&ctx.instances, c)
-    }
+    collection.vec_append_n(&ctx.instances, cones)
+  }
+
+  {
+    mark := mem.begin_arena_temp_memory(v.tmp_arena)
+    defer mem.end_arena_temp_memory(mark)
+    planes := load_meshs(v, "assets/plane.gltf",
+      {matrix[4, 4]f32{
+          20, 0, 0, -0,
+          0, 1, 0, -2,
+          0, 0, 20, 0, 
+          0, 0, 0, 1, 
+      }},
+      {vk.Color{1.0, 1.0, 1.0, 1.0}},
+    ) or_return
+
+    collection.vec_append_n(&ctx.instances, planes)
   }
 
   wl.add_listener(w, &ctx, frame)
