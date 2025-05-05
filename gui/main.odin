@@ -88,13 +88,18 @@ Animation :: struct {
   start: i64,
 }
 
-Node :: struct {
+Node_Instance :: struct {
+  transform: matrix[4, 4]f32,
   id: u32,
+}
+
+Node :: struct {
+  instances: collection.Vector(Node_Instance),
   geometry: u32,
   transform: matrix[4, 4]f32,
 }
 
-load_gltf :: proc(v: ^vk.Vulkan_Context, path: string, model: vk.InstanceModel, color: vk.Color) -> (gltf: Gltf, err: vk.Error) {
+load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> (gltf: Gltf, err: vk.Error) {
   g_err: collection.Error
 
   if gltf.handle, g_err = collection.gltf_from_file(path, v.allocator, v.tmp_allocator); g_err != nil {
@@ -117,11 +122,21 @@ load_gltf :: proc(v: ^vk.Vulkan_Context, path: string, model: vk.InstanceModel, 
     id := vk.geometry_create(v, vertices.bytes, vertices.size, vertices.count, indices.bytes, indices.size, indices.count, 1) or_return
 
     gltf.nodes[j].geometry = id
-    gltf.nodes[j].transform = model * scene_node.transform
-    gltf.nodes[j].id = vk.geometry_instance_add(v, id, gltf.nodes[j].transform, color) or_return
+    gltf.nodes[j].instances = collection.new_vec(Node_Instance, 10, v.allocator)
+    gltf.nodes[j].transform = scene_node.transform
   }
 
   return gltf, nil
+}
+
+add_instance :: proc(v: ^vk.Vulkan_Context, node: ^Node, model: vk.InstanceModel, color: vk.Color) -> vk.Error {
+  instance: Node_Instance
+  collection.vec_append(&node.instances, instance)
+
+  instance.transform = model * node.transform
+  instance.id = vk.geometry_instance_add(v, node.geometry, instance.transform, color) or_return
+
+  return nil
 }
 
 loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
@@ -154,30 +169,37 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
   {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
-    gltf := load_gltf(v, "assets/cube_animation.gltf", matrix[4, 4]f32{ 1, 0, 0, 3, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{0.0, 1.0, 0.0, 1.0}) or_return
+    gltf := load_gltf(v, "assets/bone.gltf") or_return
     collection.vec_append(&ctx.gltfs, gltf)
+    add_instance(v, &ctx.gltfs.data[0].nodes[0], matrix[4, 4]f32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, vk.Color{ 0, 1, 0, 1 })
   }
+  // {
+  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
+  //   defer mem.end_arena_temp_memory(mark)
+  //   gltf := load_gltf(v, "assets/cube_animation.gltf", matrix[4, 4]f32{ 1, 0, 0, 3, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{0.0, 1.0, 0.0, 1.0}) or_return
+  //   collection.vec_append(&ctx.gltfs, gltf)
+  // }
 
-  {
-    mark := mem.begin_arena_temp_memory(v.tmp_arena)
-    defer mem.end_arena_temp_memory(mark)
-    gltf := load_gltf(v, "assets/monkey.gltf", matrix[4, 4]f32{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{1.0, 0.0, 0.0, 1.0}) or_return
-    collection.vec_append(&ctx.gltfs, gltf)
-  }
+  // {
+  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
+  //   defer mem.end_arena_temp_memory(mark)
+  //   gltf := load_gltf(v, "assets/monkey.gltf", matrix[4, 4]f32{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{1.0, 0.0, 0.0, 1.0}) or_return
+  //   collection.vec_append(&ctx.gltfs, gltf)
+  // }
 
-  {
-    mark := mem.begin_arena_temp_memory(v.tmp_arena)
-    defer mem.end_arena_temp_memory(mark)
-    gltf := load_gltf(v, "assets/cone.gltf", matrix[4, 4]f32{ 1, 0, 0, -3, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{0.0, 0.0, 1.0, 1.0}) or_return
-    collection.vec_append(&ctx.gltfs, gltf)
-  }
+  // {
+  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
+  //   defer mem.end_arena_temp_memory(mark)
+  //   gltf := load_gltf(v, "assets/cone.gltf", matrix[4, 4]f32{ 1, 0, 0, -3, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{0.0, 0.0, 1.0, 1.0}) or_return
+  //   collection.vec_append(&ctx.gltfs, gltf)
+  // }
 
-  {
-    mark := mem.begin_arena_temp_memory(v.tmp_arena)
-    defer mem.end_arena_temp_memory(mark)
-    gltf := load_gltf(v, "assets/plane.gltf", matrix[4, 4]f32{ 20, 0, 0, -0, 0, 1, 0, -2, 0, 0, 20, 0,  0, 0, 0, 1,  }, vk.Color{1.0, 1.0, 1.0, 1.0}) or_return
-    collection.vec_append(&ctx.gltfs, gltf)
-  }
+  // {
+  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
+  //   defer mem.end_arena_temp_memory(mark)
+  //   gltf := load_gltf(v, "assets/plane.gltf", matrix[4, 4]f32{ 20, 0, 0, -0, 0, 1, 0, -2, 0, 0, 20, 0,  0, 0, 0, 1,  }, vk.Color{1.0, 1.0, 1.0, 1.0}) or_return
+  //   collection.vec_append(&ctx.gltfs, gltf)
+  // }
 
   wl.add_listener(w, &ctx, frame)
 
@@ -185,10 +207,10 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
 
-    now := time.now()._nsec
-    for &animation in ctx.current_animations.data[0:ctx.current_animations.len] {
-      play_animation(v, &ctx, &animation, now) or_return
-    }
+//    now := time.now()._nsec
+//    for &animation in ctx.current_animations.data[0:ctx.current_animations.len] {
+//      play_animation(v, &ctx, &animation, now) or_return
+//    }
 
     if wl.render(w) != nil {
       fmt.println("Failed to render frame")
@@ -198,7 +220,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> vk.Error {
   return nil
 }
 
-play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animation, now: i64) -> vk.Error {
+play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animation, now: i64, id: u32) -> vk.Error {
   frame, index, repeat, finished := collection.get_animation_frame(animation.handle, f32(now - animation.start) / 1_000_000_000, animation.frame)
   animation.frame = index
 
@@ -212,7 +234,7 @@ play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animati
   }
 
   for i in animation.handle.nodes {
-    vk.instance_update(v, animation.gltf.nodes[i].id, frame.transforms[i] * animation.gltf.nodes[i].transform, nil) or_return
+    vk.instance_update(v, animation.gltf.nodes[i].instances.data[id].id, frame.transforms[i] * animation.gltf.nodes[i].transform, nil) or_return
   }
 
   return nil
