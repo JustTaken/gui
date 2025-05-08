@@ -1,14 +1,15 @@
 package vulk
 
 import vk "vendor:vulkan"
+import "./../error"
 
-create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: Error) {
+create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: error.Error) {
 	layer_count: u32
 	vk.EnumerateInstanceLayerProperties(&layer_count, nil)
 	layers := make([]vk.LayerProperties, layer_count, ctx.tmp_allocator)
 	vk.EnumerateInstanceLayerProperties(&layer_count, &layers[0])
 
-	check :: proc(v: cstring, availables: []vk.LayerProperties) -> Error {
+	check :: proc(v: cstring, availables: []vk.LayerProperties) -> error.Error {
 		for &available in availables do if v == cstring(&available.layerName[0]) do return nil
 
 		return .LayerNotFound

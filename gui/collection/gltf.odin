@@ -7,17 +7,18 @@ import "core:encoding/json"
 import "core:path/filepath"
 import "core:fmt"
 
+import "./../error"
+
 Matrix :: matrix[4, 4]f32
 
 Gltf_Context :: struct {
   obj: json.Object,
 
-  raw_accessors: json.Array,
   raw_meshes: json.Array,
   raw_buffer_views: json.Array,
-  raw_nodes: json.Array,
   raw_materials: json.Array,
 
+  accessors: []Gltf_Accessor,
   nodes: []Gltf_Node,
   skins: []Gltf_Skin,
   buffers: []Gltf_Buffer,
@@ -26,12 +27,11 @@ Gltf_Context :: struct {
 }
 
 Gltf :: struct {
-  asset: Gltf_Asset,
   scenes: map[string]Gltf_Scene,
   animations: map[string]Gltf_Animation,
 }
 
-gltf_from_file :: proc(path: string, allocator: runtime.Allocator, tmp_allocator: runtime.Allocator) -> (gltf: Gltf, err: Error) {
+gltf_from_file :: proc(path: string, allocator: runtime.Allocator, tmp_allocator: runtime.Allocator) -> (gltf: Gltf, err: error.Error) {
   value: json.Value
   j_err: json.Error
   bytes: []u8
@@ -50,10 +50,8 @@ gltf_from_file :: proc(path: string, allocator: runtime.Allocator, tmp_allocator
 
   ctx.obj = value.(json.Object)
 
-  ctx.raw_accessors = ctx.obj["accessors"].(json.Array)
   ctx.raw_buffer_views = ctx.obj["bufferViews"].(json.Array)
   ctx.raw_meshes = ctx.obj["meshes"].(json.Array)
-  ctx.raw_nodes = ctx.obj["nodes"].(json.Array)
 
   if materials, ok := ctx.obj["materials"]; ok {
     ctx.raw_materials = materials.(json.Array)
@@ -73,8 +71,8 @@ gltf_from_file :: proc(path: string, allocator: runtime.Allocator, tmp_allocator
     buffer.len = u32(raw["byteLength"].(f64))
   }
 
-
-  gltf.asset = parse_asset(&ctx) or_return
+  asset := parse_asset(&ctx) or_return
+  ctx.accessors = parse_accessors(&ctx) or_return
   ctx.nodes = parse_nodes(&ctx) or_return
   gltf.scenes = parse_scenes(&ctx) or_return
 

@@ -1,8 +1,9 @@
 package vulk
 
 import vk "vendor:vulkan"
+import "./../error"
 
-get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: []vk.DrmFormatModifierPropertiesEXT, err: Error) {
+get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: []vk.DrmFormatModifierPropertiesEXT, err: error.Error) {
 	l: u32 = 0
 
 	render_features: vk.FormatFeatureFlags = {.COLOR_ATTACHMENT, .COLOR_ATTACHMENT_BLEND}
@@ -81,7 +82,7 @@ get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: []vk.DrmFormatMod
 }
 
 @(private = "file")
-check_physical_device_ext_support :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDevice) -> Error {
+check_physical_device_ext_support :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDevice) -> error.Error {
 	count: u32
 
 	vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, nil)
@@ -99,7 +100,7 @@ check_physical_device_ext_support :: proc(ctx: ^Vulkan_Context, physical_device:
 	return nil
 }
 
-find_physical_device :: proc(ctx: ^Vulkan_Context) -> (physical_device: vk.PhysicalDevice, err: Error) {
+find_physical_device :: proc(ctx: ^Vulkan_Context) -> (physical_device: vk.PhysicalDevice, err: error.Error) {
 	device_count: u32
 	vk.EnumeratePhysicalDevices(ctx.instance, &device_count, nil)
 	devices := make([]vk.PhysicalDevice, device_count, ctx.tmp_allocator)
@@ -134,7 +135,7 @@ find_physical_device :: proc(ctx: ^Vulkan_Context) -> (physical_device: vk.Physi
 	return physical_device, nil
 }
 
-create_queues :: proc(ctx: ^Vulkan_Context, queue_indices: []u32) -> (queues: []vk.Queue, err: Error) {
+create_queues :: proc(ctx: ^Vulkan_Context, queue_indices: []u32) -> (queues: []vk.Queue, err: error.Error) {
 	queues = make([]vk.Queue, u32(len(queue_indices)), ctx.allocator)
 	for &q, i in &queues {
 		vk.GetDeviceQueue(ctx.device, u32(queue_indices[i]), 0, &q)
@@ -143,7 +144,7 @@ create_queues :: proc(ctx: ^Vulkan_Context, queue_indices: []u32) -> (queues: []
 	return queues, nil
 }
 
-find_queue_indices :: proc(ctx: ^Vulkan_Context) -> (indices: []u32, err: Error) {
+find_queue_indices :: proc(ctx: ^Vulkan_Context) -> (indices: []u32, err: error.Error) {
 	MAX: u32 = 0xFF
 	indices = make([]u32, 2, ctx.allocator)
 
@@ -168,7 +169,7 @@ find_queue_indices :: proc(ctx: ^Vulkan_Context) -> (indices: []u32, err: Error)
 	return indices, nil
 }
 
-create_device :: proc(ctx: ^Vulkan_Context) -> (device: vk.Device, err: Error) {
+create_device :: proc(ctx: ^Vulkan_Context) -> (device: vk.Device, err: error.Error) {
 	queue_priority := f32(1.0)
 
 	unique_indices: [10]u32 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}

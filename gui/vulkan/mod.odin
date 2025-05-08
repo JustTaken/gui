@@ -9,6 +9,7 @@ import "core:log"
 import vk "vendor:vulkan"
 
 import "./../collection"
+import "./../error"
 
 library: dynlib.Library
 
@@ -70,7 +71,7 @@ Vulkan_Context :: struct {
 	tmp_allocator:   runtime.Allocator,
 }
 
-init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> Error {
+init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
 	log.info("Initializing Vulkan")
 
 	mark := mem.begin_arena_temp_memory(tmp_arena)
@@ -111,7 +112,7 @@ init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 	ctx.descriptor_set = descriptor_set_create(ctx, ctx.set_layout, {{.UNIFORM_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}}, {{.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}}, {2, 20, 20, 1}) or_return
 	ctx.frames = frames_create(ctx, frame_count, width, height) or_return
 
-	ctx.geometries = collection.new_vec(Geometry, 20, ctx.allocator)
+	ctx.geometries = collection.new_vec(Geometry, 20, ctx.allocator) or_return
 	ctx.instances = 0
 
 	return nil

@@ -1,6 +1,7 @@
 package wayland
 
 import vk "./../vulkan"
+import "./../error"
 
 Buffer :: struct {
   data:     []u8,
@@ -14,12 +15,7 @@ Buffer :: struct {
   next:     ^Buffer,
 }
 
-wayland_buffer_write_swap :: proc(
-  ctx: ^Wayland_Context,
-  buffer: ^Buffer,
-  width: u32,
-  height: u32,
-) -> Error {
+wayland_buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
   if !buffer.released {
     return .BufferNotReleased
   }
@@ -29,11 +25,11 @@ wayland_buffer_write_swap :: proc(
   if buffer.width != width || buffer.height != height {
     if buffer.bound do write(ctx, {}, buffer.id, ctx.destroy_buffer_opcode)
 
-    if vk.resize_frame(ctx.vk, buffer.frame, width, height) != nil do return .ResizeFailed
+    vk.resize_frame(ctx.vk, buffer.frame, width, height) or_return
     wayland_buffer_create(ctx, buffer, width, height)
   }
 
-  if vk.frame_draw(ctx.vk, buffer.frame, width, height) != nil do return .RenderFailed
+  vk.frame_draw(ctx.vk, buffer.frame, width, height) or_return
 
   write(ctx, {Object(buffer.id), Int(0), Int(0)}, ctx.surface_id, ctx.surface_attach_opcode)
   write(

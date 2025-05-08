@@ -2,6 +2,7 @@
 package collection
 
 import "core:encoding/json"
+import "./../error"
 
 Gltf_Skin :: struct {
   matrices: []Matrix,
@@ -9,8 +10,9 @@ Gltf_Skin :: struct {
   skeleton: Maybe(u32),
 }
 
-parse_skin :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (skin: Gltf_Skin, err: Error) {
-  raw_matrices := parse_attribute(ctx, ctx.raw_accessors[u32(raw["inverseBindMAtrices"].(f64))].(json.Object)) or_return
+parse_skin :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (skin: Gltf_Skin, err: error.Error) {
+  raw_matrices := &ctx.accessors[u32(raw["inverseBindMatrices"].(f64))]
+
   ptr := cast([^]f32)&raw_matrices.bytes[0]
 
   skin.matrices = make([]Matrix, raw_matrices.count, ctx.tmp_allocator)
@@ -39,7 +41,7 @@ parse_skin :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (skin: Gltf_Skin, er
   return skin, nil
 }
 
-parse_skins :: proc(ctx: ^Gltf_Context) -> (skins: []Gltf_Skin, err: Error) {
+parse_skins :: proc(ctx: ^Gltf_Context) -> (skins: []Gltf_Skin, err: error.Error) {
   raw, ok := ctx.obj["skins"]
 
   if !ok {

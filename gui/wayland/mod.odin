@@ -13,7 +13,7 @@ import "core:fmt"
 import "core:time"
 
 import "./../collection"
-
+import "./../error"
 import vk "./../vulkan"
 
 Callback :: proc(_: ^Wayland_Context, _: u32, _: []Argument)
@@ -102,7 +102,7 @@ Wayland_Context :: struct {
   tmp_allocator:      runtime.Allocator,
 }
 
-init_wayland :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> Error {
+init_wayland :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
   log.info("Initializing Wayland")
 
   ctx.arena = arena
@@ -143,12 +143,12 @@ init_wayland :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, h
 
   resize(ctx, width, height)
 
-  ctx.values = collection.new_vec(Argument, 40, ctx.allocator)
-  ctx.objects = collection.new_vec(InterfaceObject, 40, ctx.allocator)
-  ctx.output_buffer = collection.new_vec(u8, 4096, ctx.allocator)
-  ctx.input_buffer = collection.new_vec(u8, 4096, ctx.allocator)
-  ctx.modifiers = collection.new_vec(Modifier, 512, ctx.allocator)
-  ctx.listeners = collection.new_vec(KeyListener, 10, ctx.allocator)
+  ctx.values = collection.new_vec(Argument, 40, ctx.allocator) or_return
+  ctx.objects = collection.new_vec(InterfaceObject, 40, ctx.allocator) or_return
+  ctx.output_buffer = collection.new_vec(u8, 4096, ctx.allocator) or_return
+  ctx.input_buffer = collection.new_vec(u8, 4096, ctx.allocator) or_return
+  ctx.modifiers = collection.new_vec(Modifier, 512, ctx.allocator) or_return
+  ctx.listeners = collection.new_vec(KeyListener, 10, ctx.allocator) or_return
   ctx.bytes = make([]u8, 1024, ctx.allocator)
   ctx.header = make([]u8, 512, ctx.allocator)
   ctx.out_fds = ([^]Fd)(raw_data(ctx.header[mem.align_formula(size_of(posix.cmsghdr), size_of(uint)):]))
@@ -193,7 +193,7 @@ init_wayland :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, h
   return nil
 }
 
-render :: proc(ctx: ^Wayland_Context) -> Error {
+render :: proc(ctx: ^Wayland_Context) -> error.Error {
   time.sleep(time.Millisecond * 30)
 
   roundtrip(ctx) or_return
@@ -255,9 +255,9 @@ resize :: proc(ctx: ^Wayland_Context, width: u32, height: u32) {
 }
 
 @(private = "file")
-roundtrip :: proc(ctx: ^Wayland_Context) -> Error {
+roundtrip :: proc(ctx: ^Wayland_Context) -> error.Error {
   recv(ctx) or_return
-  for read(ctx) {}
+  for read(ctx) != nil {}
 
   return nil
 }
@@ -301,7 +301,7 @@ dma_params_init :: proc(ctx: ^Wayland_Context) {
   ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id)
 }
 
-write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opcode: u32) {
+write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opcode: u32) -> error.Error {
   object := get_object(ctx, object_id)
   request := get_request(object, opcode)
 
@@ -310,7 +310,7 @@ write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opco
   collection.vec_append_generic(&ctx.output_buffer, u32, object_id)
   collection.vec_append_generic(&ctx.output_buffer, u16, u16(opcode))
 
-  total_len := collection.vec_reserve(&ctx.output_buffer, u16)
+  total_len := collection.vec_reserve(&ctx.output_buffer, u16) or_return
 
   for kind, i in request.arguments {
     #partial switch kind {
@@ -339,10 +339,12 @@ write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opco
   }
 
   intrinsics.unaligned_store(total_len, u16(ctx.output_buffer.len - start))
+
+  return nil
 }
 
 @(private = "file")
-read :: proc(ctx: ^Wayland_Context) -> bool {
+read :: proc(ctx: ^Wayland_Context) -> error.Error {
   ctx.values.len = 0
   bytes_len: u32 = 0
 
@@ -357,68 +359,68 @@ read :: proc(ctx: ^Wayland_Context) -> bool {
   for kind in event.arguments {
     #partial switch kind {
     case .Object:
-      if !read_and_write(ctx, Object) do return false
+      read_and_write(ctx, Object) or_return
     case .Uint:
-      if !read_and_write(ctx, Uint) do return false
+      read_and_write(ctx, Uint) or_return
     case .Int:
-      if !read_and_write(ctx, Int) do return false
+      read_and_write(ctx, Int) or_return
     case .Fixed:
-      if !read_and_write(ctx, Fixed) do return false
+      read_and_write(ctx, Fixed) or_return
     case .BoundNewId:
-      if !read_and_write(ctx, BoundNewId) do return false
+      read_and_write(ctx, BoundNewId) or_return
     case .String:
-      if !read_and_write_collection(ctx, String, &bytes_len) do return false
+      read_and_write_collection(ctx, String, &bytes_len) or_return
     case .Array:
-      if !read_and_write_collection(ctx, Array, &bytes_len) do return false
+      read_and_write_collection(ctx, Array, &bytes_len) or_return
     case .Fd:
-      if !read_fd_and_write(ctx) do return false
+      read_fd_and_write(ctx) or_return
     case:
-      return false
+      return .OutOfBounds
     }
   }
 
-  if ctx.input_buffer.len - start != u32(size) do return false
+  if ctx.input_buffer.len - start != u32(size) do return .OutOfBounds
 
   values := ctx.values.data[0:ctx.values.len]
   object.callbacks[opcode](ctx, object_id, values)
 
-  return true
+  return nil
 }
 
 @(private = "file")
-read_and_write :: proc(ctx: ^Wayland_Context, $T: typeid) -> bool {
+read_and_write :: proc(ctx: ^Wayland_Context, $T: typeid) -> error.Error {
   value := collection.vec_read(&ctx.input_buffer, T) or_return
   collection.vec_append(&ctx.values, value)
 
-  return true
+  return nil
 }
 
 @(private = "file")
-read_fd_and_write :: proc(ctx: ^Wayland_Context) -> bool {
-  collection.vec_append(&ctx.values, ctx.in_fds[ctx.in_fd_index])
-  return true
+read_fd_and_write :: proc(ctx: ^Wayland_Context) -> error.Error {
+  collection.vec_append(&ctx.values, ctx.in_fds[ctx.in_fd_index]) or_return
+  return nil
 }
 
 @(private = "file")
-read_and_write_collection :: proc(ctx: ^Wayland_Context, $T: typeid, length_ptr: ^u32) -> bool {
+read_and_write_collection :: proc(ctx: ^Wayland_Context, $T: typeid, length_ptr: ^u32) -> error.Error {
   start := length_ptr^
 
   length := collection.vec_read(&ctx.input_buffer, u32) or_return
-  bytes := collection.vec_read_n(&ctx.input_buffer, u32(mem.align_formula(int(length), size_of(u32))))
+  bytes := collection.vec_read_n(&ctx.input_buffer, u32(mem.align_formula(int(length), size_of(u32)))) or_return
 
   if bytes == nil {
-    return false
+    return .OutOfBounds
   }
 
   copy(ctx.bytes[start:], bytes)
-  collection.vec_append(&ctx.values, T(ctx.bytes[start:length]))
+  collection.vec_append(&ctx.values, T(ctx.bytes[start:length])) or_return
   length_ptr^ += length
 
-  return true
+  return nil
 }
 
 @(private = "file")
-recv :: proc(ctx: ^Wayland_Context) -> Error {
+recv :: proc(ctx: ^Wayland_Context) -> error.Error {
   iovec := posix.iovec {
     iov_base = raw_data(ctx.input_buffer.data),
     iov_len  = len(ctx.input_buffer.data),
@@ -462,7 +464,7 @@ insert_fd :: proc(ctx: ^Wayland_Context, fd: Fd) {
 }
 
 @(private = "file")
-send :: proc(ctx: ^Wayland_Context) -> Error {
+send :: proc(ctx: ^Wayland_Context) -> error.Error {
   if ctx.output_buffer.len == 0 {
     return nil
   }
@@ -660,7 +662,6 @@ seat_capabilities :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument)
 
 @(private = "file")
 keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) {
-  err: Error
   size := uint(arguments[2].(Uint))
 
   data := ([^]u8)(posix.mmap(nil, size, {.READ}, {.PRIVATE}, posix.FD(arguments[1].(Fd)), 0))[0:size]
@@ -670,13 +671,10 @@ keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Ar
     panic("Mapped data is null")
   }
 
+  err: error.Error
   mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
   ctx.keymap, err = keymap_from_bytes(data, ctx.allocator, ctx.tmp_allocator)
   mem.end_arena_temp_memory(mark)
-
-  if err != nil {
-    fmt.println("Failed to create keymap")
-  }
 }
 
 @(private = "file")

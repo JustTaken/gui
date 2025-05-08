@@ -1,6 +1,7 @@
 package vulk
 
 import vk "vendor:vulkan"
+import "./../error"
 
 Descriptor_Set_Layout :: struct {
   handle: vk.DescriptorSetLayout,
@@ -21,7 +22,7 @@ Descriptor_Set :: struct {
   descriptors: []Descriptor,
 }
 
-descriptor_create :: proc(ctx: ^Vulkan_Context, kind: vk.DescriptorType, size: vk.DeviceSize, binding: u32, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) -> (descriptor: Descriptor, err: Error) {
+descriptor_create :: proc(ctx: ^Vulkan_Context, kind: vk.DescriptorType, size: vk.DeviceSize, binding: u32, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) -> (descriptor: Descriptor, err: error.Error) {
   descriptor.kind = kind
   descriptor.size = size
   descriptor.binding = binding
@@ -31,7 +32,7 @@ descriptor_create :: proc(ctx: ^Vulkan_Context, kind: vk.DescriptorType, size: v
   return descriptor, nil
 }
 
-descriptor_set_create :: proc(ctx: ^Vulkan_Context, layout: Descriptor_Set_Layout, usages: []vk.BufferUsageFlags, properties: []vk.MemoryPropertyFlags, counts: []u32) -> (descriptor_set: Descriptor_Set, err: Error) {
+descriptor_set_create :: proc(ctx: ^Vulkan_Context, layout: Descriptor_Set_Layout, usages: []vk.BufferUsageFlags, properties: []vk.MemoryPropertyFlags, counts: []u32) -> (descriptor_set: Descriptor_Set, err: error.Error) {
   binding_count := len(layout.bindings)
 
   assert(binding_count == len(layout.type_sizes))
@@ -52,7 +53,7 @@ descriptor_set_create :: proc(ctx: ^Vulkan_Context, layout: Descriptor_Set_Layou
   return descriptor_set, nil
 }
 
-create_set_layout :: proc(ctx: ^Vulkan_Context) -> (set_layout: Descriptor_Set_Layout, err: Error) {
+create_set_layout :: proc(ctx: ^Vulkan_Context) -> (set_layout: Descriptor_Set_Layout, err: error.Error) {
   count :: 4
 
   set_layout.type_sizes = make([]u32, count, ctx.allocator)
@@ -102,7 +103,7 @@ create_set_layout :: proc(ctx: ^Vulkan_Context) -> (set_layout: Descriptor_Set_L
   return set_layout, nil
 }
 
-create_layout :: proc(ctx: ^Vulkan_Context, set_layout: Descriptor_Set_Layout) -> (vk.PipelineLayout, Error) {
+create_layout :: proc(ctx: ^Vulkan_Context, set_layout: Descriptor_Set_Layout) -> (vk.PipelineLayout, error.Error) {
   set_layouts := [?]vk.DescriptorSetLayout{ set_layout.handle }
   layout_info := vk.PipelineLayoutCreateInfo {
     sType    = .PIPELINE_LAYOUT_CREATE_INFO,
@@ -118,7 +119,7 @@ create_layout :: proc(ctx: ^Vulkan_Context, set_layout: Descriptor_Set_Layout) -
   return layout, nil
 }
 
-create_descriptor_pool :: proc(ctx: ^Vulkan_Context) -> (vk.DescriptorPool, Error) {
+create_descriptor_pool :: proc(ctx: ^Vulkan_Context) -> (vk.DescriptorPool, error.Error) {
   sizes := [?]vk.DescriptorPoolSize {
     {type = .UNIFORM_BUFFER, descriptorCount = 10},
     {type = .STORAGE_BUFFER, descriptorCount = 10},
@@ -137,7 +138,7 @@ create_descriptor_pool :: proc(ctx: ^Vulkan_Context) -> (vk.DescriptorPool, Erro
   return pool, nil
 }
 
-allocate_descriptor_set :: proc(ctx: ^Vulkan_Context, layout: vk.DescriptorSetLayout, pool: vk.DescriptorPool) -> (set: vk.DescriptorSet, err: Error) {
+allocate_descriptor_set :: proc(ctx: ^Vulkan_Context, layout: vk.DescriptorSetLayout, pool: vk.DescriptorPool) -> (set: vk.DescriptorSet, err: error.Error) {
   layouts := [?]vk.DescriptorSetLayout { layout }
   info := vk.DescriptorSetAllocateInfo {
     sType        = .DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -153,7 +154,7 @@ allocate_descriptor_set :: proc(ctx: ^Vulkan_Context, layout: vk.DescriptorSetLa
   return set, nil
 }
 
-update_descriptor_set :: proc(ctx: ^Vulkan_Context, set: Descriptor_Set) -> Error {
+update_descriptor_set :: proc(ctx: ^Vulkan_Context, set: Descriptor_Set) -> error.Error {
   total := u32(len(set.descriptors))
 
   writes := make([]vk.WriteDescriptorSet, total, ctx.tmp_allocator)
@@ -184,28 +185,28 @@ update_descriptor_set :: proc(ctx: ^Vulkan_Context, set: Descriptor_Set) -> Erro
   return nil
 }
 
-update_projection :: proc(ctx: ^Vulkan_Context, projection: Matrix) -> Error {
+update_projection :: proc(ctx: ^Vulkan_Context, projection: Matrix) -> error.Error {
   m := [?]Matrix{projection}
   vulkan_copy_data(Matrix, ctx, m[:], ctx.descriptor_set.descriptors[TRANSFORMS].buffer.handle, 0) or_return
 
   return nil
 }
 
-update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> Error {
+update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> error.Error {
   m := [?]Matrix{view}
   vulkan_copy_data(Matrix, ctx, m[:], ctx.descriptor_set.descriptors[TRANSFORMS].buffer.handle, size_of(Matrix)) or_return
 
   return nil
 }
 
-update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> Error {
+update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> error.Error {
   m := [?]Light{light}
   vulkan_copy_data(Light, ctx, m[:], ctx.descriptor_set.descriptors[LIGHTS].buffer.handle, 0) or_return
 
   return nil
 }
 
-submit_staging_data :: proc(ctx: ^Vulkan_Context) -> Error {
+submit_staging_data :: proc(ctx: ^Vulkan_Context) -> error.Error {
   if !ctx.staging.recording do return nil
 
   if vk.EndCommandBuffer(ctx.command_buffers[1]) != .SUCCESS do return .EndCommandBufferFailed

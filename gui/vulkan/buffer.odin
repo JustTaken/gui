@@ -1,6 +1,7 @@
 package vulk
 
 import vk "vendor:vulkan"
+import "./../error"
 
 Buffer :: struct {
   handle: vk.Buffer,
@@ -14,7 +15,7 @@ StagingBuffer :: struct {
   recording: bool,
 }
 
-buffer_create :: proc(ctx: ^Vulkan_Context, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) -> (buffer: Buffer, err: Error) {
+buffer_create :: proc(ctx: ^Vulkan_Context, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) -> (buffer: Buffer, err: error.Error) {
   buffer.handle = vulkan_buffer_create(ctx.device, size, usage) or_return
   buffer.memory = vulkan_buffer_create_memory(
     ctx.device,
@@ -29,7 +30,7 @@ buffer_create :: proc(ctx: ^Vulkan_Context, size: vk.DeviceSize, usage: vk.Buffe
   return buffer, nil
 }
 
-vulkan_buffer_create :: proc(device: vk.Device, size: vk.DeviceSize, usage: vk.BufferUsageFlags) -> (vk.Buffer, Error) {
+vulkan_buffer_create :: proc(device: vk.Device, size: vk.DeviceSize, usage: vk.BufferUsageFlags) -> (vk.Buffer, error.Error) {
   buf_info := vk.BufferCreateInfo {
     sType       = .BUFFER_CREATE_INFO,
     pNext       = nil,
@@ -45,7 +46,7 @@ vulkan_buffer_create :: proc(device: vk.Device, size: vk.DeviceSize, usage: vk.B
   return buffer, nil
 }
 
-vulkan_buffer_create_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, buffer: vk.Buffer, properties: vk.MemoryPropertyFlags) -> (memory: vk.DeviceMemory, err: Error) {
+vulkan_buffer_create_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, buffer: vk.Buffer, properties: vk.MemoryPropertyFlags) -> (memory: vk.DeviceMemory, err: error.Error) {
   requirements: vk.MemoryRequirements
   vk.GetBufferMemoryRequirements(device, buffer, &requirements)
 
@@ -66,7 +67,7 @@ vulkan_buffer_create_memory :: proc(device: vk.Device, physical_device: vk.Physi
   return memory, nil
 }
 
-vulkan_copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer: vk.Buffer, dst_offset: vk.DeviceSize) -> Error {
+vulkan_copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer: vk.Buffer, dst_offset: vk.DeviceSize) -> error.Error {
   l := u32(len(data))
   if ctx.staging.buffer.len + l > ctx.staging.buffer.cap {
     return .OutOfStagingMemory
@@ -104,7 +105,7 @@ vulkan_copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer
   return nil
 }
 
-find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, Error) {
+find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, error.Error) {
 	mem_properties: vk.PhysicalDeviceMemoryProperties
 	vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
 

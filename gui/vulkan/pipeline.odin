@@ -4,7 +4,9 @@ import "base:runtime"
 import "core:os"
 import vk "vendor:vulkan"
 
-create_pipeline :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32) -> (pipeline: vk.Pipeline, err: Error) {
+import "./../error"
+
+create_pipeline :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32) -> (pipeline: vk.Pipeline, err: error.Error) {
   vert_module := create_shader_module(ctx, "assets/output/vert.spv") or_return
   defer vk.DestroyShaderModule(ctx.device, vert_module, nil)
 
@@ -152,7 +154,7 @@ create_pipeline :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_
   return pipeline, nil
 }
 
-create_render_pass :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, Error) {
+create_render_pass :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, error.Error) {
   render_pass_attachments := [?]vk.AttachmentDescription {
     {
       format = ctx.format,
@@ -221,7 +223,7 @@ create_render_pass :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, Error) {
   return render_pass, nil
 }
 
-create_shader_module :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.ShaderModule, err: Error) {
+create_shader_module :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.ShaderModule, err: error.Error) {
   er: os.Error
   file: os.Handle
   size: i64

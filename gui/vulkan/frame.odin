@@ -4,6 +4,8 @@ import "core:fmt"
 import "core:sys/posix"
 import vk "vendor:vulkan"
 
+import "./../error"
+
 Frame :: struct {
   fd:     i32,
   planes:       []vk.SubresourceLayout,
@@ -19,7 +21,7 @@ Frame :: struct {
   height:       u32,
 }
 
-frames_create :: proc(ctx: ^Vulkan_Context, count: u32, width: u32, height: u32) -> (frames: []Frame, err: Error) {
+frames_create :: proc(ctx: ^Vulkan_Context, count: u32, width: u32, height: u32) -> (frames: []Frame, err: error.Error) {
   frames = make([]Frame, count, ctx.allocator)
 
   for i in 0 ..< count {
@@ -29,7 +31,7 @@ frames_create :: proc(ctx: ^Vulkan_Context, count: u32, width: u32, height: u32)
   return frames, nil
 }
 
-create_frame :: proc(ctx: ^Vulkan_Context, width: u32, height: u32) -> (frame: Frame, err: Error) {
+create_frame :: proc(ctx: ^Vulkan_Context, width: u32, height: u32) -> (frame: Frame, err: error.Error) {
   frame.width = width
   frame.height = height
   frame.planes = make([]vk.SubresourceLayout, 3, ctx.allocator)
@@ -103,14 +105,14 @@ get_frame :: proc(ctx: ^Vulkan_Context, index: u32) -> ^Frame {
   return &ctx.frames[index]
 }
 
-resize_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
+resize_frame :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> error.Error {
   destroy_frame(ctx.device, frame)
   frame^ = create_frame(ctx, width, height) or_return
 
   return nil
 }
 
-frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> Error {
+frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> error.Error {
   submit_staging_data(ctx) or_return
   cmd := ctx.command_buffers[0]
 
@@ -188,7 +190,7 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
   return nil
 }
 
-create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, pNext: rawptr, width: u32, height: u32) -> (image: vk.Image, err: Error) {
+create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, tiling: vk.ImageTiling, usage: vk.ImageUsageFlags, flags: vk.ImageCreateFlags, pNext: rawptr, width: u32, height: u32) -> (image: vk.Image, err: error.Error) {
   info := vk.ImageCreateInfo {
     sType = .IMAGE_CREATE_INFO,
     pNext = pNext,
@@ -214,7 +216,7 @@ create_image :: proc(device: vk.Device, format: vk.Format, type: vk.ImageType, t
   return image, nil
 }
 
-create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, image: vk.Image, properties: vk.MemoryPropertyFlags, pNext: rawptr) -> (memory: vk.DeviceMemory, err: Error) {
+create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevice, image: vk.Image, properties: vk.MemoryPropertyFlags, pNext: rawptr) -> (memory: vk.DeviceMemory, err: error.Error) {
   requirements: vk.MemoryRequirements
   vk.GetImageMemoryRequirements(device, image, &requirements)
 
@@ -236,7 +238,7 @@ create_image_memory :: proc(device: vk.Device, physical_device: vk.PhysicalDevic
   return memory, nil
 }
 
-create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format, aspect: vk.ImageAspectFlags) -> (vk.ImageView, Error) {
+create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format, aspect: vk.ImageAspectFlags) -> (vk.ImageView, error.Error) {
   range := vk.ImageSubresourceRange {
     levelCount = 1,
     layerCount = 1,
@@ -259,7 +261,7 @@ create_image_view :: proc(device: vk.Device, image: vk.Image, format: vk.Format,
   return view, nil
 }
 
-create_framebuffer :: proc(device: vk.Device, render_pass: vk.RenderPass, view: vk.ImageView, depth: vk.ImageView, width: u32, height: u32) -> (vk.Framebuffer, Error) {
+create_framebuffer :: proc(device: vk.Device, render_pass: vk.RenderPass, view: vk.ImageView, depth: vk.ImageView, width: u32, height: u32) -> (vk.Framebuffer, error.Error) {
   attachments := [?]vk.ImageView{view, depth}
   info := vk.FramebufferCreateInfo {
     sType     = .FRAMEBUFFER_CREATE_INFO,

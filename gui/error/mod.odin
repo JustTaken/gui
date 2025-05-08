@@ -1,7 +1,8 @@
-package vulk
+package error
 
 Error :: enum {
   OutOfMemory,
+  OutOfBounds,
   OutOfStagingMemory,
   FileNotFound,
   ReadFileFailed,
@@ -54,4 +55,12 @@ Error :: enum {
   ModifierNotFound,
   UnregisteredKey,
   NotANumber,
+  ResizeFailed,
+  InvalidInterpolation,
+  InvalidAnimationPath,
+  InvalidAccessorCount,
+  InvalidAccessorKind,
+  AttributeNotFound,
+  NoAnimation,
+  RenderFailed,
 }

@@ -3,20 +3,23 @@ package collection
 
 import "core:encoding/json"
 import "core:math/linalg"
+import "./../error"
 
 Gltf_Node :: struct {
   name: string,
-  mesh: Gltf_Mesh,
+  mesh: Maybe(Gltf_Mesh),
   children: []u32,
   skin: Maybe(u32),
   transform: Matrix,
 }
 
-parse_node :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (node: Gltf_Node, err: Error) {
+parse_node :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (node: Gltf_Node, err: error.Error) {
   node.name = raw["name"].(string)
 
-  index := u32(raw["mesh"].(f64))
-  node.mesh = parse_mesh(ctx, ctx.raw_meshes[index].(json.Object)) or_return
+  if mesh, ok := raw["mesh"]; ok {
+    node.mesh = parse_mesh(ctx, ctx.raw_meshes[u32(mesh.(f64))].(json.Object)) or_return
+  }
+
   node.transform = matrix[4, 4]f32 {
     1, 0, 0, 0,
     0, 1, 0, 0,
@@ -63,11 +66,12 @@ parse_node :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (node: Gltf_Node, er
   return node, nil
 }
 
-parse_nodes :: proc(ctx: ^Gltf_Context) -> (nodes: []Gltf_Node, err: Error) {
-  nodes = make([]Gltf_Node, len(ctx.raw_nodes), ctx.tmp_allocator)
+parse_nodes :: proc(ctx: ^Gltf_Context) -> (nodes: []Gltf_Node, err: error.Error) {
+  raw_nodes := ctx.obj["nodes"].(json.Array)
+  nodes = make([]Gltf_Node, len(raw_nodes), ctx.tmp_allocator)
 
-  for i in 0..<len(ctx.raw_nodes) {
-    nodes[i] = parse_node(ctx, ctx.raw_nodes[i].(json.Object)) or_return
+  for i in 0..<len(raw_nodes) {
+    nodes[i] = parse_node(ctx, raw_nodes[i].(json.Object)) or_return
   }
 
   return nodes, nil

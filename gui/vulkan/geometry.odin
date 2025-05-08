@@ -1,8 +1,10 @@
 package vulk
 
 import vk "vendor:vulkan"
-import "./../collection"
 import "core:fmt"
+
+import "./../collection"
+import "./../error"
 
 TRANSFORMS :: 0
 MODELS :: 1
@@ -17,7 +19,7 @@ Geometry :: struct {
   instances: u32,
 }
 
-geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, vertex_count: u32, indices: []u8, index_size: u32, index_count: u32, max_instances: u32) -> (id: u32, err: Error) {
+geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, vertex_count: u32, indices: []u8, index_size: u32, index_count: u32, max_instances: u32) -> (id: u32, err: error.Error) {
   geometry: Geometry
 
   geometry.vertex = buffer_create(ctx, vk.DeviceSize(vertex_size * vertex_count), {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
@@ -37,7 +39,7 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
   return id, nil
 }
 
-geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: InstanceModel, color: Color) -> (id: u32, ok: Error) {
+geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: InstanceModel, color: Color) -> (id: u32, ok: error.Error) {
   geometry := &ctx.geometries.data[geometry_id]
   id = geometry.offset + geometry.instances
 
@@ -47,7 +49,7 @@ geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: Ins
   return id, nil
 }
 
-instance_update :: proc(ctx: ^Vulkan_Context, id: u32, model: Maybe(InstanceModel), color: Maybe(Color)) -> Error {
+instance_update :: proc(ctx: ^Vulkan_Context, id: u32, model: Maybe(InstanceModel), color: Maybe(Color)) -> error.Error {
   if model != nil {
     models := [?]InstanceModel{model.?}
     vulkan_copy_data(InstanceModel, ctx, models[:], ctx.descriptor_set.descriptors[MODELS].buffer.handle, vk.DeviceSize(id) * size_of(InstanceModel)) or_return
