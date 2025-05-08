@@ -44,6 +44,7 @@ Error :: enum {
   CreateFenceFailed,
   CreateCommandPoolFailed,
   SocketConnectFailed,
+  DmaBufFailed,
   GltfLoadFailed,
   InvalidKeymapInput,
   TypeAssertionFailed,

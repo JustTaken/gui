@@ -27,6 +27,10 @@ Context :: struct {
   current_animations: collection.Vector(Animation)
 }
 
+log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, options: runtime.Logger_Options, location := #caller_location) {
+  fmt.println("[", level, "] ->", text)
+}
+
 main :: proc() {
   bytes: []u8
   err: mem.Allocator_Error
@@ -40,8 +44,11 @@ main :: proc() {
   height: u32 = 1080
   frames: u32 = 2
 
-  if bytes, err = make([]u8, 1024 * 1024 * 2, context.allocator); err != nil {
-    fmt.println("Error:", err)
+  context.logger.lowest_level = .Info
+  context.logger.procedure = log_proc
+
+ if bytes, err = make([]u8, 1024 * 1024 * 2, context.allocator); err != nil {
+    log.error("Primary allocation failed:", err)
     return
   }
 
@@ -53,36 +60,28 @@ main :: proc() {
   mem.arena_init(&tmp_arena, make([]u8, 1024 * 1024 * 1, context.allocator))
   context.temp_allocator = mem.arena_allocator(&tmp_arena)
 
-  if !init(&v, &w, width, height, frames, &arena, &tmp_arena) {
+  if e := init(&v, &w, width, height, frames, &arena, &tmp_arena); e != nil {
+    log.error("Failed to initialize environment:", e)
     return
   }
 
   if e := loop(&v, &w); e != nil {
-    fmt.println("Could not complete loop due to error:", e)
+    log.error("Could not complete loop due to error:", e)
     return
   }
 
   wl.deinit_wayland(&w)
   vk.deinit_vulkan(&v)
 
-  fmt.println("TMP", tmp_arena.offset, tmp_arena.peak_used)
-  fmt.println("MAIN", arena.offset - len(tmp_arena.data), arena.peak_used - len(tmp_arena.data))
+  log.info("TMP", tmp_arena.offset, tmp_arena.peak_used)
+  log.info("MAIN", arena.offset - len(tmp_arena.data), arena.peak_used - len(tmp_arena.data))
 }
 
-init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: u32, frames: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> bool {
-    if err := vk.init_vulkan(v, width, height, frames, arena, tmp_arena); err != nil {
-      fmt.println("Failed to Initialize vulkan due to:", err)
-      return false
-    }
+init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: u32, frames: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
+    vk.init_vulkan(v, width, height, frames, arena, tmp_arena) or_return
+    wl.init_wayland(w, v, width, height, frames, arena, tmp_arena) or_return
 
-    if err := wl.init_wayland(w, v, width, height, frames, arena, tmp_arena); err != nil {
-      fmt.println("Failed to initialize Wayland due to:", err)
-      return false
-    }
-
-    fmt.println("Successfully initialized environment")
-
-    return true
+    return nil
 }
 
 Gltf :: struct {
@@ -109,6 +108,7 @@ Node :: struct {
 }
 
 load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> (gltf: Gltf, err: error.Error) {
+  fmt.println("Loading gltf file", path)
   gltf.handle = collection.gltf_from_file(path, v.allocator, v.tmp_allocator) or_return
   scene := &gltf.handle.scenes["Scene"]
 
@@ -124,7 +124,7 @@ load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> (gltf: Gltf, err: erro
       // textures := collection.get_mesh_accessor(mesh, .Texture0)
       indices := collection.get_mesh_indices(mesh)
 
-      vertices := collection.get_vertex_data({.Position, .Normal, .Texture0}, v.tmp_allocator)
+      vertices := collection.get_vertex_data(mesh, {.Position, .Normal, .Texture0}, v.tmp_allocator)
       id := vk.geometry_create(v, vertices.bytes, vertices.size, vertices.count, indices.bytes, indices.size, indices.count, 1) or_return
 
       gltf.nodes[j].geometry = id
@@ -176,7 +176,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
-    gltf := load_gltf(v, "assets/cube_animation.gltf") or_return
+    gltf := load_gltf(v, "assets/bone.gltf") or_return
     collection.vec_append(&ctx.gltfs, gltf)
     add_instance(v, &ctx.gltfs.data[0].nodes[0], matrix[4, 4]f32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, vk.Color{ 0, 1, 0, 1 })
   }
@@ -220,7 +220,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
 //    }
 
     if wl.render(w) != nil {
-      fmt.println("Failed to render frame")
+      log.error("Failed to render frame")
     }
   }
 
@@ -247,7 +247,7 @@ play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animati
   return nil
 }
 
-frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) {
+frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
   ctx := cast(^Context)(ptr)
   view_update := false
 
@@ -285,15 +285,13 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) {
       animation.frame = 0
       animation.start = time.now()._nsec
 
-      // fmt.println("Playing animation, Frame count", len(animation.handle.frames), "Node count:", len(animation.gltf.nodes))
-
-      collection.vec_append(&ctx.current_animations, animation)
+      collection.vec_append(&ctx.current_animations, animation) or_return
     }
   }
 
   if view_update {
-    if vk.update_view(ctx.wl.vk, ctx.view) != nil {
-      fmt.println("FAILED TO UPDATE VIEW")
-    }
+    vk.update_view(ctx.wl.vk, ctx.view) or_return
   }
+
+  return nil
 }

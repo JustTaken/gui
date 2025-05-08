@@ -45,12 +45,13 @@ wayland_buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width:
   return nil
 }
 
-wayland_buffers_init :: proc(ctx: ^Wayland_Context) {
+wayland_buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
   ctx.buffers[0].id = ctx.buffer_base_id
+
   for i in 0 ..< len(ctx.buffers) {
     buffer := &ctx.buffers[i]
 
-    if i != 0 do buffer.id = copy_id(ctx, ctx.buffer.id)
+    if i != 0 do buffer.id = copy_id(ctx, ctx.buffer.id) or_return
 
     buffer.frame = vk.get_frame(ctx.vk, buffer.id - ctx.buffer_base_id)
     buffer.released = true
@@ -58,31 +59,21 @@ wayland_buffers_init :: proc(ctx: ^Wayland_Context) {
     buffer.width = 0
     buffer.height = 0
   }
+
+  return nil
 }
 
-wayland_buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) {
+wayland_buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
   buffer.bound = true
 
-  write(ctx, {BoundNewId(ctx.dma_params_id)}, ctx.dma_id, ctx.dma_create_param_opcode)
+  write(ctx, {BoundNewId(ctx.dma_params_id)}, ctx.dma_id, ctx.dma_create_param_opcode) or_return
 
   for i in 0 ..< buffer.frame.modifier.drmFormatModifierPlaneCount {
     plane := &buffer.frame.planes[i]
     modifier_hi := (buffer.frame.modifier.drmFormatModifier & 0xFFFFFFFF00000000) >> 32
     modifier_lo := buffer.frame.modifier.drmFormatModifier & 0x00000000FFFFFFFF
 
-    write(
-      ctx,
-      {
-        Fd(buffer.frame.fd),
-        Uint(i),
-        Uint(plane.offset),
-        Uint(plane.rowPitch),
-        Uint(modifier_hi),
-        Uint(modifier_lo),
-      },
-      ctx.dma_params_id,
-      ctx.dma_params_add_opcode,
-    )
+    write(ctx, { Fd(buffer.frame.fd), Uint(i), Uint(plane.offset), Uint(plane.rowPitch), Uint(modifier_hi), Uint(modifier_lo), }, ctx.dma_params_id, ctx.dma_params_add_opcode) or_return
   }
 
   buffer.width = width
@@ -90,11 +81,8 @@ wayland_buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32
 
   format := vk.drm_format(ctx.vk.format)
 
-  write(
-    ctx,
-    {BoundNewId(buffer.id), Int(width), Int(height), Uint(format), Uint(0)},
-    ctx.dma_params_id,
-    ctx.dma_params_create_immed_opcode,
-  )
-  write(ctx, {}, ctx.dma_params_id, ctx.dma_params_destroy_opcode)
+  write(ctx, {BoundNewId(buffer.id), Int(width), Int(height), Uint(format), Uint(0)}, ctx.dma_params_id, ctx.dma_params_create_immed_opcode) or_return
+  write(ctx, {}, ctx.dma_params_id, ctx.dma_params_destroy_opcode) or_return
+
+  return nil
 }
