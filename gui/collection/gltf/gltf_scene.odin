@@ -1,8 +1,8 @@
 #+private
-package collection
+package gltf
 
 import "core:encoding/json"
-import "./../error"
+import "./../../error"
 
 Gltf_Scene :: struct {
   nodes: []u32,

@@ -1,10 +1,8 @@
-package collection
+package gltf
 
-import "core:encoding/json"
-import "./../error"
 import "base:runtime"
-
-// Gltf_Target :: []Gltf_Attribute
+import "core:encoding/json"
+import "./../../error"
 
 Gltf_Material :: struct {
   name: string,

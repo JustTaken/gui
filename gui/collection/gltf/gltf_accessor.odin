@@ -1,10 +1,10 @@
-package collection
+package gltf
 
 import "core:encoding/json"
 import "base:runtime"
 import "core:fmt"
 
-import "./../error"
+import "./../../error"
 
 Vertex_Data :: struct {
   bytes: []u8,

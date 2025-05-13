@@ -1,9 +1,8 @@
-#+private
-package collection
+package gltf
 
 import "core:encoding/json"
 import "core:math/linalg"
-import "./../error"
+import "./../../error"
 
 Gltf_Node :: struct {
   name: string,

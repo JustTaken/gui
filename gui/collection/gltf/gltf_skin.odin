@@ -1,8 +1,7 @@
-#+private
-package collection
+package gltf
 
 import "core:encoding/json"
-import "./../error"
+import "./../../error"
 
 Gltf_Skin :: struct {
   matrices: []Matrix,

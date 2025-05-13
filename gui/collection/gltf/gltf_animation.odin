@@ -1,10 +1,10 @@
-package collection
+package gltf
 
 import "core:encoding/json"
 import "core:math/linalg"
 import "core:strings"
 
-import "./../error"
+import "./../../error"
 
 Gltf_Animation_Interpolation :: enum {
   Linear,

@@ -7,7 +7,8 @@ import "core:math/linalg"
 import "core:log"
 import "core:time"
 
-import collection "collection"
+import "collection"
+import gltf "collection/gltf"
 import vk "vulkan"
 import wl "wayland"
 import "error"
@@ -85,12 +86,12 @@ init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: 
 }
 
 Gltf :: struct {
-  handle: collection.Gltf,
+  handle: gltf.Gltf,
   nodes: []Node,
 }
 
 Animation :: struct {
-  handle: ^collection.Gltf_Animation,
+  handle: ^gltf.Gltf_Animation,
   gltf: ^Gltf,
   frame: u32,
   start: i64,
@@ -107,12 +108,12 @@ Node :: struct {
   transform: matrix[4, 4]f32,
 }
 
-load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> (gltf: Gltf, err: error.Error) {
+load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> (glt: Gltf, err: error.Error) {
   fmt.println("Loading gltf file", path)
-  gltf.handle = collection.gltf_from_file(path, v.allocator, v.tmp_allocator) or_return
-  scene := &gltf.handle.scenes["Scene"]
+  glt.handle = gltf.gltf_from_file(path, v.allocator, v.tmp_allocator) or_return
+  scene := &glt.handle.scenes["Scene"]
 
-  gltf.nodes = make([]Node, len(scene.all_nodes), v.allocator)
+  glt.nodes = make([]Node, len(scene.all_nodes), v.allocator)
 
   for j in 0..<len(scene.all_nodes) {
     scene_node := &scene.all_nodes[j]
@@ -122,18 +123,18 @@ load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> (gltf: Gltf, err: erro
       // positions := collection.get_mesh_accessor(mesh, .Position)
       // normals := collection.get_mesh_accessor(mesh, .Normal)
       // textures := collection.get_mesh_accessor(mesh, .Texture0)
-      indices := collection.get_mesh_indices(mesh)
+      indices := gltf.get_mesh_indices(mesh)
 
-      vertices := collection.get_vertex_data(mesh, {.Position, .Normal, .Texture0}, v.tmp_allocator)
+      vertices := gltf.get_vertex_data(mesh, {.Position, .Normal, .Texture0}, v.tmp_allocator)
       id := vk.geometry_create(v, vertices.bytes, vertices.size, vertices.count, indices.bytes, indices.size, indices.count, 1) or_return
 
-      gltf.nodes[j].geometry = id
-      gltf.nodes[j].instances = collection.new_vec(Node_Instance, 10, v.allocator) or_return
-      gltf.nodes[j].transform = scene_node.transform
+      glt.nodes[j].geometry = id
+      glt.nodes[j].instances = collection.new_vec(Node_Instance, 10, v.allocator) or_return
+      glt.nodes[j].transform = scene_node.transform
     }
   }
 
-  return gltf, nil
+  return glt, nil
 }
 
 add_instance :: proc(v: ^vk.Vulkan_Context, node: ^Node, model: vk.InstanceModel, color: vk.Color) -> error.Error {
@@ -228,7 +229,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
 }
 
 play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animation, now: i64, id: u32) -> error.Error {
-  frame, index, repeat, finished := collection.get_animation_frame(animation.handle, f32(now - animation.start) / 1_000_000_000, animation.frame)
+  frame, index, repeat, finished := gltf.get_animation_frame(animation.handle, f32(now - animation.start) / 1_000_000_000, animation.frame)
   animation.frame = index
 
   if repeat {

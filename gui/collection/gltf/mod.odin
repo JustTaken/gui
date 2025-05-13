@@ -1,4 +1,4 @@
-package collection
+package gltf
 
 import "base:runtime"
 import "core:os"
@@ -7,7 +7,7 @@ import "core:encoding/json"
 import "core:path/filepath"
 import "core:fmt"
 
-import "./../error"
+import "./../../error"
 
 Matrix :: matrix[4, 4]f32
 

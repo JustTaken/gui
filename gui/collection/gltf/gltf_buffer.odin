@@ -1,8 +1,8 @@
 #+private
-package collection
+package gltf
 
 import "core:os"
-import "./../error"
+import "./../../error"
 
 Gltf_Buffer :: struct {
   fd:  os.Handle,
