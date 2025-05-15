@@ -15,7 +15,8 @@ Buffer :: struct {
   next:     ^Buffer,
 }
 
-wayland_buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
+@private
+buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
   if !buffer.released {
     return .BufferNotReleased
   }
@@ -25,8 +26,8 @@ wayland_buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width:
   if buffer.width != width || buffer.height != height {
     if buffer.bound do write(ctx, {}, buffer.id, ctx.destroy_buffer_opcode)
 
-    vk.resize_frame(ctx.vk, buffer.frame, width, height) or_return
-    wayland_buffer_create(ctx, buffer, width, height)
+    vk.frame_resize(ctx.vk, buffer.frame, width, height) or_return
+    buffer_create(ctx, buffer, width, height)
   }
 
   vk.frame_draw(ctx.vk, buffer.frame, width, height) or_return
@@ -45,7 +46,8 @@ wayland_buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width:
   return nil
 }
 
-wayland_buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
+@private
+buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
   ctx.buffers[0].id = ctx.buffer_base_id
 
   for i in 0 ..< len(ctx.buffers) {
@@ -63,7 +65,8 @@ wayland_buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
   return nil
 }
 
-wayland_buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
+@private
+buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
   buffer.bound = true
 
   write(ctx, {BoundNewId(ctx.dma_params_id)}, ctx.dma_id, ctx.dma_create_param_opcode) or_return

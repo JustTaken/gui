@@ -3,6 +3,7 @@ package vulk
 import vk "vendor:vulkan"
 import "./../error"
 
+@private
 create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: error.Error) {
 	layer_count: u32
 	vk.EnumerateInstanceLayerProperties(&layer_count, nil)

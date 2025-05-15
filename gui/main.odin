@@ -71,42 +71,19 @@ main :: proc() {
     return
   }
 
-  wl.deinit_wayland(&w)
-  vk.deinit_vulkan(&v)
+  wl.wayland_deinit(&w)
+  vk.vulkan_deinit(&v)
 
   log.info("TMP", tmp_arena.offset, tmp_arena.peak_used)
   log.info("MAIN", arena.offset - len(tmp_arena.data), arena.peak_used - len(tmp_arena.data))
 }
 
 init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: u32, frames: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
-    vk.init_vulkan(v, width, height, frames, arena, tmp_arena) or_return
-    wl.init_wayland(w, v, width, height, frames, arena, tmp_arena) or_return
+    vk.vulkan_init(v, width, height, frames, arena, tmp_arena) or_return
+    wl.wayland_init(w, v, width, height, frames, arena, tmp_arena) or_return
 
     return nil
 }
-
-// Gltf :: struct {
-//   handle: gltf.Gltf,
-//   nodes: []Node,
-// }
-
-// Animation :: struct {
-//   handle: ^gltf.Animation,
-//   gltf: ^Gltf,
-//   frame: u32,
-//   start: i64,
-// }
-
-// Node_Instance :: struct {
-//   transform: matrix[4, 4]f32,
-//   id: u32,
-// }
-
-// Node :: struct {
-//   instances: collection.Vector(Node_Instance),
-//   geometry: u32,
-//   transform: matrix[4, 4]f32,
-// }
 
 load_node :: proc(v: ^vk.Vulkan_Context, node: ^gltf.Node) -> error.Error {
   if node.mesh == nil do return  nil
@@ -125,18 +102,18 @@ load_node :: proc(v: ^vk.Vulkan_Context, node: ^gltf.Node) -> error.Error {
     assert(positions.component_kind == .F32 && positions.component_count == 3)
     assert(normals.component_kind == .F32 && normals.component_count == 3)
     assert(textures.component_kind == .F32 && textures.component_count == 2)
+    assert(size_of(Vertex) == (size_of(f32) * positions.component_count) + (size_of(f32) * normals.component_count) + (size_of(f32) * textures.component_count))
 
-    size_each := (size_of(f32) * positions.component_count) + (size_of(f32) * normals.component_count) + (size_of(f32) * textures.component_count)
     count := positions.count
-    size := size_each * count
+    size := size_of(Vertex) * count
 
     indices := primitive.indices
     bytes := make([]u8, size, v.tmp_allocator)
 
-    vertices := cast([^]Vertex)raw_data(bytes)
     pos := cast([^][3]f32)raw_data(positions.bytes)
     norms := cast([^][3]f32)raw_data(normals.bytes)
     texts := cast([^][2]f32)raw_data(textures.bytes)
+    vertices := cast([^]Vertex)raw_data(bytes)
 
     for i in 0..<count {
       vertices[i].position = pos[i]
@@ -144,10 +121,10 @@ load_node :: proc(v: ^vk.Vulkan_Context, node: ^gltf.Node) -> error.Error {
       vertices[i].texture = texts[i]
     }
 
-    geometry := vk.geometry_create(v, bytes, size_each, count, indices.bytes, gltf.get_accessor_size(indices), indices.count, 1) or_return
-
     transform := node.transform
-    id := vk.geometry_instance_add(v, geometry, transform, {0, 1, 1, 1}) or_return
+
+    geometry := vk.geometry_create(v, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, 1) or_return
+    instance := vk.geometry_instance_add(v, geometry, transform, {0, 1, 1, 1}) or_return
   }
 
   return nil
@@ -169,8 +146,7 @@ load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> error.Error {
 loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   ctx: Context
   ctx.wl = w
-  // ctx.gltfs = collection.new_vec(Gltf, 20, v.allocator) or_return
-  // ctx.current_animations = collection.new_vec(Animation, 20, v.allocator) or_return
+
   ctx.view = matrix[4, 4]f32{
     1, 0, 0, 0,
     0, 1, 0, 0,

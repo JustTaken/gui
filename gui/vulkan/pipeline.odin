@@ -6,11 +6,12 @@ import vk "vendor:vulkan"
 
 import "./../error"
 
-create_pipeline :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32) -> (pipeline: vk.Pipeline, err: error.Error) {
-  vert_module := create_shader_module(ctx, "assets/output/vert.spv") or_return
+@private
+pipeline_create :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32) -> (pipeline: vk.Pipeline, err: error.Error) {
+  vert_module := shader_module_create(ctx, "assets/output/vert.spv") or_return
   defer vk.DestroyShaderModule(ctx.device, vert_module, nil)
 
-  frag_module := create_shader_module(ctx, "assets/output/frag.spv") or_return
+  frag_module := shader_module_create(ctx, "assets/output/frag.spv") or_return
   defer vk.DestroyShaderModule(ctx.device, frag_module, nil)
 
   stages := [?]vk.PipelineShaderStageCreateInfo {
@@ -29,7 +30,7 @@ create_pipeline :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_
   }
 
   vertex_binding_descriptions := [?]vk.VertexInputBindingDescription {
-    {binding = 0, stride = size_of(Vertex), inputRate = .VERTEX},
+    {binding = 0, stride = size_of(f32) * (3 + 3 + 2), inputRate = .VERTEX},
   }
 
   vertex_attribute_descriptions := [?]vk.VertexInputAttributeDescription {
@@ -154,7 +155,8 @@ create_pipeline :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_
   return pipeline, nil
 }
 
-create_render_pass :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, error.Error) {
+@private
+render_pass_create :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, error.Error) {
   render_pass_attachments := [?]vk.AttachmentDescription {
     {
       format = ctx.format,
@@ -223,7 +225,8 @@ create_render_pass :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, error.Error)
   return render_pass, nil
 }
 
-create_shader_module :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.ShaderModule, err: error.Error) {
+@private
+shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.ShaderModule, err: error.Error) {
   er: os.Error
   file: os.Handle
   size: i64

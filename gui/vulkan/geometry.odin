@@ -11,6 +11,11 @@ MODELS :: 1
 COLORS :: 2
 LIGHTS :: 3
 
+InstanceModel :: matrix[4, 4]f32
+Color :: [4]f32
+Light :: [3]f32
+Matrix :: matrix[4, 4]f32
+
 Geometry :: struct {
   vertex:    Buffer,
   indice:    Buffer,
@@ -23,10 +28,10 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
   geometry: Geometry
 
   geometry.vertex = buffer_create(ctx, vk.DeviceSize(vertex_size * vertex_count), {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
-  vulkan_copy_data(u8, ctx, vertices, geometry.vertex.handle, 0) or_return
+  copy_data(u8, ctx, vertices, geometry.vertex.handle, 0) or_return
 
   geometry.indice = buffer_create(ctx, vk.DeviceSize(index_size * index_count), {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
-  vulkan_copy_data(u8, ctx, indices, geometry.indice.handle, 0) or_return
+  copy_data(u8, ctx, indices, geometry.indice.handle, 0) or_return
 
   geometry.count = index_count
   geometry.offset = ctx.instances
@@ -52,12 +57,12 @@ geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: Ins
 instance_update :: proc(ctx: ^Vulkan_Context, id: u32, model: Maybe(InstanceModel), color: Maybe(Color)) -> error.Error {
   if model != nil {
     models := [?]InstanceModel{model.?}
-    vulkan_copy_data(InstanceModel, ctx, models[:], ctx.descriptor_set.descriptors[MODELS].buffer.handle, vk.DeviceSize(id) * size_of(InstanceModel)) or_return
+    copy_data(InstanceModel, ctx, models[:], ctx.descriptor_set.descriptors[MODELS].buffer.handle, vk.DeviceSize(id) * size_of(InstanceModel)) or_return
   }
 
   if color != nil {
     colors := [?]Color{color.?}
-    vulkan_copy_data(Color, ctx, colors[:], ctx.descriptor_set.descriptors[COLORS].buffer.handle, vk.DeviceSize(id) * size_of(Color)) or_return
+    copy_data(Color, ctx, colors[:], ctx.descriptor_set.descriptors[COLORS].buffer.handle, vk.DeviceSize(id) * size_of(Color)) or_return
   }
 
   return nil

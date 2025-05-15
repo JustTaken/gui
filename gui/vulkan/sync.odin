@@ -3,7 +3,8 @@ package vulk
 import vk "vendor:vulkan"
 import "./../error"
 
-create_fence :: proc(ctx: ^Vulkan_Context) -> (vk.Fence, error.Error) {
+@private
+fence_create :: proc(ctx: ^Vulkan_Context) -> (vk.Fence, error.Error) {
 	info := vk.FenceCreateInfo {
 		sType = .FENCE_CREATE_INFO,
 		flags = {.SIGNALED},
@@ -15,7 +16,8 @@ create_fence :: proc(ctx: ^Vulkan_Context) -> (vk.Fence, error.Error) {
 	return fence, nil
 }
 
-create_semaphore :: proc(ctx: ^Vulkan_Context) -> (vk.Semaphore, error.Error) {
+@private
+semaphore_create :: proc(ctx: ^Vulkan_Context) -> (vk.Semaphore, error.Error) {
 	info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,
 		flags = {},

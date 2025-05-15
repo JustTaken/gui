@@ -13,33 +13,23 @@ import "./../error"
 
 library: dynlib.Library
 
+@private
 VALIDATION_LAYERS := [?]cstring{"VK_LAYER_KHRONOS_validation"}
 
+@private
 DEVICE_EXTENSIONS := [?]cstring {
 	"VK_KHR_external_memory_fd",
 	"VK_EXT_external_memory_dma_buf",
 	"VK_EXT_image_drm_format_modifier",
 }
 
+@private
 PLANE_INDICES := [?]vk.ImageAspectFlag {
 	.MEMORY_PLANE_0_EXT,
 	.MEMORY_PLANE_1_EXT,
 	.MEMORY_PLANE_2_EXT,
 	.MEMORY_PLANE_3_EXT,
 }
-
-
-InstanceModel :: matrix[4, 4]f32
-Color :: [4]f32
-Light :: [3]f32
-
-Vertex :: struct {
-  position: [3]f32,
-  normal:   [3]f32,
-  texture:  [2]f32,
-}
-
-Matrix :: matrix[4, 4]f32
 
 Vulkan_Context :: struct {
 	instance:        vk.Instance,
@@ -71,7 +61,7 @@ Vulkan_Context :: struct {
 	tmp_allocator:   runtime.Allocator,
 }
 
-init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
+vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
 	log.info("Initializing Vulkan")
 
 	mark := mem.begin_arena_temp_memory(tmp_arena)
@@ -94,19 +84,19 @@ init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 	ctx.physical_device = find_physical_device(ctx) or_return
 	ctx.modifiers = get_drm_modifiers(ctx) or_return
 	ctx.queue_indices = find_queue_indices(ctx) or_return
-	ctx.device = create_device(ctx) or_return
-	ctx.render_pass = create_render_pass(ctx) or_return
-	ctx.descriptor_pool = create_descriptor_pool(ctx) or_return
-	ctx.set_layout = create_set_layout(ctx) or_return
-	ctx.layout = create_layout(ctx, ctx.set_layout) or_return
-	ctx.pipeline = create_pipeline(ctx, ctx.layout, ctx.render_pass, width, height) or_return
+	ctx.device = device_create(ctx) or_return
+	ctx.render_pass = render_pass_create(ctx) or_return
+	ctx.descriptor_pool = descriptor_pool_create(ctx) or_return
+	ctx.set_layout = set_layout_create(ctx) or_return
+	ctx.layout = layout_create(ctx, ctx.set_layout) or_return
+	ctx.pipeline = pipeline_create(ctx, ctx.layout, ctx.render_pass, width, height) or_return
 
-	ctx.queues = create_queues(ctx, ctx.queue_indices) or_return
-	ctx.command_pool = create_command_pool(ctx, ctx.queue_indices[1]) or_return
-	ctx.command_buffers = allocate_command_buffers(ctx, ctx.command_pool, 2) or_return
-	ctx.draw_fence = create_fence(ctx) or_return
-	ctx.copy_fence = create_fence(ctx) or_return
-	ctx.semaphore = create_semaphore(ctx) or_return
+	ctx.queues = queues_create(ctx, ctx.queue_indices) or_return
+	ctx.command_pool = command_pool_create(ctx, ctx.queue_indices[1]) or_return
+	ctx.command_buffers = command_buffers_allocate(ctx, ctx.command_pool, 2) or_return
+	ctx.draw_fence = fence_create(ctx) or_return
+	ctx.copy_fence = fence_create(ctx) or_return
+	ctx.semaphore = semaphore_create(ctx) or_return
 
 	ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 1000, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
 	ctx.descriptor_set = descriptor_set_create(ctx, ctx.set_layout, {{.UNIFORM_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}}, {{.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}}, {2, 20, 20, 1}) or_return
@@ -118,7 +108,7 @@ init_vulkan :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 	return nil
 }
 
-deinit_vulkan :: proc(ctx: ^Vulkan_Context) {
+vulkan_deinit :: proc(ctx: ^Vulkan_Context) {
 	vk.WaitForFences(ctx.device, 1, &ctx.draw_fence, true, 0xFFFFFF)
 	vk.WaitForFences(ctx.device, 1, &ctx.copy_fence, true, 0xFFFFFF)
 
@@ -138,7 +128,7 @@ deinit_vulkan :: proc(ctx: ^Vulkan_Context) {
 	}
 
 	for &frame in ctx.frames {
-		destroy_frame(ctx.device, &frame)
+		frame_destroy(ctx.device, &frame)
 	}
 
 	vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
@@ -155,7 +145,7 @@ deinit_vulkan :: proc(ctx: ^Vulkan_Context) {
 	_ = dynlib.unload_library(library)
 }
 
-
+@private
 load_fn :: proc(ptr: rawptr, name: cstring) {
 	(cast(^rawptr)ptr)^ = dynlib.symbol_address(library, string(name))
 }
