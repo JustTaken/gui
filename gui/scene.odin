@@ -44,7 +44,7 @@ model_instance_create :: proc(ctx: ^Context, model: ^Model) -> (instance: Model_
 	}
 
 	for i in 0..<model.geometries.len {
-	    instance.ids.data[i] = vk.geometry_instance_add(ctx.vk, model.geometries.data[i], nil, {0, 1, 1, 1}) or_return
+	    instance.ids.data[i] = vk.geometry_instance_add(&ctx.vk, model.geometries.data[i], nil, {0, 1, 1, 1}) or_return
 	}
 
 	return instance, nil
@@ -86,7 +86,7 @@ load_mesh :: proc(ctx: ^Context, mesh: ^gltf.Mesh, transform: matrix[4, 4]f32) -
       vertices[i].texture = texts[i]
     }
 
-    geometry := vk.geometry_create(ctx.vk, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, 1, transform) or_return
+    geometry := vk.geometry_create(&ctx.vk, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, 1, transform) or_return
     collection.vec_append(&geometries, geometry) or_return
   }
 

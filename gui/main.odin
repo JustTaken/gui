@@ -14,8 +14,9 @@ import wl "wayland"
 import "error"
 
 Context :: struct {
-  wl: ^wl.Wayland_Context,
-  vk: ^vk.Vulkan_Context,
+  bytes: []u8,
+  wl: wl.Wayland_Context,
+  vk: vk.Vulkan_Context,
   view: matrix[4, 4]f32,
   rotate_up: matrix[4, 4]f32,
   rotate_down: matrix[4, 4]f32,
@@ -26,6 +27,14 @@ Context :: struct {
   translate_back: matrix[4, 4]f32,
   translate_for: matrix[4, 4]f32,
   scenes: collection.Vector(Scene),
+
+  view_update: bool,
+
+  allocator: runtime.Allocator,
+  arena: mem.Arena,
+
+  tmp_allocator: runtime.Allocator,
+  tmp_arena: mem.Arena,
 }
 
 log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, options: runtime.Logger_Options, location := #caller_location) {
@@ -33,13 +42,8 @@ log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, option
 }
 
 main :: proc() {
-  bytes: []u8
+  ctx: Context
   err: mem.Allocator_Error
-  arena: mem.Arena
-  tmp_arena: mem.Arena
-
-  w: wl.Wayland_Context
-  v: vk.Vulkan_Context
 
   width: u32 = 1920
   height: u32 = 1080
@@ -48,47 +52,37 @@ main :: proc() {
   context.logger.lowest_level = .Info
   context.logger.procedure = log_proc
 
- if bytes, err = make([]u8, 1024 * 1024 * 2, context.allocator); err != nil {
+ if ctx.bytes, err = make([]u8, 1024 * 1024 * 2, context.allocator); err != nil {
     log.error("Primary allocation failed:", err)
     return
   }
 
-  defer delete(bytes)
+  defer delete(ctx.bytes)
 
-  mem.arena_init(&arena, bytes)
-  context.allocator = mem.arena_allocator(&arena)
+  mem.arena_init(&ctx.arena, ctx.bytes)
+  ctx.allocator = mem.arena_allocator(&ctx.arena)
+  context.allocator = ctx.allocator
 
-  mem.arena_init(&tmp_arena, make([]u8, 1024 * 1024 * 1, context.allocator))
-  context.temp_allocator = mem.arena_allocator(&tmp_arena)
+  mem.arena_init(&ctx.tmp_arena, make([]u8, 1024 * 1024 * 1, context.allocator))
+  ctx.tmp_allocator = mem.arena_allocator(&ctx.tmp_arena)
+  context.temp_allocator = ctx.tmp_allocator
 
-  if e := init(&v, &w, width, height, frames, &arena, &tmp_arena); e != nil {
+  if e := init(&ctx, width, height, frames); e != nil {
     log.error("Failed to initialize environment:", e)
     return
   }
 
-  if e := loop(&v, &w); e != nil {
+  if e := loop(&ctx); e != nil {
     log.error("Could not complete loop due to error:", e)
     return
   }
 
-  wl.wayland_deinit(&w)
-  vk.vulkan_deinit(&v)
-
-  log.info("TMP", tmp_arena.offset, tmp_arena.peak_used)
-  log.info("MAIN", arena.offset - len(tmp_arena.data), arena.peak_used - len(tmp_arena.data))
+  deinit(&ctx)
 }
 
-init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: u32, frames: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
-    vk.vulkan_init(v, width, height, frames, arena, tmp_arena) or_return
-    wl.wayland_init(w, v, width, height, frames, arena, tmp_arena) or_return
-
-    return nil
-}
-
-loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
-  ctx: Context
-  ctx.wl = w
-  ctx.vk = v
+init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error {
+  vk.vulkan_init(&ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
+  wl.wayland_init(&ctx.wl, &ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
 
   ctx.view = matrix[4, 4]f32{
     1, 0, 0, 0,
@@ -100,8 +94,8 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   angle_velocity: f32 = 3.14 / 32
   translation_velocity: f32 = 2
 
-  vk.update_view(v, ctx.view)
-  vk.update_light(v, {0, 0, 0})
+  vk.update_view(&ctx.vk, ctx.view)
+  vk.update_light(&ctx.vk, {0, 0, 0})
 
   ctx.rotate_up = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{1, 0, 0})
   ctx.rotate_down = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{-1, 0, 0})
@@ -113,19 +107,31 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity / 4})
   ctx.scenes = collection.new_vec(Scene, 20, ctx.vk.tmp_allocator) or_return
 
-  cube_animation_scene := load_gltf_scene(&ctx, "assets/cube_animation.gltf") or_return
-  scene_instance_create(&ctx, cube_animation_scene) or_return
+  cube_animation_scene := load_gltf_scene(ctx, "assets/cube_animation.gltf") or_return
+  scene_instance_create(ctx, cube_animation_scene) or_return
 
-  bone_scene := load_gltf_scene(&ctx, "assets/bone.gltf") or_return
-  scene_instance_create(&ctx, bone_scene) or_return
+  bone_scene := load_gltf_scene(ctx, "assets/bone.gltf") or_return
+  scene_instance_create(ctx, bone_scene) or_return
 
-  wl.add_listener(w, &ctx, frame)
+  wl.add_listener(&ctx.wl, ctx, frame)
 
-  for w.running {
-    mark := mem.begin_arena_temp_memory(v.tmp_arena)
+  return nil
+}
+
+deinit :: proc(ctx: ^Context) {
+  wl.wayland_deinit(&ctx.wl)
+  vk.vulkan_deinit(&ctx.vk)
+
+  log.info("TMP", ctx.tmp_arena.offset, ctx.tmp_arena.peak_used)
+  log.info("MAIN", ctx.arena.offset - len(ctx.tmp_arena.data), ctx.arena.peak_used - len(ctx.tmp_arena.data))
+}
+
+loop :: proc(ctx: ^Context) -> error.Error {
+  for ctx.wl.running {
+    mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
 
-    if wl.render(w) != nil {
+    if wl.render(&ctx.wl) != nil {
       log.error("Failed to render frame")
     }
   }
@@ -133,58 +139,22 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   return nil
 }
 
-// play_animation :: proc(ctx: ^Context, animation: ^Animation, now: i64, id: u32) -> error.Error {
-//   frame, index, repeat, finished := gltf.get_animation_frame(animation.handle, f32(now - animation.start) / 1_000_000_000, animation.frame)
-//   animation.frame = index
-
-//   if repeat {
-//     return nil
-//   }
-
-//   if finished {
-//     ctx.current_animations.len = 0
-//     return nil
-//   }
-
-//   for i in animation.handle.nodes {
-//     vk.instance_update(ctx.vk, animation.gltf.nodes[i].instances.data[id].id, frame.transforms[i] * animation.gltf.nodes[i].transform, nil) or_return
-//   }
-
-//   return nil
-// }
+new_view :: proc(ctx: ^Context, view: matrix[4, 4]f32) {
+    ctx.view = ctx.translate_left * ctx.view
+    ctx.view_update = true
+}
 
 frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
   ctx := cast(^Context)(ptr)
-  view_update := false
+  ctx.view_update = false
 
-  if wl.is_key_pressed(keymap, .ArrowRight) {
-    ctx.view = ctx.translate_left * ctx.view
-    view_update = true
-  }
+  if wl.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.translate_left * ctx.view)
+  if wl.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.translate_right * ctx.view)
+  if wl.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.translate_back * ctx.view)
+  if wl.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.translate_for * ctx.view)
+  if wl.is_key_pressed(keymap, .a) do new_view(ctx, ctx.rotate_up * ctx.view)
 
-  if wl.is_key_pressed(keymap, .ArrowLeft) {
-    ctx.view = ctx.translate_right * ctx.view
-    view_update = true
-  }
-
-  if wl.is_key_pressed(keymap, .ArrowDown) {
-    ctx.view = ctx.translate_back * ctx.view
-    view_update = true
-  }
-
-  if wl.is_key_pressed(keymap, .ArrowUp) {
-    ctx.view = ctx.translate_for * ctx.view
-    view_update = true
-  }
-
-  if wl.is_key_pressed(keymap, .a) {
-    ctx.view = ctx.rotate_up * ctx.view
-    view_update = true
-  }
-
-  if view_update {
-    vk.update_view(ctx.wl.vk, ctx.view) or_return
-  }
+  if ctx.view_update do vk.update_view(ctx.wl.vk, ctx.view) or_return
 
   return nil
 }
