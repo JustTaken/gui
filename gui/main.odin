@@ -14,7 +14,7 @@ import wl "wayland"
 import "error"
 
 Context :: struct {
-  gltfs: collection.Vector(Gltf),
+  // gltfs: collection.Vector(Gltf),
   wl: ^wl.Wayland_Context,
   view: matrix[4, 4]f32,
   rotate_up: matrix[4, 4]f32,
@@ -25,7 +25,7 @@ Context :: struct {
   translate_left: matrix[4, 4]f32,
   translate_back: matrix[4, 4]f32,
   translate_for: matrix[4, 4]f32,
-  current_animations: collection.Vector(Animation)
+  // current_animations: collection.Vector(Animation)
 }
 
 log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, options: runtime.Logger_Options, location := #caller_location) {
@@ -85,64 +85,83 @@ init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: 
     return nil
 }
 
-Gltf :: struct {
-  handle: gltf.Gltf,
-  nodes: []Node,
-}
+// Gltf :: struct {
+//   handle: gltf.Gltf,
+//   nodes: []Node,
+// }
 
-Animation :: struct {
-  handle: ^gltf.Gltf_Animation,
-  gltf: ^Gltf,
-  frame: u32,
-  start: i64,
-}
+// Animation :: struct {
+//   handle: ^gltf.Animation,
+//   gltf: ^Gltf,
+//   frame: u32,
+//   start: i64,
+// }
 
-Node_Instance :: struct {
-  transform: matrix[4, 4]f32,
-  id: u32,
-}
+// Node_Instance :: struct {
+//   transform: matrix[4, 4]f32,
+//   id: u32,
+// }
 
-Node :: struct {
-  instances: collection.Vector(Node_Instance),
-  geometry: u32,
-  transform: matrix[4, 4]f32,
-}
+// Node :: struct {
+//   instances: collection.Vector(Node_Instance),
+//   geometry: u32,
+//   transform: matrix[4, 4]f32,
+// }
 
-load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> (glt: Gltf, err: error.Error) {
-  fmt.println("Loading gltf file", path)
-  glt.handle = gltf.gltf_from_file(path, v.allocator, v.tmp_allocator) or_return
-  scene := &glt.handle.scenes["Scene"]
+load_node :: proc(v: ^vk.Vulkan_Context, node: ^gltf.Node) -> error.Error {
+  if node.mesh == nil do return  nil
 
-  glt.nodes = make([]Node, len(scene.all_nodes), v.allocator)
-
-  for j in 0..<len(scene.all_nodes) {
-    scene_node := &scene.all_nodes[j]
-
-    if m := scene_node.mesh; m != nil {
-      mesh := &m.?
-      // positions := collection.get_mesh_accessor(mesh, .Position)
-      // normals := collection.get_mesh_accessor(mesh, .Normal)
-      // textures := collection.get_mesh_accessor(mesh, .Texture0)
-      indices := gltf.get_mesh_indices(mesh)
-
-      vertices := gltf.get_vertex_data(mesh, {.Position, .Normal, .Texture0}, v.tmp_allocator)
-      id := vk.geometry_create(v, vertices.bytes, vertices.size, vertices.count, indices.bytes, indices.size, indices.count, 1) or_return
-
-      glt.nodes[j].geometry = id
-      glt.nodes[j].instances = collection.new_vec(Node_Instance, 10, v.allocator) or_return
-      glt.nodes[j].transform = scene_node.transform
-    }
+  Vertex :: struct {
+    position: [3]f32,
+    normal: [3]f32,
+    texture: [2]f32,
   }
 
-  return glt, nil
+  for primitive in node.mesh.primitives {
+    positions := primitive.accessors[.Position]
+    normals := primitive.accessors[.Normal]
+    textures := primitive.accessors[.Texture0]
+
+    assert(positions.component_kind == .F32 && positions.component_count == 3)
+    assert(normals.component_kind == .F32 && normals.component_count == 3)
+    assert(textures.component_kind == .F32 && textures.component_count == 2)
+
+    size_each := (size_of(f32) * positions.component_count) + (size_of(f32) * normals.component_count) + (size_of(f32) * textures.component_count)
+    count := positions.count
+    size := size_each * count
+
+    indices := primitive.indices
+    bytes := make([]u8, size, v.tmp_allocator)
+
+    vertices := cast([^]Vertex)raw_data(bytes)
+    pos := cast([^][3]f32)raw_data(positions.bytes)
+    norms := cast([^][3]f32)raw_data(normals.bytes)
+    texts := cast([^][2]f32)raw_data(textures.bytes)
+
+    for i in 0..<count {
+      vertices[i].position = pos[i]
+      vertices[i].normal = norms[i]
+      vertices[i].texture = texts[i]
+    }
+
+    geometry := vk.geometry_create(v, bytes, size_each, count, indices.bytes, gltf.get_accessor_size(indices), indices.count, 1) or_return
+
+    transform := node.transform
+    id := vk.geometry_instance_add(v, geometry, transform, {0, 1, 1, 1}) or_return
+  }
+
+  return nil
 }
+load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> error.Error {
+  fmt.println("Loading gltf file", path)
 
-add_instance :: proc(v: ^vk.Vulkan_Context, node: ^Node, model: vk.InstanceModel, color: vk.Color) -> error.Error {
-  instance: Node_Instance
-  collection.vec_append(&node.instances, instance)
+  glt := gltf.from_file(path, v.allocator) or_return
+  scene := &glt.scenes["Scene"]
 
-  instance.transform = model * node.transform
-  instance.id = vk.geometry_instance_add(v, node.geometry, instance.transform, color) or_return
+  for j in 0..<len(scene.nodes) {
+    node := scene.nodes[j]
+    load_node(v, node) or_return
+  }
 
   return nil
 }
@@ -150,8 +169,8 @@ add_instance :: proc(v: ^vk.Vulkan_Context, node: ^Node, model: vk.InstanceModel
 loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   ctx: Context
   ctx.wl = w
-  ctx.gltfs = collection.new_vec(Gltf, 20, v.allocator) or_return
-  ctx.current_animations = collection.new_vec(Animation, 20, v.allocator) or_return
+  // ctx.gltfs = collection.new_vec(Gltf, 20, v.allocator) or_return
+  // ctx.current_animations = collection.new_vec(Animation, 20, v.allocator) or_return
   ctx.view = matrix[4, 4]f32{
     1, 0, 0, 0,
     0, 1, 0, 0,
@@ -177,9 +196,9 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
-    gltf := load_gltf(v, "assets/bone.gltf") or_return
-    collection.vec_append(&ctx.gltfs, gltf)
-    add_instance(v, &ctx.gltfs.data[0].nodes[0], matrix[4, 4]f32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, vk.Color{ 0, 1, 0, 1 })
+    load_gltf(v, "assets/bone.gltf") or_return
+    // collection.vec_append(&ctx.gltfs, gltf)
+    // add_instance(v, &ctx.gltfs.data[0].nodes[0], matrix[4, 4]f32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, vk.Color{ 0, 1, 0, 1 })
   }
   // {
   //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
@@ -228,25 +247,25 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   return nil
 }
 
-play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animation, now: i64, id: u32) -> error.Error {
-  frame, index, repeat, finished := gltf.get_animation_frame(animation.handle, f32(now - animation.start) / 1_000_000_000, animation.frame)
-  animation.frame = index
+// play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animation, now: i64, id: u32) -> error.Error {
+//   frame, index, repeat, finished := gltf.get_animation_frame(animation.handle, f32(now - animation.start) / 1_000_000_000, animation.frame)
+//   animation.frame = index
 
-  if repeat {
-    return nil
-  }
+//   if repeat {
+//     return nil
+//   }
 
-  if finished {
-    ctx.current_animations.len = 0
-    return nil
-  }
+//   if finished {
+//     ctx.current_animations.len = 0
+//     return nil
+//   }
 
-  for i in animation.handle.nodes {
-    vk.instance_update(v, animation.gltf.nodes[i].instances.data[id].id, frame.transforms[i] * animation.gltf.nodes[i].transform, nil) or_return
-  }
+//   for i in animation.handle.nodes {
+//     vk.instance_update(v, animation.gltf.nodes[i].instances.data[id].id, frame.transforms[i] * animation.gltf.nodes[i].transform, nil) or_return
+//   }
 
-  return nil
-}
+//   return nil
+// }
 
 frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
   ctx := cast(^Context)(ptr)
@@ -277,18 +296,18 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
     view_update = true
   }
 
-  if wl.is_key_pressed(keymap, .Space) {
-    if ctx.current_animations.len == 0 {
-      animation: Animation
+  // if wl.is_key_pressed(keymap, .Space) {
+  //   if ctx.current_animations.len == 0 {
+  //     animation: Animation
 
-      animation.gltf = &ctx.gltfs.data[0]
-      animation.handle = &ctx.gltfs.data[0].handle.animations["CubeAction"]
-      animation.frame = 0
-      animation.start = time.now()._nsec
+  //     animation.gltf = &ctx.gltfs.data[0]
+  //     animation.handle = &ctx.gltfs.data[0].handle.animations["CubeAction"]
+  //     animation.frame = 0
+  //     animation.start = time.now()._nsec
 
-      collection.vec_append(&ctx.current_animations, animation) or_return
-    }
-  }
+  //     collection.vec_append(&ctx.current_animations, animation) or_return
+  //   }
+  // }
 
   if view_update {
     vk.update_view(ctx.wl.vk, ctx.view) or_return

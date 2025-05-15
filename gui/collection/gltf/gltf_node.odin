@@ -3,20 +3,22 @@ package gltf
 import "core:encoding/json"
 import "core:math/linalg"
 import "./../../error"
+import "core:log"
 
-Gltf_Node :: struct {
+Node :: struct {
   name: string,
-  mesh: Maybe(Gltf_Mesh),
-  children: []u32,
-  skin: Maybe(u32),
+  mesh: ^Mesh,
+  children: []^Node,
+  skin: ^Skin,
   transform: Matrix,
 }
 
-parse_node :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (node: Gltf_Node, err: error.Error) {
+@private
+parse_node :: proc(ctx: ^Context, raw: json.Object) -> (node: Node, err: error.Error) {
   node.name = raw["name"].(string)
 
   if mesh, ok := raw["mesh"]; ok {
-    node.mesh = parse_mesh(ctx, ctx.raw_meshes[u32(mesh.(f64))].(json.Object)) or_return
+    node.mesh = &ctx.meshes[u32(mesh.(f64))]
   }
 
   node.transform = matrix[4, 4]f32 {
@@ -51,27 +53,37 @@ parse_node :: proc(ctx: ^Gltf_Context, raw: json.Object) -> (node: Gltf_Node, er
 
   if children, ok := raw["children"]; ok {
     array := children.(json.Array)
-    node.children = make([]u32, len(array), ctx.tmp_allocator)
+
+    node.children = make([]^Node, len(array), ctx.allocator)
 
     for i in 0..<len(array) {
-      node.children[i] = u32(array[i].(f64))
+      node.children[i] = &ctx.nodes[u32(array[i].(f64))]
     }
   }
 
   if skin, ok := raw["skin"]; ok {
-    node.skin = u32(skin.(f64))
+    node.skin = &ctx.skins[u32(skin.(f64))]
   }
 
   return node, nil
 }
 
-parse_nodes :: proc(ctx: ^Gltf_Context) -> (nodes: []Gltf_Node, err: error.Error) {
-  raw_nodes := ctx.obj["nodes"].(json.Array)
-  nodes = make([]Gltf_Node, len(raw_nodes), ctx.tmp_allocator)
-
-  for i in 0..<len(raw_nodes) {
-    nodes[i] = parse_node(ctx, raw_nodes[i].(json.Object)) or_return
+@private
+apply_node_transform :: proc(node: ^Node, parent: ^Node) {
+  if parent != nil {
+    node.transform = node.transform * parent.transform
   }
 
-  return nodes, nil
+  for child in node.children {
+    apply_node_transform(child, node)
+  }
+}
+
+@private
+parse_nodes :: proc(ctx: ^Context) -> error.Error {
+  for i in 0..<len(ctx.raw_nodes) {
+    ctx.nodes[i] = parse_node(ctx, ctx.raw_nodes[i].(json.Object)) or_return
+  }
+
+  return nil
 }
