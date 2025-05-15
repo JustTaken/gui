@@ -16,15 +16,23 @@ Color :: [4]f32
 Light :: [3]f32
 Matrix :: matrix[4, 4]f32
 
+IDENTITY := Matrix {
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+}
+
 Geometry :: struct {
   vertex:    Buffer,
   indice:    Buffer,
   count: u32,
   offset: u32,
   instances: u32,
+  transform: Matrix,
 }
 
-geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, vertex_count: u32, indices: []u8, index_size: u32, index_count: u32, max_instances: u32) -> (id: u32, err: error.Error) {
+geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, vertex_count: u32, indices: []u8, index_size: u32, index_count: u32, max_instances: u32, transform: Matrix) -> (id: u32, err: error.Error) {
   geometry: Geometry
 
   geometry.vertex = buffer_create(ctx, vk.DeviceSize(vertex_size * vertex_count), {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
@@ -33,6 +41,7 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
   geometry.indice = buffer_create(ctx, vk.DeviceSize(index_size * index_count), {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
   copy_data(u8, ctx, indices, geometry.indice.handle, 0) or_return
 
+  geometry.transform = transform
   geometry.count = index_count
   geometry.offset = ctx.instances
   geometry.instances = 0
@@ -44,11 +53,13 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
   return id, nil
 }
 
-geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: InstanceModel, color: Color) -> (id: u32, ok: error.Error) {
+geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_id: u32, model: Maybe(InstanceModel), color: Color) -> (id: u32, ok: error.Error) {
   geometry := &ctx.geometries.data[geometry_id]
   id = geometry.offset + geometry.instances
 
-  instance_update(ctx, id, model, color) or_return
+  m := model.? or_else IDENTITY
+
+  instance_update(ctx, id, m * geometry.transform, color) or_return
   geometry.instances += 1
 
   return id, nil

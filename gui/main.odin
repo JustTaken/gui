@@ -8,14 +8,14 @@ import "core:log"
 import "core:time"
 
 import "collection"
-import gltf "collection/gltf"
+import "collection/gltf"
 import vk "vulkan"
 import wl "wayland"
 import "error"
 
 Context :: struct {
-  // gltfs: collection.Vector(Gltf),
   wl: ^wl.Wayland_Context,
+  vk: ^vk.Vulkan_Context,
   view: matrix[4, 4]f32,
   rotate_up: matrix[4, 4]f32,
   rotate_down: matrix[4, 4]f32,
@@ -25,7 +25,7 @@ Context :: struct {
   translate_left: matrix[4, 4]f32,
   translate_back: matrix[4, 4]f32,
   translate_for: matrix[4, 4]f32,
-  // current_animations: collection.Vector(Animation)
+  scenes: collection.Vector(Scene),
 }
 
 log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, options: runtime.Logger_Options, location := #caller_location) {
@@ -85,67 +85,10 @@ init :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context, width: u32, height: 
     return nil
 }
 
-load_node :: proc(v: ^vk.Vulkan_Context, node: ^gltf.Node) -> error.Error {
-  if node.mesh == nil do return  nil
-
-  Vertex :: struct {
-    position: [3]f32,
-    normal: [3]f32,
-    texture: [2]f32,
-  }
-
-  for primitive in node.mesh.primitives {
-    positions := primitive.accessors[.Position]
-    normals := primitive.accessors[.Normal]
-    textures := primitive.accessors[.Texture0]
-
-    assert(positions.component_kind == .F32 && positions.component_count == 3)
-    assert(normals.component_kind == .F32 && normals.component_count == 3)
-    assert(textures.component_kind == .F32 && textures.component_count == 2)
-    assert(size_of(Vertex) == (size_of(f32) * positions.component_count) + (size_of(f32) * normals.component_count) + (size_of(f32) * textures.component_count))
-
-    count := positions.count
-    size := size_of(Vertex) * count
-
-    indices := primitive.indices
-    bytes := make([]u8, size, v.tmp_allocator)
-
-    pos := cast([^][3]f32)raw_data(positions.bytes)
-    norms := cast([^][3]f32)raw_data(normals.bytes)
-    texts := cast([^][2]f32)raw_data(textures.bytes)
-    vertices := cast([^]Vertex)raw_data(bytes)
-
-    for i in 0..<count {
-      vertices[i].position = pos[i]
-      vertices[i].normal = norms[i]
-      vertices[i].texture = texts[i]
-    }
-
-    transform := node.transform
-
-    geometry := vk.geometry_create(v, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, 1) or_return
-    instance := vk.geometry_instance_add(v, geometry, transform, {0, 1, 1, 1}) or_return
-  }
-
-  return nil
-}
-load_gltf :: proc(v: ^vk.Vulkan_Context, path: string) -> error.Error {
-  fmt.println("Loading gltf file", path)
-
-  glt := gltf.from_file(path, v.allocator) or_return
-  scene := &glt.scenes["Scene"]
-
-  for j in 0..<len(scene.nodes) {
-    node := scene.nodes[j]
-    load_node(v, node) or_return
-  }
-
-  return nil
-}
-
 loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   ctx: Context
   ctx.wl = w
+  ctx.vk = v
 
   ctx.view = matrix[4, 4]f32{
     1, 0, 0, 0,
@@ -168,52 +111,19 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   ctx.translate_left = linalg.matrix4_translate_f32({-translation_velocity, 0, 0})
   ctx.translate_back = linalg.matrix4_translate_f32({0, 0, -translation_velocity / 4})
   ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity / 4})
+  ctx.scenes = collection.new_vec(Scene, 20, ctx.vk.tmp_allocator) or_return
 
-  {
-    mark := mem.begin_arena_temp_memory(v.tmp_arena)
-    defer mem.end_arena_temp_memory(mark)
-    load_gltf(v, "assets/bone.gltf") or_return
-    // collection.vec_append(&ctx.gltfs, gltf)
-    // add_instance(v, &ctx.gltfs.data[0].nodes[0], matrix[4, 4]f32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, vk.Color{ 0, 1, 0, 1 })
-  }
-  // {
-  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
-  //   defer mem.end_arena_temp_memory(mark)
-  //   gltf := load_gltf(v, "assets/cube_animation.gltf", matrix[4, 4]f32{ 1, 0, 0, 3, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{0.0, 1.0, 0.0, 1.0}) or_return
-  //   collection.vec_append(&ctx.gltfs, gltf)
-  // }
+  cube_animation_scene := load_gltf_scene(&ctx, "assets/cube_animation.gltf") or_return
+  scene_instance_create(&ctx, cube_animation_scene) or_return
 
-  // {
-  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
-  //   defer mem.end_arena_temp_memory(mark)
-  //   gltf := load_gltf(v, "assets/monkey.gltf", matrix[4, 4]f32{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{1.0, 0.0, 0.0, 1.0}) or_return
-  //   collection.vec_append(&ctx.gltfs, gltf)
-  // }
-
-  // {
-  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
-  //   defer mem.end_arena_temp_memory(mark)
-  //   gltf := load_gltf(v, "assets/cone.gltf", matrix[4, 4]f32{ 1, 0, 0, -3, 0, 1, 0, 0, 0, 0, 1, 0,  0, 0, 0, 1,  }, vk.Color{0.0, 0.0, 1.0, 1.0}) or_return
-  //   collection.vec_append(&ctx.gltfs, gltf)
-  // }
-
-  // {
-  //   mark := mem.begin_arena_temp_memory(v.tmp_arena)
-  //   defer mem.end_arena_temp_memory(mark)
-  //   gltf := load_gltf(v, "assets/plane.gltf", matrix[4, 4]f32{ 20, 0, 0, -0, 0, 1, 0, -2, 0, 0, 20, 0,  0, 0, 0, 1,  }, vk.Color{1.0, 1.0, 1.0, 1.0}) or_return
-  //   collection.vec_append(&ctx.gltfs, gltf)
-  // }
+  bone_scene := load_gltf_scene(&ctx, "assets/bone.gltf") or_return
+  scene_instance_create(&ctx, bone_scene) or_return
 
   wl.add_listener(w, &ctx, frame)
 
   for w.running {
     mark := mem.begin_arena_temp_memory(v.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
-
-//    now := time.now()._nsec
-//    for &animation in ctx.current_animations.data[0:ctx.current_animations.len] {
-//      play_animation(v, &ctx, &animation, now) or_return
-//    }
 
     if wl.render(w) != nil {
       log.error("Failed to render frame")
@@ -223,7 +133,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
   return nil
 }
 
-// play_animation :: proc(v: ^vk.Vulkan_Context, ctx: ^Context, animation: ^Animation, now: i64, id: u32) -> error.Error {
+// play_animation :: proc(ctx: ^Context, animation: ^Animation, now: i64, id: u32) -> error.Error {
 //   frame, index, repeat, finished := gltf.get_animation_frame(animation.handle, f32(now - animation.start) / 1_000_000_000, animation.frame)
 //   animation.frame = index
 
@@ -237,7 +147,7 @@ loop :: proc(v: ^vk.Vulkan_Context, w: ^wl.Wayland_Context) -> error.Error {
 //   }
 
 //   for i in animation.handle.nodes {
-//     vk.instance_update(v, animation.gltf.nodes[i].instances.data[id].id, frame.transforms[i] * animation.gltf.nodes[i].transform, nil) or_return
+//     vk.instance_update(ctx.vk, animation.gltf.nodes[i].instances.data[id].id, frame.transforms[i] * animation.gltf.nodes[i].transform, nil) or_return
 //   }
 
 //   return nil
@@ -271,19 +181,6 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
     ctx.view = ctx.rotate_up * ctx.view
     view_update = true
   }
-
-  // if wl.is_key_pressed(keymap, .Space) {
-  //   if ctx.current_animations.len == 0 {
-  //     animation: Animation
-
-  //     animation.gltf = &ctx.gltfs.data[0]
-  //     animation.handle = &ctx.gltfs.data[0].handle.animations["CubeAction"]
-  //     animation.frame = 0
-  //     animation.start = time.now()._nsec
-
-  //     collection.vec_append(&ctx.current_animations, animation) or_return
-  //   }
-  // }
 
   if view_update {
     vk.update_view(ctx.wl.vk, ctx.view) or_return

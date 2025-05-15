@@ -333,7 +333,7 @@ write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opco
 
   total_len := collection.vec_reserve(&ctx.output_buffer, u16) or_return
 
-  log.info("Writing (object, request, values)", object.interface.name, request.name, arguments)
+  log.debug("Writing (object, request, values)", object.interface.name, request.name, arguments)
 
   for kind, i in request.arguments {
     #partial switch kind {
@@ -391,7 +391,7 @@ read :: proc(ctx: ^Wayland_Context) -> error.Error {
   if ctx.input_buffer.len - start != u32(size) do return .OutOfBounds
 
   values := ctx.values.data[0:ctx.values.len]
-  log.info("Reading (object, event, values)", object.interface.name, event.name, values)
+  log.debug("Reading (object, event, values)", object.interface.name, event.name, values)
   object.callbacks[opcode](ctx, object_id, values) or_return
 
   return nil
