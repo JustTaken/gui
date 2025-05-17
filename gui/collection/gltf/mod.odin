@@ -38,8 +38,9 @@ Context :: struct {
   skins: []Skin,
   buffers: []Buffer,
   buffer_views: []Buffer_View,
+  fragmented_animations: []Animation_Fragmented,
+  animations: []Animation,
   scenes: map[string]Scene,
-  animations: map[string]Animation,
   allocator: runtime.Allocator,
 }
 
@@ -75,8 +76,12 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
   parse_scenes(&ctx) or_return
   parse_animations(&ctx) or_return
 
+  gltf.animations = make(map[string]Animation, 2 * len(ctx.animations), ctx.allocator)
+  for i in 0..<len(ctx.animations) {
+    gltf.animations[ctx.animations[i].name] = ctx.animations[i]
+  }
+
   gltf.scenes = ctx.scenes
-  gltf.animations = ctx.animations
   gltf.nodes = ctx.nodes
   gltf.meshes = ctx.meshes
   gltf.skins = ctx.skins
@@ -84,57 +89,57 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
   return gltf, nil
 }
 
-@private
-greater :: proc(first, second: f32) -> bool {
-  return first > second + 0.001
-}
+// @private
+// greater :: proc(first, second: f32) -> bool {
+//   return first > second + 0.001
+// }
 
-@private
-show_primitive :: proc(primitive: Mesh_Primitive) {
-  for accessor in primitive.accessors {
-    if accessor == nil do continue
+// @private
+// show_primitive :: proc(primitive: Mesh_Primitive) {
+//   for accessor in primitive.accessors {
+//     if accessor == nil do continue
 
-    log.info("    Kind", accessor.component_kind)
-    log.info("    Count", accessor.component_count)
-    log.info("    Len", accessor.count)
-  }
-}
+//     log.info("    Kind", accessor.component_kind)
+//     log.info("    Count", accessor.component_count)
+//     log.info("    Len", accessor.count)
+//   }
+// }
 
-@private
-show_mesh :: proc(mesh: ^Mesh) {
-  log.info("Mesh:", mesh.name)
+// @private
+// show_mesh :: proc(mesh: ^Mesh) {
+//   log.info("Mesh:", mesh.name)
 
-  for primitive in mesh.primitives {
-    show_primitive(primitive)
-  }
-}
+//   for primitive in mesh.primitives {
+//     show_primitive(primitive)
+//   }
+// }
 
-@private
-show_joint :: proc(joint: ^Node) {
-  log.info("  Joint", rawptr(joint), joint.name, joint.transform)
-}
+// @private
+// show_joint :: proc(joint: ^Node) {
+//   log.info("  Joint", rawptr(joint), joint.name, joint.transform)
+// }
 
-@private
-show_skin :: proc(skin: ^Skin) {
-  for joint in skin.joints {
-    show_joint(joint)
-  }
-}
+// @private
+// show_skin :: proc(skin: ^Skin) {
+//   for joint in skin.joints {
+//     show_joint(joint)
+//   }
+// }
 
-@private
-show_node :: proc(node: ^Node) {
-  if mesh := node.mesh; mesh != nil {
-    show_mesh(mesh)
-  }
+// @private
+// show_node :: proc(node: ^Node) {
+//   if mesh := node.mesh; mesh != nil {
+//     show_mesh(mesh)
+//   }
 
-  if skin := node.skin; skin != nil {
-    show_skin(skin)
-  }
+//   if skin := node.skin; skin != nil {
+//     show_skin(skin)
+//   }
 
-  for child in node.children {
-    show_node(child)
-  }
-}
+//   for child in node.children {
+//     show_node(child)
+//   }
+// }
 
 @test
 first_test :: proc(t: ^testing.T) {
@@ -142,11 +147,11 @@ first_test :: proc(t: ^testing.T) {
   err: error.Error
   glt, err = from_file("assets/cube_animation.gltf", context.allocator)
 
-  scene := glt.scenes["Scene"]
+  // scene := glt.scenes["Scene"]
 
-  for &node, i in scene.nodes {
-    show_node(node)
-  }
+  // for &node, i in scene.nodes {
+  //   show_node(node)
+  // }
 
   testing.expect(t, err == nil, "Failed to load animation")
 }

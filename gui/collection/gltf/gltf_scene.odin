@@ -5,7 +5,7 @@ import "./../../error"
 import "core:log"
 
 Scene :: struct {
-  nodes: []^Node,
+  nodes: []u32,
 }
 
 @private
@@ -13,13 +13,13 @@ parse_scene :: proc(ctx: ^Context, raw: json.Object) -> (name: string, scene: Sc
   name = raw["name"].(string)
 
   raw_nodes := raw["nodes"].(json.Array)
-  scene.nodes = make([]^Node, len(raw_nodes), ctx.allocator)
+  scene.nodes = make([]u32, len(raw_nodes), ctx.allocator)
 
   for i in 0..<len(raw_nodes) {
     index := u32(raw_nodes[i].(f64))
 
-    scene.nodes[i] = &ctx.nodes[index]
-    apply_node_transform(scene.nodes[i], nil)
+    scene.nodes[i] = index
+    apply_node_transform(ctx, index, nil)
   }
 
   return name, scene, nil

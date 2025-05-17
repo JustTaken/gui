@@ -5,12 +5,19 @@ import "./../../error"
 
 Skin :: struct {
   matrices: []Matrix,
-  joints: []^Node,
-  skeleton: ^Node,
+  joints: []u32,
+  skeleton: Maybe(u32),
 }
 
 @private
 parse_skin :: proc(ctx: ^Context, raw: json.Object) -> (skin: Skin, err: error.Error) {
+  raw_joints := raw["joints"].(json.Array)
+  skin.joints = make([]u32, len(raw_joints), ctx.allocator)
+
+  for i in 0..<len(raw_joints) {
+    skin.joints[i] = u32(raw_joints[i].(f64))
+  }
+
   raw_matrices := &ctx.accessors[u32(raw["inverseBindMatrices"].(f64))]
 
   ptr := cast([^]f32)&raw_matrices.bytes[0]
@@ -27,15 +34,8 @@ parse_skin :: proc(ctx: ^Context, raw: json.Object) -> (skin: Skin, err: error.E
     }
   }
 
-  raw_joints := raw["joints"].(json.Array)
-  skin.joints = make([]^Node, len(raw_joints), ctx.allocator)
-
-  for i in 0..<len(raw_joints) {
-    skin.joints[i] = &ctx.nodes[u32(raw_joints[i].(f64))]
-  }
-
   if skeleton, ok := raw["skeleton"]; ok {
-    skin.skeleton = &ctx.nodes[u32(skeleton.(f64))]
+    skin.skeleton = u32(skeleton.(f64))
   }
 
   return skin, nil

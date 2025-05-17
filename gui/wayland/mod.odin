@@ -111,15 +111,15 @@ Wayland_Context :: struct {
 wayland_init :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
   log.info("Initializing Wayland")
 
+  mark := mem.begin_arena_temp_memory(tmp_arena)
+  defer mem.end_arena_temp_memory(mark)
+
   ctx.arena = arena
   ctx.allocator = mem.arena_allocator(arena)
   ctx.tmp_arena = tmp_arena
   ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
   ctx.vk = v
-
-  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
-  defer mem.end_arena_temp_memory(mark)
 
   xdg_path := os.get_env("XDG_RUNTIME_DIR", allocator = ctx.tmp_allocator)
   wayland_path := os.get_env("WAYLAND_DISPLAY", allocator = ctx.tmp_allocator)

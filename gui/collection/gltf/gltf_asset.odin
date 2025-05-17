@@ -35,7 +35,8 @@ parse_asset :: proc(ctx: ^Context) -> error.Error {
 
   if raw_animations, ok := ctx.obj["animations"]; ok {
     ctx.raw_animations = raw_animations.(json.Array)
-    ctx.animations = make(map[string]Animation, len(ctx.raw_animations) * 2, ctx.allocator)
+    ctx.fragmented_animations = make([]Animation_Fragmented, len(ctx.raw_animations), ctx.allocator)
+    ctx.animations = make([]Animation, len(ctx.raw_animations), ctx.allocator)
   }
 
   if raw_skins, ok := ctx.obj["skins"]; ok {

@@ -15,12 +15,12 @@
 	"nodes":[
 		{
 			"mesh":0,
-			"name":"Bone"
+			"name":"Circle"
 		}
 	],
 	"meshes":[
 		{
-			"name":"Bone",
+			"name":"Circle",
 			"primitives":[
 				{
 					"attributes":{
@@ -37,67 +37,67 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":2800,
+			"count":320,
 			"max":[
-				0.8406995534896851,
-				2.901127576828003,
-				1.2942742109298706
+				0.1682782769203186,
+				1.315627098083496,
+				0.16223567724227905
 			],
 			"min":[
-				-0.8406995534896851,
-				-2.901127576828003,
-				-1.2942742109298706
+				-0.1682782769203186,
+				0.2624683380126953,
+				-0.16223567724227905
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":2800,
+			"count":320,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":2800,
+			"count":320,
 			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
 			"componentType":5123,
-			"count":4368,
+			"count":384,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":33600,
+			"byteLength":3840,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":33600,
-			"byteOffset":33600,
+			"byteLength":3840,
+			"byteOffset":3840,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":22400,
-			"byteOffset":67200,
+			"byteLength":2560,
+			"byteOffset":7680,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":8736,
-			"byteOffset":89600,
+			"byteLength":768,
+			"byteOffset":10240,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":98336,
+			"byteLength":11008,
 			"uri":"bone.bin"
 		}
 	]

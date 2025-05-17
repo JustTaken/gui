@@ -15,6 +15,7 @@ import "error"
 
 Context :: struct {
   bytes: []u8,
+
   wl: wl.Wayland_Context,
   vk: vk.Vulkan_Context,
   view: matrix[4, 4]f32,
@@ -29,6 +30,9 @@ Context :: struct {
   scenes: collection.Vector(Scene),
 
   view_update: bool,
+
+  cube: ^Scene,
+  bone: ^Scene,
 
   allocator: runtime.Allocator,
   arena: mem.Arena,
@@ -81,21 +85,14 @@ main :: proc() {
 }
 
 init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error {
+  mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
+  defer mem.end_arena_temp_memory(mark)
+
   vk.vulkan_init(&ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
   wl.wayland_init(&ctx.wl, &ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
 
-  ctx.view = matrix[4, 4]f32{
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, -20,
-    0, 0, 0, 1,
-  }
-
-  angle_velocity: f32 = 3.14 / 32
-  translation_velocity: f32 = 2
-
-  vk.update_view(&ctx.vk, ctx.view)
-  vk.update_light(&ctx.vk, {0, 0, 0})
+  angle_velocity: f32 = 3.14 / 64.0
+  translation_velocity: f32 = 2.0 / 4.0
 
   ctx.rotate_up = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{1, 0, 0})
   ctx.rotate_down = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{-1, 0, 0})
@@ -103,17 +100,18 @@ init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error
   ctx.rotate_right = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, 1, 0})
   ctx.translate_right = linalg.matrix4_translate_f32({translation_velocity, 0, 0})
   ctx.translate_left = linalg.matrix4_translate_f32({-translation_velocity, 0, 0})
-  ctx.translate_back = linalg.matrix4_translate_f32({0, 0, -translation_velocity / 4})
-  ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity / 4})
+  ctx.translate_back = linalg.matrix4_translate_f32({0, 0, -translation_velocity})
+  ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity})
+
+  ctx.view = linalg.matrix4_translate_f32({0,0, -20})
   ctx.scenes = collection.new_vec(Scene, 20, ctx.vk.tmp_allocator) or_return
+  // ctx.bone = load_gltf_scene(ctx, "assets/bone.gltf") or_return
+  ctx.cube = load_gltf_scene(ctx, "assets/cube_animation.gltf") or_return
+  _ = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
 
-  cube_animation_scene := load_gltf_scene(ctx, "assets/cube_animation.gltf") or_return
-  scene_instance_create(ctx, cube_animation_scene) or_return
-
-  bone_scene := load_gltf_scene(ctx, "assets/bone.gltf") or_return
-  scene_instance_create(ctx, bone_scene) or_return
-
-  wl.add_listener(&ctx.wl, ctx, frame)
+  vk.update_view(&ctx.vk, ctx.view) or_return
+  vk.update_light(&ctx.vk, {0, 0, 0}) or_return
+  wl.add_listener(&ctx.wl, ctx, frame) or_return
 
   return nil
 }
@@ -140,7 +138,7 @@ loop :: proc(ctx: ^Context) -> error.Error {
 }
 
 new_view :: proc(ctx: ^Context, view: matrix[4, 4]f32) {
-    ctx.view = ctx.translate_left * ctx.view
+    ctx.view = view
     ctx.view_update = true
 }
 
@@ -148,11 +146,14 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
   ctx := cast(^Context)(ptr)
   ctx.view_update = false
 
-  if wl.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.translate_left * ctx.view)
-  if wl.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.translate_right * ctx.view)
-  if wl.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.translate_back * ctx.view)
-  if wl.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.translate_for * ctx.view)
-  if wl.is_key_pressed(keymap, .a) do new_view(ctx, ctx.rotate_up * ctx.view)
+  if wl.is_key_pressed(keymap, .d) do new_view(ctx, ctx.translate_left * ctx.view)
+  if wl.is_key_pressed(keymap, .a) do new_view(ctx, ctx.translate_right * ctx.view)
+  if wl.is_key_pressed(keymap, .s) do new_view(ctx, ctx.translate_back * ctx.view)
+  if wl.is_key_pressed(keymap, .w) do new_view(ctx, ctx.translate_for * ctx.view)
+  if wl.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.rotate_up * ctx.view)
+  if wl.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
+  if wl.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
+  if wl.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
 
   if ctx.view_update do vk.update_view(ctx.wl.vk, ctx.view) or_return
 

@@ -3,16 +3,32 @@ package vulk
 import "base:runtime"
 import "core:os"
 import vk "vendor:vulkan"
+import "./../collection"
 
 import "./../error"
 
+Pipeline_Layout :: struct {
+  handle: vk.PipelineLayout,
+  sets: collection.Vector(Descriptor_Set_Layout),
+}
+
 @private
-pipeline_create :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_pass: vk.RenderPass, width: u32, height: u32) -> (pipeline: vk.Pipeline, err: error.Error) {
+Pipeline :: struct {
+  handle: vk.Pipeline,
+  layout: ^Pipeline_Layout,
+  geometries: Geometry_Group,
+}
+
+@private
+pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: vk.RenderPass, layout: ^Pipeline_Layout, infos: []Descriptor_Info) -> (pipeline: Pipeline, err: error.Error) {
+  pipeline.layout = layout
+  pipeline.geometries = geometry_group_create(ctx, layout, infos, 20) or_return
+
   vert_module := shader_module_create(ctx, "assets/output/vert.spv") or_return
-  defer vk.DestroyShaderModule(ctx.device, vert_module, nil)
+  defer vk.DestroyShaderModule(ctx.device.handle, vert_module, nil)
 
   frag_module := shader_module_create(ctx, "assets/output/frag.spv") or_return
-  defer vk.DestroyShaderModule(ctx.device, frag_module, nil)
+  defer vk.DestroyShaderModule(ctx.device.handle, frag_module, nil)
 
   stages := [?]vk.PipelineShaderStageCreateInfo {
     {
@@ -30,13 +46,21 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_
   }
 
   vertex_binding_descriptions := [?]vk.VertexInputBindingDescription {
-    {binding = 0, stride = size_of(f32) * (3 + 3 + 2), inputRate = .VERTEX},
+    {binding = 0, stride = size_of(f32) * (3 + 3 + 2 + 4 + 4), inputRate = .VERTEX},
   }
+
+  POSITION :: size_of([3]f32)
+  NORMAL :: size_of([3]f32)
+  TEXTURE :: size_of([2]f32)
+  WEIGHTS :: size_of([4]f32)
+  JOINTS :: size_of([4]u32)
 
   vertex_attribute_descriptions := [?]vk.VertexInputAttributeDescription {
     {location = 0, binding = 0, offset = 0, format = .R32G32B32_SFLOAT},
-    {location = 1, binding = 0, offset = size_of([3]f32), format = .R32G32B32_SFLOAT},
-    {location = 2, binding = 0, offset = size_of([3]f32) * 2, format = .R32G32_SFLOAT},
+    {location = 1, binding = 0, offset = POSITION, format = .R32G32B32_SFLOAT},
+    {location = 2, binding = 0, offset = POSITION + NORMAL, format = .R32G32_SFLOAT},
+    {location = 3, binding = 0, offset = POSITION + NORMAL + TEXTURE, format = .R32G32B32A32_SFLOAT},
+    {location = 4, binding = 0, offset = POSITION + NORMAL + TEXTURE + WEIGHTS, format = .R32G32B32A32_UINT},
   }
 
   vert_input_state := vk.PipelineVertexInputStateCreateInfo {
@@ -48,13 +72,13 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_
   }
 
   viewports := [?]vk.Viewport {
-    {x = 0, y = 0, width = f32(width), height = f32(height), minDepth = 0, maxDepth = 1},
+    {x = 0, y = 0, width = 0, height = 0, minDepth = 0, maxDepth = 1},
   }
 
   scissors := [?]vk.Rect2D {
     {
       offset = vk.Offset2D{x = 0, y = 0},
-      extent = vk.Extent2D{width = height, height = height},
+      extent = vk.Extent2D{width = 0, height = 0},
     },
   }
 
@@ -147,82 +171,38 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, layout: vk.PipelineLayout, render_
     pInputAssemblyState = &input_assembly_state,
     pDynamicState       = &dynamic_state,
     renderPass    = render_pass,
-    layout        = layout,
+    layout        = pipeline.layout.handle,
   }
 
-  if vk.CreateGraphicsPipelines(ctx.device, 0, 1, &info, nil, &pipeline) != .SUCCESS do return pipeline, .CreatePipelineFailed
+  if vk.CreateGraphicsPipelines(ctx.device.handle, 0, 1, &info, nil, &pipeline.handle) != .SUCCESS do return pipeline, .CreatePipelineFailed
 
   return pipeline, nil
 }
 
 @private
-render_pass_create :: proc(ctx: ^Vulkan_Context) -> (vk.RenderPass, error.Error) {
-  render_pass_attachments := [?]vk.AttachmentDescription {
-    {
-      format = ctx.format,
-      samples = {._1},
-      loadOp = .CLEAR,
-      storeOp = .STORE,
-      initialLayout = .UNDEFINED,
-      finalLayout = .COLOR_ATTACHMENT_OPTIMAL,
-      stencilLoadOp = .DONT_CARE,
-      stencilStoreOp = .DONT_CARE,
-    },
-    {
-      format = ctx.depth_format,
-      samples = {._1},
-      loadOp = .CLEAR,
-      storeOp = .STORE,
-      initialLayout = .UNDEFINED,
-      finalLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-      stencilLoadOp = .DONT_CARE,
-      stencilStoreOp = .DONT_CARE,
-    },
+layout_create :: proc(ctx: ^Vulkan_Context, set_layouts: [][]Descriptor_Set_Layout_Binding) -> (layout: Pipeline_Layout, err: error.Error) {
+  layout.sets = collection.new_vec(Descriptor_Set_Layout, u32(len(set_layouts)), ctx.allocator) or_return
+
+  for set_layout in set_layouts {
+    collection.vec_append(&layout.sets, set_layout_create(ctx, set_layout) or_return) or_return
   }
 
-  subpass_color_attachments := [?]vk.AttachmentReference {
-    {attachment = 0, layout = .COLOR_ATTACHMENT_OPTIMAL},
+  layouts := make([]vk.DescriptorSetLayout, len(set_layouts), ctx.tmp_allocator)
+  for i in 0..<len(set_layouts) {
+    layouts[i] = layout.sets.data[i].handle
   }
 
-  subpass_depth_attachments := [?]vk.AttachmentReference {
-    {attachment = 1, layout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
+  layout_info := vk.PipelineLayoutCreateInfo {
+    sType    = .PIPELINE_LAYOUT_CREATE_INFO,
+    setLayoutCount = u32(len(layouts)),
+    pSetLayouts    = &layouts[0],
   }
 
-  render_pass_subpass := [?]vk.SubpassDescription {
-    {
-      pipelineBindPoint = .GRAPHICS,
-      colorAttachmentCount = u32(len(subpass_color_attachments)),
-      pColorAttachments = &subpass_color_attachments[0],
-      pDepthStencilAttachment = &subpass_depth_attachments[0],
-    },
+  if vk.CreatePipelineLayout(ctx.device.handle, &layout_info, nil, &layout.handle) != .SUCCESS {
+    return layout, .CreatePipelineLayouFailed
   }
 
-  render_pass_dependencies := [?]vk.SubpassDependency {
-    {
-      srcSubpass = vk.SUBPASS_EXTERNAL,
-      dstSubpass = 0,
-      srcStageMask = {.COLOR_ATTACHMENT_OUTPUT, .EARLY_FRAGMENT_TESTS},
-      srcAccessMask = {},
-      dstStageMask = {.COLOR_ATTACHMENT_OUTPUT, .EARLY_FRAGMENT_TESTS},
-      dstAccessMask = {.COLOR_ATTACHMENT_WRITE, .DEPTH_STENCIL_ATTACHMENT_WRITE},
-      dependencyFlags = {.BY_REGION},
-    },
-  }
-
-  render_pass_info := vk.RenderPassCreateInfo {
-    sType     = .RENDER_PASS_CREATE_INFO,
-    attachmentCount = u32(len(render_pass_attachments)),
-    pAttachments    = &render_pass_attachments[0],
-    subpassCount    = u32(len(render_pass_subpass)),
-    pSubpasses      = &render_pass_subpass[0],
-    dependencyCount = u32(len(render_pass_dependencies)),
-    pDependencies   = &render_pass_dependencies[0],
-  }
-
-  render_pass: vk.RenderPass
-  if vk.CreateRenderPass(ctx.device, &render_pass_info, nil, &render_pass) != .SUCCESS do return render_pass, .CreateRenderPassFailed
-
-  return render_pass, nil
+  return layout, nil
 }
 
 @private
@@ -249,7 +229,20 @@ shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.
   }
 
   frag_module: vk.ShaderModule
-  if vk.CreateShaderModule(ctx.device, &info, nil, &module) != .SUCCESS do return module, .CreateShaderModuleFailed
+  if vk.CreateShaderModule(ctx.device.handle, &info, nil, &module) != .SUCCESS do return module, .CreateShaderModuleFailed
 
   return module, nil
+}
+
+pipeline_deinit :: proc(ctx: ^Vulkan_Context, pipeline: Pipeline) {
+  for i in 0..<pipeline.layout.sets.len {
+  	vk.DestroyDescriptorSetLayout(ctx.device.handle, pipeline.layout.sets.data[i].handle, nil)
+  }
+
+  for i in 0 ..< pipeline.geometries.childs.len {
+  	destroy_geometry(ctx, &pipeline.geometries.childs.data[i])
+  }
+
+  vk.DestroyPipelineLayout(ctx.device.handle, pipeline.layout.handle, nil)
+  vk.DestroyPipeline(ctx.device.handle, pipeline.handle, nil)
 }

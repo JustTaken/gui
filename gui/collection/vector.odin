@@ -2,6 +2,7 @@ package collection
 
 import "base:runtime"
 import "base:intrinsics"
+import "core:log"
 import "core:mem"
 
 import "./../error"
@@ -28,6 +29,7 @@ new_vec :: proc($T: typeid, cap: u32, allocator: runtime.Allocator) -> (Vector(T
 
 vec_append :: proc(vec: ^Vector($T), item: T) -> error.Error {
   if vec.len >= vec.cap {
+    log.error("Failed to append element into vector of type", typeid_of(T))
     return .OutOfBounds
   }
 
@@ -101,5 +103,16 @@ vec_reserve :: proc(vec: ^Vector(u8), $T: typeid) -> (^T, error.Error) {
   defer vec.len += size_of(T)
 
   return (^T)(raw_data(vec.data[vec.len:])), nil
+}
+
+vec_one :: proc(vec: ^Vector($T)) -> (^T, error.Error) {
+  if vec.len >= vec.cap {
+    log.error("Failed to append element into vector len: ", vec.len, "cap:", vec.cap, "of type", typeid_of(T))
+    return nil, .OutOfBounds
+  }
+
+  defer vec.len += 1
+
+  return &vec.data[vec.len], nil
 }
 

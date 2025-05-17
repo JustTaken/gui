@@ -8,7 +8,7 @@ import "core:log"
 Node :: struct {
   name: string,
   mesh: ^Mesh,
-  children: []^Node,
+  children: []u32,
   skin: ^Skin,
   transform: Matrix,
 }
@@ -28,36 +28,32 @@ parse_node :: proc(ctx: ^Context, raw: json.Object) -> (node: Node, err: error.E
     0, 0, 0, 1,
   }
 
-  if translation, ok := raw["translation"]; ok {
-    t := translation.(json.Array)
-
-    for i in 0..<len(t) {
-      node.transform[i, 3] = cast(f32)t[i].(f64)
-    }
-  }
-
   if scale, ok := raw["scale"]; ok {
     s := scale.(json.Array)
 
-    for i in 0..<len(s) {
-      node.transform[i, i] = cast(f32)s[i].(f64)
-    }
+    node.transform = linalg.matrix4_scale_f32({cast(f32)s[0].(f64), cast(f32)s[1].(f64), cast(f32)s[2].(f64)}) * node.transform
   }
 
   if rotation, ok := raw["rotation"]; ok {
     r := rotation.(json.Array)
     q: quaternion128 = quaternion(x = cast(f32)r[0].(f64), y = -cast(f32)r[1].(f64), z = -cast(f32)r[2].(f64), w = cast(f32)r[3].(f64))
     mat := linalg.matrix3_from_quaternion_f32(q)
-    node.transform = linalg.matrix4_from_matrix3_f32(mat) * node.transform
+    node.transform = node.transform * linalg.matrix4_from_matrix3_f32(mat)
+  }
+
+  if translation, ok := raw["translation"]; ok {
+    t := translation.(json.Array)
+
+    node.transform = linalg.matrix4_translate_f32({cast(f32)t[0].(f64), cast(f32)t[1].(f64), cast(f32)t[2].(f64)}) * node.transform
   }
 
   if children, ok := raw["children"]; ok {
     array := children.(json.Array)
 
-    node.children = make([]^Node, len(array), ctx.allocator)
+    node.children = make([]u32, len(array), ctx.allocator)
 
     for i in 0..<len(array) {
-      node.children[i] = &ctx.nodes[u32(array[i].(f64))]
+      node.children[i] = u32(array[i].(f64))
     }
   }
 
@@ -69,13 +65,29 @@ parse_node :: proc(ctx: ^Context, raw: json.Object) -> (node: Node, err: error.E
 }
 
 @private
-apply_node_transform :: proc(node: ^Node, parent: ^Node) {
+apply_node_transform :: proc(ctx: ^Context, node: u32, parent: Maybe(u32)) {
   if parent != nil {
-    node.transform = node.transform * parent.transform
+    ctx.nodes[node].transform = ctx.nodes[parent.?].transform * ctx.nodes[node].transform
   }
 
-  for child in node.children {
-    apply_node_transform(child, node)
+  for i in 0..<len(ctx.fragmented_animations) {
+    for k in 0..<len(ctx.fragmented_animations[i].frames) {
+      frame := &ctx.fragmented_animations[i].frames[k]
+
+      translate := linalg.matrix4_translate_f32(frame.transforms[node].translate)
+      rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = frame.transforms[node].rotate[0], y = frame.transforms[node].rotate[1], z = frame.transforms[node].rotate[2], w = frame.transforms[node].rotate[3]))
+      scale := linalg.matrix4_scale_f32(frame.transforms[node].scale)
+
+      ctx.animations[i].frames[k].transforms[node] = translate * rotate * scale
+
+      if parent != nil {
+        ctx.animations[i].frames[k].transforms[node] = ctx.animations[i].frames[k].transforms[parent.?] * ctx.animations[i].frames[k].transforms[node]
+      }
+    }
+  }
+
+  for child in ctx.nodes[node].children {
+    apply_node_transform(ctx, child, node)
   }
 }
 

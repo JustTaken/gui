@@ -3,6 +3,25 @@ package vulk
 import vk "vendor:vulkan"
 import "./../error"
 
+Queue :: struct {
+	handle: vk.Queue,
+	indice: u32,
+}
+
+@private
+Device :: struct {
+	handle: vk.Device,
+	queues: []Queue,
+}
+
+@private
+PLANE_INDICES := [?]vk.ImageAspectFlag {
+	.MEMORY_PLANE_0_EXT,
+	.MEMORY_PLANE_1_EXT,
+	.MEMORY_PLANE_2_EXT,
+	.MEMORY_PLANE_3_EXT,
+}
+
 @private
 get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: []vk.DrmFormatModifierPropertiesEXT, err: error.Error) {
 	l: u32 = 0
@@ -138,19 +157,9 @@ find_physical_device :: proc(ctx: ^Vulkan_Context) -> (physical_device: vk.Physi
 }
 
 @private
-queues_create :: proc(ctx: ^Vulkan_Context, queue_indices: []u32) -> (queues: []vk.Queue, err: error.Error) {
-	queues = make([]vk.Queue, u32(len(queue_indices)), ctx.allocator)
-	for &q, i in &queues {
-		vk.GetDeviceQueue(ctx.device, u32(queue_indices[i]), 0, &q)
-	}
-
-	return queues, nil
-}
-
-@private
-find_queue_indices :: proc(ctx: ^Vulkan_Context) -> (indices: []u32, err: error.Error) {
+queues_indices :: proc(ctx: ^Vulkan_Context) -> (indice: []u32, err: error.Error) {
 	MAX: u32 = 0xFF
-	indices = make([]u32, 2, ctx.allocator)
+	indices := make([]u32, 2, ctx.tmp_allocator)
 
 	for &indice in indices {
 		indice = MAX
@@ -170,20 +179,22 @@ find_queue_indices :: proc(ctx: ^Vulkan_Context) -> (indices: []u32, err: error.
 		if indice == MAX do return indices, .FamilyIndiceNotComplete
 	}
 
+
 	return indices, nil
 }
 
 @private
-device_create :: proc(ctx: ^Vulkan_Context) -> (device: vk.Device, err: error.Error) {
+device_create :: proc(ctx: ^Vulkan_Context) -> (device: Device, err: error.Error) {
+	indices := queues_indices(ctx) or_return
 	queue_priority := f32(1.0)
 
 	unique_indices: [10]u32 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-	for i in ctx.queue_indices {
-		if i != ctx.queue_indices[0] do panic("Not accepting diferent queue indices for now")
+	for i in indices {
+		if i != indices[0] do panic("Not accepting diferent queue indices for now")
 		unique_indices[i] += 1
 	}
 
-	queue_create_infos := make([]vk.DeviceQueueCreateInfo, u32(len(ctx.queue_indices)), ctx.tmp_allocator)
+	queue_create_infos := make([]vk.DeviceQueueCreateInfo, u32(len(indices)), ctx.tmp_allocator)
 	defer delete(queue_create_infos)
 
 	count: u32 = 0
@@ -217,9 +228,16 @@ device_create :: proc(ctx: ^Vulkan_Context) -> (device: vk.Device, err: error.Er
 		enabledLayerCount       = 0,
 	}
 
-	if vk.CreateDevice(ctx.physical_device, &device_create_info, nil, &device) != .SUCCESS do return device, .CreateDeviceFailed
+	if vk.CreateDevice(ctx.physical_device, &device_create_info, nil, &device.handle) != .SUCCESS do return device, .CreateDeviceFailed
 
-	vk.load_proc_addresses_device(device)
+	vk.load_proc_addresses_device(device.handle)
+
+	device.queues = make([]Queue, len(indices), ctx.allocator)
+
+	for i in 0..<len(indices) {
+		device.queues[i].indice = indices[i]
+		vk.GetDeviceQueue(device.handle, u32(indices[i]), 0, &device.queues[i].handle)
+	}
 
 	return device, nil
 }

@@ -11,7 +11,7 @@ fence_create :: proc(ctx: ^Vulkan_Context) -> (vk.Fence, error.Error) {
 	}
 
 	fence: vk.Fence
-	if vk.CreateFence(ctx.device, &info, nil, &fence) != .SUCCESS do return fence, .CreateFenceFailed
+	if vk.CreateFence(ctx.device.handle, &info, nil, &fence) != .SUCCESS do return fence, .CreateFenceFailed
 
 	return fence, nil
 }
@@ -24,7 +24,7 @@ semaphore_create :: proc(ctx: ^Vulkan_Context) -> (vk.Semaphore, error.Error) {
 	}
 
 	semaphore: vk.Semaphore
-	if vk.CreateSemaphore(ctx.device, &info, nil, &semaphore) != .SUCCESS do return semaphore, .CreateSemaphoreFailed
+	if vk.CreateSemaphore(ctx.device.handle, &info, nil, &semaphore) != .SUCCESS do return semaphore, .CreateSemaphoreFailed
 
 	return semaphore, nil
 }

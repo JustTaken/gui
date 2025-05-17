@@ -23,32 +23,24 @@ DEVICE_EXTENSIONS := [?]cstring {
 	"VK_EXT_image_drm_format_modifier",
 }
 
-@private
-PLANE_INDICES := [?]vk.ImageAspectFlag {
-	.MEMORY_PLANE_0_EXT,
-	.MEMORY_PLANE_1_EXT,
-	.MEMORY_PLANE_2_EXT,
-	.MEMORY_PLANE_3_EXT,
-}
-
 Vulkan_Context :: struct {
 	instance:        vk.Instance,
-	device:          vk.Device,
+	device:          Device,
 	physical_device: vk.PhysicalDevice,
-	queues:          []vk.Queue,
-	queue_indices:   []u32,
-	set_layout:     Descriptor_Set_Layout,
-	layout:          vk.PipelineLayout,
-	pipeline:        vk.Pipeline,
-	render_pass:     vk.RenderPass,
+
+	render_pass:     Render_Pass,
+
+	fixed_set: ^Descriptor_Set,
+	dynamic_set: ^Descriptor_Set,
+
+	descriptor_pool: Descriptor_Pool,
+
 	command_pool:    vk.CommandPool,
 	command_buffers: []vk.CommandBuffer,
 	staging:         StagingBuffer,
-	descriptor_pool: vk.DescriptorPool,
-	descriptor_set: Descriptor_Set,
 	frames:          []Frame,
-	geometries:      collection.Vector(Geometry),
-	instances: u32,
+	// geometries:      collection.Vector(Geometry),
+	bones: u32,
 	copy_fence:      vk.Fence,
 	draw_fence:      vk.Fence,
 	semaphore:       vk.Semaphore,
@@ -83,63 +75,44 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 	ctx.instance = create_instance(ctx) or_return
 	ctx.physical_device = find_physical_device(ctx) or_return
 	ctx.modifiers = get_drm_modifiers(ctx) or_return
-	ctx.queue_indices = find_queue_indices(ctx) or_return
 	ctx.device = device_create(ctx) or_return
-	ctx.render_pass = render_pass_create(ctx) or_return
-	ctx.descriptor_pool = descriptor_pool_create(ctx) or_return
-	ctx.set_layout = set_layout_create(ctx) or_return
-	ctx.layout = layout_create(ctx, ctx.set_layout) or_return
-	ctx.pipeline = pipeline_create(ctx, ctx.layout, ctx.render_pass, width, height) or_return
+	ctx.descriptor_pool = descriptor_pool_create(ctx, {{type = .UNIFORM_BUFFER, descriptorCount = 10}, {type = .STORAGE_BUFFER, descriptorCount = 10}}, 2) or_return
+	ctx.render_pass = render_pass_create(ctx, {layout_create(ctx, {{binding_create(.UNIFORM_BUFFER, 1, {.VERTEX}, size_of(Matrix)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Light))}, {binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Instance_Model)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Color)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Matrix))}}) or_return}) or_return
 
-	ctx.queues = queues_create(ctx, ctx.queue_indices) or_return
-	ctx.command_pool = command_pool_create(ctx, ctx.queue_indices[1]) or_return
+	ctx.command_pool = command_pool_create(ctx, ctx.device.queues[1]) or_return
 	ctx.command_buffers = command_buffers_allocate(ctx, ctx.command_pool, 2) or_return
 	ctx.draw_fence = fence_create(ctx) or_return
 	ctx.copy_fence = fence_create(ctx) or_return
 	ctx.semaphore = semaphore_create(ctx) or_return
 
 	ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 1000, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
-	ctx.descriptor_set = descriptor_set_create(ctx, ctx.set_layout, {{.UNIFORM_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}, {.STORAGE_BUFFER, .TRANSFER_DST}}, {{.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}, {.DEVICE_LOCAL}}, {2, 20, 20, 1}) or_return
-	ctx.frames = frames_create(ctx, frame_count, width, height) or_return
 
-	ctx.geometries = collection.new_vec(Geometry, 20, ctx.allocator) or_return
-	ctx.instances = 0
+	ctx.fixed_set = descriptor_set_allocate(ctx, &ctx.descriptor_pool, ctx.render_pass.layouts.data[0].sets.data[0], {{.UNIFORM_BUFFER, 2, {.UNIFORM_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 1, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}}) or_return
+
+	ctx.frames = frames_create(ctx, &ctx.render_pass, frame_count, width, height) or_return
 
 	return nil
 }
 
 vulkan_deinit :: proc(ctx: ^Vulkan_Context) {
-	vk.WaitForFences(ctx.device, 1, &ctx.draw_fence, true, 0xFFFFFF)
-	vk.WaitForFences(ctx.device, 1, &ctx.copy_fence, true, 0xFFFFFF)
+	vk.WaitForFences(ctx.device.handle, 1, &ctx.draw_fence, true, 0xFFFFFF)
+	vk.WaitForFences(ctx.device.handle, 1, &ctx.copy_fence, true, 0xFFFFFF)
 
-	vk.DestroyBuffer(ctx.device, ctx.staging.buffer.handle, nil)
-	vk.FreeMemory(ctx.device, ctx.staging.buffer.memory, nil)
-	vk.DestroySemaphore(ctx.device, ctx.semaphore, nil)
-	vk.DestroyFence(ctx.device, ctx.draw_fence, nil)
-	vk.DestroyFence(ctx.device, ctx.copy_fence, nil)
+	buffer_destroy(ctx, ctx.staging.buffer)
 
-	for descriptor in ctx.descriptor_set.descriptors {
-		vk.DestroyBuffer(ctx.device, descriptor.buffer.handle, nil)
-		vk.FreeMemory(ctx.device, descriptor.buffer.memory, nil)
-	}
-
-	for i in 0 ..< ctx.geometries.len {
-		destroy_geometry(ctx.device, &ctx.geometries.data[i])
-	}
+	vk.DestroySemaphore(ctx.device.handle, ctx.semaphore, nil)
+	vk.DestroyFence(ctx.device.handle, ctx.draw_fence, nil)
+	vk.DestroyFence(ctx.device.handle, ctx.copy_fence, nil)
 
 	for &frame in ctx.frames {
-		frame_destroy(ctx.device, &frame)
+		frame_destroy(ctx, &frame)
 	}
 
-	vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
-	vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
-	vk.DestroyPipeline(ctx.device, ctx.pipeline, nil)
-	vk.DestroyPipelineLayout(ctx.device, ctx.layout, nil)
+	descriptor_pool_deinit(ctx, ctx.descriptor_pool)
+	render_pass_deinit(ctx, &ctx.render_pass)
 
-	vk.DestroyDescriptorSetLayout(ctx.device, ctx.set_layout.handle, nil)
-
-	vk.DestroyRenderPass(ctx.device, ctx.render_pass, nil)
-	vk.DestroyDevice(ctx.device, nil)
+	vk.DestroyCommandPool(ctx.device.handle, ctx.command_pool, nil)
+	vk.DestroyDevice(ctx.device.handle, nil)
 	vk.DestroyInstance(ctx.instance, nil)
 
 	_ = dynlib.unload_library(library)
