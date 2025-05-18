@@ -28,18 +28,29 @@ Vulkan_Context :: struct {
 	device:          Device,
 	physical_device: vk.PhysicalDevice,
 
+	set_layouts: collection.Vector(Descriptor_Set_Layout),
+	geometry_groups: collection.Vector(Geometry_Group),
+
+	default_group: ^Geometry_Group,
+	boned_group: ^Geometry_Group,
+
 	render_pass:     Render_Pass,
 
 	fixed_set: ^Descriptor_Set,
 	dynamic_set: ^Descriptor_Set,
 
+	default_pipeline: ^Pipeline,
+	boned_pipeline: ^Pipeline,
+
 	descriptor_pool: Descriptor_Pool,
+
+	instances: u32,
+	transforms: u32,
 
 	command_pool:    vk.CommandPool,
 	command_buffers: []vk.CommandBuffer,
 	staging:         StagingBuffer,
 	frames:          []Frame,
-	// geometries:      collection.Vector(Geometry),
 	bones: u32,
 	copy_fence:      vk.Fence,
 	draw_fence:      vk.Fence,
@@ -76,8 +87,6 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 	ctx.physical_device = find_physical_device(ctx) or_return
 	ctx.modifiers = get_drm_modifiers(ctx) or_return
 	ctx.device = device_create(ctx) or_return
-	ctx.descriptor_pool = descriptor_pool_create(ctx, {{type = .UNIFORM_BUFFER, descriptorCount = 10}, {type = .STORAGE_BUFFER, descriptorCount = 10}}, 2) or_return
-	ctx.render_pass = render_pass_create(ctx, {layout_create(ctx, {{binding_create(.UNIFORM_BUFFER, 1, {.VERTEX}, size_of(Matrix)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Light))}, {binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Instance_Model)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Color)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, size_of(Matrix))}}) or_return}) or_return
 
 	ctx.command_pool = command_pool_create(ctx, ctx.device.queues[1]) or_return
 	ctx.command_buffers = command_buffers_allocate(ctx, ctx.command_pool, 2) or_return
@@ -87,7 +96,25 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 
 	ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 1000, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
 
-	ctx.fixed_set = descriptor_set_allocate(ctx, &ctx.descriptor_pool, ctx.render_pass.layouts.data[0].sets.data[0], {{.UNIFORM_BUFFER, 2, {.UNIFORM_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 1, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}}) or_return
+	ctx.set_layouts = collection.new_vec(Descriptor_Set_Layout, 20, ctx.allocator) or_return
+	ctx.geometry_groups = collection.new_vec(Geometry_Group, 20, ctx.allocator) or_return
+	ctx.descriptor_pool = descriptor_pool_create(ctx, {{type = .UNIFORM_BUFFER, descriptorCount = 10}, {type = .STORAGE_BUFFER, descriptorCount = 10}}, 20) or_return
+
+	ctx.render_pass = render_pass_create(ctx) or_return
+
+	fixed_set_layout := set_layout_create(ctx, {binding_create(.UNIFORM_BUFFER, 1, {.VERTEX}, .UNIFORM_BUFFER, {.UNIFORM_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}, size_of(Matrix)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, .STORAGE_BUFFER, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}, size_of(Light))}) or_return
+	ctx.fixed_set = descriptor_set_allocate(ctx, &ctx.descriptor_pool, fixed_set_layout, {2, 1}) or_return
+
+	dynamic_set_layout := set_layout_create(ctx, {binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, .STORAGE_BUFFER, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}, size_of(Instance_Model)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, .STORAGE_BUFFER, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}, size_of(Matrix)), binding_create(.STORAGE_BUFFER, 1, {.VERTEX}, .STORAGE_BUFFER, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}, size_of(u32))}) or_return
+	ctx.dynamic_set = descriptor_set_allocate(ctx, &ctx.descriptor_pool, dynamic_set_layout, {20, 20, 20}) or_return
+
+	layout := render_pass_append_layout(&ctx.render_pass, layout_create(ctx, {fixed_set_layout, dynamic_set_layout}) or_return) or_return
+
+	ctx.default_group = geometry_group_create(ctx, ctx.dynamic_set, 10) or_return
+	ctx.default_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.default_group, "assets/output/vert.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
+
+	ctx.boned_group = geometry_group_create(ctx, ctx.dynamic_set, 10) or_return
+	ctx.boned_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.boned_group, "assets/output/animated.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}, {.Sfloat, 4}, {.Uint, 4}}}) or_return
 
 	ctx.frames = frames_create(ctx, &ctx.render_pass, frame_count, width, height) or_return
 
@@ -106,6 +133,10 @@ vulkan_deinit :: proc(ctx: ^Vulkan_Context) {
 
 	for &frame in ctx.frames {
 		frame_destroy(ctx, &frame)
+	}
+
+	for i in 0..<ctx.set_layouts.len {
+		vk.DestroyDescriptorSetLayout(ctx.device.handle, ctx.set_layouts.data[i].handle, nil)
 	}
 
 	descriptor_pool_deinit(ctx, ctx.descriptor_pool)

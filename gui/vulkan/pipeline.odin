@@ -7,27 +7,86 @@ import "./../collection"
 
 import "./../error"
 
+@private
 Pipeline_Layout :: struct {
   handle: vk.PipelineLayout,
-  sets: collection.Vector(Descriptor_Set_Layout),
+  sets: collection.Vector(^Descriptor_Set_Layout),
 }
+
+// @private
+// Pipeline_Info :: struct {
+//   layout: ^Pipeline_Layout,
+//   geometries: Geometry_Group,
+//   vert: string,
+//   frag: string,
+// }
 
 @private
 Pipeline :: struct {
   handle: vk.Pipeline,
   layout: ^Pipeline_Layout,
-  geometries: Geometry_Group,
+  geometries: ^Geometry_Group,
+}
+
+Vertex_Attribute_Kind :: enum{
+  Sfloat,
+  Uint,
+}
+
+Vertex_Attribute :: struct {
+  kind: Vertex_Attribute_Kind,
+  count: u32,
 }
 
 @private
-pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: vk.RenderPass, layout: ^Pipeline_Layout, infos: []Descriptor_Info) -> (pipeline: Pipeline, err: error.Error) {
-  pipeline.layout = layout
-  pipeline.geometries = geometry_group_create(ctx, layout, infos, 20) or_return
+get_attribute_format :: proc(attribute: Vertex_Attribute) -> (format: vk.Format, size: u32, err: error.Error) {
+  switch attribute.kind {
+    case .Sfloat:
+      size = size_of(f32)
+    case .Uint:
+      size  = size_of(u32)
+  }
 
-  vert_module := shader_module_create(ctx, "assets/output/vert.spv") or_return
+  switch attribute.count {
+    case 2:
+      switch attribute.kind {
+        case .Sfloat:
+          format = .R32G32_SFLOAT
+        case .Uint:
+          format = .R32G32_UINT
+      }
+    case 3:
+      switch attribute.kind {
+        case .Sfloat:
+          format = .R32G32B32_SFLOAT
+        case .Uint:
+          format = .R32G32B32_UINT
+      }
+    case 4:
+      switch attribute.kind {
+        case .Sfloat:
+          format = .R32G32B32A32_SFLOAT
+        case .Uint:
+          format = .R32G32B32A32_UINT
+      }
+    case:
+      return format, size, .InvalidFormat
+  }
+
+  size = size * attribute.count
+
+  return format, size, nil
+}
+
+@private
+pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, geometries: ^Geometry_Group, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> (pipeline: Pipeline, err: error.Error) {
+  pipeline.layout = layout
+  pipeline.geometries = geometries
+
+  vert_module := shader_module_create(ctx, vert) or_return
   defer vk.DestroyShaderModule(ctx.device.handle, vert_module, nil)
 
-  frag_module := shader_module_create(ctx, "assets/output/frag.spv") or_return
+  frag_module := shader_module_create(ctx, frag) or_return
   defer vk.DestroyShaderModule(ctx.device.handle, frag_module, nil)
 
   stages := [?]vk.PipelineShaderStageCreateInfo {
@@ -45,30 +104,33 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: vk.RenderPass, layout
     },
   }
 
-  vertex_binding_descriptions := [?]vk.VertexInputBindingDescription {
-    {binding = 0, stride = size_of(f32) * (3 + 3 + 2 + 4 + 4), inputRate = .VERTEX},
-  }
+  vertex_binding_descriptions := collection.new_vec(vk.VertexInputBindingDescription, u32(len(vertex_attribute_bindings)), ctx.tmp_allocator) or_return
+  vertex_attribute_descriptions := collection.new_vec(vk.VertexInputAttributeDescription, 100, ctx.tmp_allocator) or_return
 
-  POSITION :: size_of([3]f32)
-  NORMAL :: size_of([3]f32)
-  TEXTURE :: size_of([2]f32)
-  WEIGHTS :: size_of([4]f32)
-  JOINTS :: size_of([4]u32)
+  for i in 0..<len(vertex_attribute_bindings) {
+    offset: u32 = 0
+    for j in 0..<len(vertex_attribute_bindings[i]) {
+      format, size := get_attribute_format(vertex_attribute_bindings[i][j]) or_return
+      description := collection.vec_one(&vertex_attribute_descriptions) or_return
+      description.binding = u32(i)
+      description.location = u32(j)
+      description.offset = offset
+      description.format = format
+      offset += size
+    }
 
-  vertex_attribute_descriptions := [?]vk.VertexInputAttributeDescription {
-    {location = 0, binding = 0, offset = 0, format = .R32G32B32_SFLOAT},
-    {location = 1, binding = 0, offset = POSITION, format = .R32G32B32_SFLOAT},
-    {location = 2, binding = 0, offset = POSITION + NORMAL, format = .R32G32_SFLOAT},
-    {location = 3, binding = 0, offset = POSITION + NORMAL + TEXTURE, format = .R32G32B32A32_SFLOAT},
-    {location = 4, binding = 0, offset = POSITION + NORMAL + TEXTURE + WEIGHTS, format = .R32G32B32A32_UINT},
+    binding := collection.vec_one(&vertex_binding_descriptions) or_return
+    binding.binding = u32(i)
+    binding.stride = offset
+    binding.inputRate = .VERTEX
   }
 
   vert_input_state := vk.PipelineVertexInputStateCreateInfo {
     sType         = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-    vertexBindingDescriptionCount   = u32(len(vertex_binding_descriptions)),
-    pVertexBindingDescriptions      = &vertex_binding_descriptions[0],
-    vertexAttributeDescriptionCount = u32(len(vertex_attribute_descriptions)),
-    pVertexAttributeDescriptions    = &vertex_attribute_descriptions[0],
+    vertexBindingDescriptionCount   = vertex_binding_descriptions.len,
+    pVertexBindingDescriptions      = &vertex_binding_descriptions.data[0],
+    vertexAttributeDescriptionCount = vertex_attribute_descriptions.len,
+    pVertexAttributeDescriptions    = &vertex_attribute_descriptions.data[0],
   }
 
   viewports := [?]vk.Viewport {
@@ -170,7 +232,7 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: vk.RenderPass, layout
     pRasterizationState = &rasterization_state,
     pInputAssemblyState = &input_assembly_state,
     pDynamicState       = &dynamic_state,
-    renderPass    = render_pass,
+    renderPass    = render_pass.handle,
     layout        = pipeline.layout.handle,
   }
 
@@ -180,16 +242,13 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: vk.RenderPass, layout
 }
 
 @private
-layout_create :: proc(ctx: ^Vulkan_Context, set_layouts: [][]Descriptor_Set_Layout_Binding) -> (layout: Pipeline_Layout, err: error.Error) {
-  layout.sets = collection.new_vec(Descriptor_Set_Layout, u32(len(set_layouts)), ctx.allocator) or_return
-
-  for set_layout in set_layouts {
-    collection.vec_append(&layout.sets, set_layout_create(ctx, set_layout) or_return) or_return
-  }
-
+layout_create :: proc(ctx: ^Vulkan_Context, set_layouts: []^Descriptor_Set_Layout) -> (layout: Pipeline_Layout, err: error.Error) {
   layouts := make([]vk.DescriptorSetLayout, len(set_layouts), ctx.tmp_allocator)
+  layout.sets = collection.new_vec(^Descriptor_Set_Layout, u32(len(set_layouts)), ctx.allocator) or_return
+
   for i in 0..<len(set_layouts) {
-    layouts[i] = layout.sets.data[i].handle
+    collection.vec_append(&layout.sets, set_layouts[i]) or_return
+    layouts[i] = set_layouts[i].handle
   }
 
   layout_info := vk.PipelineLayoutCreateInfo {
@@ -211,15 +270,15 @@ shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.
   file: os.Handle
   size: i64
 
-  if file, er = os.open(path); err != nil do return module, .FileNotFound
+  if file, er = os.open(path); er != nil do return module, .FileNotFound
   defer os.close(file)
 
-  if size, er = os.file_size(file); err != nil do return module, .FileNotFound
+  if size, er = os.file_size(file); er != nil do return module, .FileNotFound
 
   buf := make([]u8, u32(size), ctx.tmp_allocator)
 
   l: int
-  if l, er = os.read(file, buf); err != nil do return module, .ReadFileFailed
+  if l, er = os.read(file, buf); er != nil do return module, .ReadFileFailed
   if int(size) != l do return module, .SizeNotMatch
 
   info := vk.ShaderModuleCreateInfo {
@@ -235,14 +294,9 @@ shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.
 }
 
 pipeline_deinit :: proc(ctx: ^Vulkan_Context, pipeline: Pipeline) {
-  for i in 0..<pipeline.layout.sets.len {
-  	vk.DestroyDescriptorSetLayout(ctx.device.handle, pipeline.layout.sets.data[i].handle, nil)
-  }
-
   for i in 0 ..< pipeline.geometries.childs.len {
   	destroy_geometry(ctx, &pipeline.geometries.childs.data[i])
   }
 
-  vk.DestroyPipelineLayout(ctx.device.handle, pipeline.layout.handle, nil)
   vk.DestroyPipeline(ctx.device.handle, pipeline.handle, nil)
 }

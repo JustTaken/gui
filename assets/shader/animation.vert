@@ -21,21 +21,22 @@ layout(set = 1, binding = 0) readonly buffer InstanceModel {
   mat4 models[];
 };
 
-layout(set = 1, binding = 1) readonly buffer InstanceColor {
-  vec4 colors[];
-};
-
-layout(set = 1, binding = 2) readonly buffer BoneTransform {
+layout(set = 1, binding = 1) readonly buffer InstanceBones {
   mat4 transforms[];
 };
 
+layout(set = 1, binding = 2) readonly buffer InstanceOffset {
+  int offsets[];
+};
+
 void main() {
-  mat4 transform = (transforms[in_joints[0]] * in_weights[0] + transforms[in_joints[1]] * in_weights[1] + transforms[in_joints[2]] * in_weights[2] + transforms[in_joints[3]] * in_weights[3]);
+  int offset = offsets[gl_InstanceIndex];
+  mat4 transform = transforms[offset + in_joints[0]] * in_weights[0] + transforms[offset + in_joints[1]] * in_weights[1] + transforms[offset + in_joints[2]] * in_weights[2] + transforms[offset + in_joints[3]] * in_weights[3];
 
   gl_Position = projection * view * models[gl_InstanceIndex] * vec4(in_position, 1.0);
   gl_Position = transform * gl_Position;
 
   vec3 ligth_direction = normalize(light - gl_Position.xyz);
-  out_color = vec4(length(dot(in_normal, ligth_direction)) * colors[index].rgb, colors[index].a);
+  out_color = vec4(length(dot(in_normal, ligth_direction)) * vec3(1, 1, 1), 1);
 }
 

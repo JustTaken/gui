@@ -29,10 +29,13 @@ Context :: struct {
   translate_for: matrix[4, 4]f32,
   scenes: collection.Vector(Scene),
 
+
   view_update: bool,
 
   cube: ^Scene,
   bone: ^Scene,
+
+  cube_instance: Scene_Instance,
 
   allocator: runtime.Allocator,
   arena: mem.Arena,
@@ -104,10 +107,10 @@ init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error
   ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity})
 
   ctx.view = linalg.matrix4_translate_f32({0,0, -20})
-  ctx.scenes = collection.new_vec(Scene, 20, ctx.vk.tmp_allocator) or_return
+  ctx.scenes = collection.new_vec(Scene, 20, ctx.vk.allocator) or_return
   // ctx.bone = load_gltf_scene(ctx, "assets/bone.gltf") or_return
   ctx.cube = load_gltf_scene(ctx, "assets/cube_animation.gltf") or_return
-  _ = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
+  ctx.cube_instance = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
 
   vk.update_view(&ctx.vk, ctx.view) or_return
   vk.update_light(&ctx.vk, {0, 0, 0}) or_return
@@ -129,6 +132,9 @@ loop :: proc(ctx: ^Context) -> error.Error {
     mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
 
+    now := time.now()._nsec
+    tick_scene_animation(ctx, &ctx.cube_instance, now)
+
     if wl.render(&ctx.wl) != nil {
       log.error("Failed to render frame")
     }
@@ -142,7 +148,7 @@ new_view :: proc(ctx: ^Context, view: matrix[4, 4]f32) {
     ctx.view_update = true
 }
 
-frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
+frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context, time: i64) -> error.Error {
   ctx := cast(^Context)(ptr)
   ctx.view_update = false
 
@@ -154,6 +160,9 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context) -> error.Error {
   if wl.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
   if wl.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
   if wl.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
+  if wl.is_key_pressed(keymap, .Space) {
+    play_scene_animation(&ctx.cube_instance, "First", time) or_return
+  }
 
   if ctx.view_update do vk.update_view(ctx.wl.vk, ctx.view) or_return
 

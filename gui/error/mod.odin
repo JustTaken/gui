@@ -64,4 +64,5 @@ Error :: enum {
   AttributeNotFound,
   NoAnimation,
   RenderFailed,
+  InvalidFormat,
 }

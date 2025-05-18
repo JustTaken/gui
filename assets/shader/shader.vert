@@ -19,15 +19,23 @@ layout(set = 1, binding = 0) readonly buffer InstanceModel {
   mat4 models[];
 };
 
-layout(set = 1, binding = 1) readonly buffer InstanceColor {
-  vec4 colors[];
+layout(set = 1, binding = 1) readonly buffer InstanceModel {
+  mat4 transforms[];
+};
+
+layout(set = 1, binding = 2) readonly buffer InstanceModel {
+  int offsets[];
 };
 
 void main() {
-  int index = gl_InstanceIndex;
-  gl_Position = projection * view * models[index] * vec4(in_position, 1.0);
+  int offset = offsets[gl_InstanceIndex]
+  mat4 transform = transforms[offset];
+
+  gl_Position = projection * view * models[gl_InstanceIndex] * vec4(in_position, 1.0);
+  gl_Position = transform * gl_Position;
+
 
   vec3 ligth_direction = normalize(light - gl_Position.xyz);
-  out_color = vec4(length(dot(in_normal, ligth_direction)) * colors[index].rgb, colors[index].a);
+  out_color = vec4(length(dot(in_normal, ligth_direction)) * vec3(1, 1, 1), 1);
 }
 

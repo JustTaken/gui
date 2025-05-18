@@ -46,7 +46,7 @@ Context :: struct {
 
 Gltf :: struct {
   scenes: map[string]Scene,
-  animations: map[string]Animation,
+  animations: []Animation,
   nodes: []Node,
   skins: []Skin,
   meshes: []Mesh,
@@ -72,19 +72,15 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
   parse_accessors(&ctx) or_return
   parse_meshes(&ctx) or_return
   parse_skins(&ctx) or_return
+  parse_animations(&ctx) or_return
   parse_nodes(&ctx) or_return
   parse_scenes(&ctx) or_return
-  parse_animations(&ctx) or_return
-
-  gltf.animations = make(map[string]Animation, 2 * len(ctx.animations), ctx.allocator)
-  for i in 0..<len(ctx.animations) {
-    gltf.animations[ctx.animations[i].name] = ctx.animations[i]
-  }
 
   gltf.scenes = ctx.scenes
   gltf.nodes = ctx.nodes
   gltf.meshes = ctx.meshes
   gltf.skins = ctx.skins
+  gltf.animations = ctx.animations
 
   return gltf, nil
 }

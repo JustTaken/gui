@@ -120,6 +120,7 @@ find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, p
 	return 0, .MemoryNotFound
 }
 
+@private
 buffer_destroy :: proc(ctx: ^Vulkan_Context, buffer: Buffer) {
   vk.DestroyBuffer(ctx.device.handle, buffer.handle, nil)
   vk.FreeMemory(ctx.device.handle, buffer.memory, nil)

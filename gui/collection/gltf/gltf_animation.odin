@@ -302,6 +302,7 @@ parse_animations :: proc(ctx: ^Context) -> error.Error {
 
     for k in 0..<len(ctx.fragmented_animations[i].frames) {
       ctx.animations[i].frames[k].time = ctx.fragmented_animations[i].frames[k].time
+      ctx.animations[i].frames[k].transforms = make([]Matrix, len(ctx.nodes), ctx.allocator)
     }
   }
 

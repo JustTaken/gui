@@ -11,9 +11,8 @@ Render_Pass :: struct {
 	layouts: collection.Vector(Pipeline_Layout),
 }
 
-
 @private
-render_pass_create :: proc(ctx: ^Vulkan_Context, layouts: []Pipeline_Layout) -> (render_pass: Render_Pass, err: error.Error) {
+render_pass_create :: proc(ctx: ^Vulkan_Context) -> (render_pass: Render_Pass, err: error.Error) {
   render_pass_attachments := [?]vk.AttachmentDescription {
     {
       format = ctx.format,
@@ -78,24 +77,36 @@ render_pass_create :: proc(ctx: ^Vulkan_Context, layouts: []Pipeline_Layout) -> 
 
   if vk.CreateRenderPass(ctx.device.handle, &render_pass_info, nil, &render_pass.handle) != .SUCCESS do return render_pass, .CreateRenderPassFailed
 
-  render_pass.layouts = collection.new_vec(Pipeline_Layout, u32(len(layouts)), ctx.allocator) or_return
-  render_pass.pipelines = collection.new_vec(Pipeline, 1, ctx.allocator) or_return
-
-  for i in 0..<len(layouts) {
-  	collection.vec_append(&render_pass.layouts, layouts[i]) or_return
-  	collection.vec_append(&render_pass.pipelines, pipeline_create(ctx, render_pass.handle, &render_pass.layouts.data[i], {{.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}}) or_return) or_return
-  }
-  // for i in 0..<count {
-  // group.set = descriptor_set_allocate(ctx, &ctx.descriptor_pool, ctx.render_pass.layouts.data[0].sets.data[1], {{.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}}) or_return
-  	// collection.vec_append(&render_pass.pipelines, pipeline_create(ctx, render_pass.handle, &render_pass.layouts.data[0], {{.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}, {.STORAGE_BUFFER, 20, {.STORAGE_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}}}) or_return) or_return
-  // }
+  render_pass.layouts = collection.new_vec(Pipeline_Layout, 10, ctx.allocator) or_return
+  render_pass.pipelines = collection.new_vec(Pipeline, 10, ctx.allocator) or_return
 
   return render_pass, nil
 }
 
+@private
+render_pass_append_layout :: proc(render_pass: ^Render_Pass, p_layout: Pipeline_Layout) -> (layout: ^Pipeline_Layout, err: error.Error) {
+	layout = collection.vec_one(&render_pass.layouts) or_return
+	layout^ = p_layout
+
+	return layout, nil
+}
+
+@private
+render_pass_append_pipeline :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, geometries: ^Geometry_Group, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> (pipeline: ^Pipeline, err: error.Error) {
+	pipeline = collection.vec_one(&render_pass.pipelines) or_return
+	pipeline^ = pipeline_create(ctx, render_pass, layout, geometries, vert, frag, vertex_attribute_bindings) or_return
+
+	return pipeline, nil
+}
+
+@private
 render_pass_deinit :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass) {
 	for i in 0..<render_pass.pipelines.len {
 		pipeline_deinit(ctx, render_pass.pipelines.data[i])
+	}
+
+	for i in 0..<render_pass.layouts.len {
+		vk.DestroyPipelineLayout(ctx.device.handle, render_pass.layouts.data[i].handle, nil)
 	}
 
 	vk.DestroyRenderPass(ctx.device.handle, render_pass.handle, nil)

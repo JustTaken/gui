@@ -37,7 +37,7 @@ Modifier :: struct {
 }
 
 @private
-Listen :: proc(ptr: rawptr, keymap: ^Keymap_Context) -> error.Error
+Listen :: proc(ptr: rawptr, keymap: ^Keymap_Context, time: i64) -> error.Error
 
 @private
 KeyListener :: struct {
@@ -214,9 +214,11 @@ render :: proc(ctx: ^Wayland_Context) -> error.Error {
 
 @private
 handle_input :: proc(ctx: ^Wayland_Context) -> error.Error {
+  now := time.now()._nsec
+
   for i in 0..<ctx.listeners.len {
     listener := &ctx.listeners.data[i]
-    listener.f(listener.ptr, &ctx.keymap) or_return
+    listener.f(listener.ptr, &ctx.keymap, now) or_return
   }
 
   return nil

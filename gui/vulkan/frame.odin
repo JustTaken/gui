@@ -270,12 +270,13 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
     pipeline := &frame.render_pass.pipelines.data[p]
 
     vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.handle)
-    // sets := [?]vk.DescriptorSet {
-      // ,
-      // ctx.descriptor_pool.sets.data[1].handle,
-    // }
 
-    vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout.handle, 0, 1, &ctx.fixed_set.handle, 0, nil)
+    sets := [?]vk.DescriptorSet {
+      ctx.fixed_set.handle,
+      ctx.dynamic_set.handle,
+    }
+
+    vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout.handle, 0, len(sets), &sets[0], 0, nil)
 
     for i in 0 ..<pipeline.geometries.childs.len {
       geometry := &pipeline.geometries.childs.data[i]
@@ -283,7 +284,6 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
       if geometry.instances.len == 0 do continue
 
       offset := vk.DeviceSize(0)
-      vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout.handle, 1, 1, &geometry.parent.set.handle, 0, nil)
       vk.CmdBindVertexBuffers(cmd, 0, 1, &geometry.vertex.handle, &offset)
       vk.CmdBindIndexBuffer(cmd, geometry.indice.handle, 0, .UINT16)
       vk.CmdDrawIndexed(cmd, geometry.count, geometry.instances.len, 0, 0, geometry.instance_offset)

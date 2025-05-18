@@ -9,12 +9,15 @@ TRANSFORMS :: 0
 LIGHTS :: 1
 
 MODELS :: 0
-COLORS :: 1
-BONES :: 2
+DYNAMIC_TRANSFORMS :: 1
+OFFSETS :: 2
 
 @private
 Descriptor_Set_Layout_Binding :: struct {
   handle: vk.DescriptorSetLayoutBinding,
+  kind:    vk.DescriptorType,
+  usage: vk.BufferUsageFlags,
+  properties: vk.MemoryPropertyFlags,
   type_size: u32,
 }
 
@@ -26,10 +29,7 @@ Descriptor_Set_Layout :: struct {
 
 @private
 Descriptor_Info :: struct {
-  kind:    vk.DescriptorType,
   count:   u32,
-  usage: vk.BufferUsageFlags,
-  properties: vk.MemoryPropertyFlags,
 }
 
 @private
@@ -53,7 +53,7 @@ Descriptor_Pool :: struct {
 }
 
 @private
-descriptor_set_allocate :: proc(ctx: ^Vulkan_Context, pool: ^Descriptor_Pool, layout: Descriptor_Set_Layout, infos: []Descriptor_Info) -> (set: ^Descriptor_Set, err: error.Error) {
+descriptor_set_allocate :: proc(ctx: ^Vulkan_Context, pool: ^Descriptor_Pool, layout: ^Descriptor_Set_Layout, counts: []u32) -> (set: ^Descriptor_Set, err: error.Error) {
   set = collection.vec_one(&pool.sets) or_return
 
   binding_count := len(layout.bindings)
@@ -73,19 +73,23 @@ descriptor_set_allocate :: proc(ctx: ^Vulkan_Context, pool: ^Descriptor_Pool, la
   set.descriptors = make([]Descriptor, binding_count, ctx.allocator)
 
   for i in 0..<binding_count {
-    set.descriptors[i].kind = infos[i].kind
-    set.descriptors[i].size = infos[i].count * layout.bindings[i].type_size
+    set.descriptors[i].kind = layout.bindings[i].kind
+    set.descriptors[i].size = counts[i] * layout.bindings[i].type_size
     set.descriptors[i].binding = u32(i)
-    set.descriptors[i].buffer = buffer_create(ctx, set.descriptors[i].size, infos[i].usage, infos[i].properties) or_return
+    set.descriptors[i].buffer = buffer_create(ctx, set.descriptors[i].size, layout.bindings[i].usage, layout.bindings[i].properties) or_return
   }
 
   return set, nil
 }
 
+  
 @private
-binding_create :: proc(typ: vk.DescriptorType, count: u32, flags: vk.ShaderStageFlags, size: u32) -> Descriptor_Set_Layout_Binding {
+binding_create :: proc(typ: vk.DescriptorType, count: u32, flags: vk.ShaderStageFlags, kind: vk.DescriptorType, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags, size: u32) -> Descriptor_Set_Layout_Binding {
   return Descriptor_Set_Layout_Binding {
     type_size = size,
+    kind = kind,
+    usage = usage,
+    properties = properties,
     handle = vk.DescriptorSetLayoutBinding {
       descriptorType = typ,
       descriptorCount = count,
@@ -95,7 +99,9 @@ binding_create :: proc(typ: vk.DescriptorType, count: u32, flags: vk.ShaderStage
 }
 
 @private
-set_layout_create :: proc(ctx: ^Vulkan_Context, bindings: []Descriptor_Set_Layout_Binding) -> (set_layout: Descriptor_Set_Layout, err: error.Error) {
+set_layout_create :: proc(ctx: ^Vulkan_Context, bindings: []Descriptor_Set_Layout_Binding) -> (set_layout: ^Descriptor_Set_Layout, err: error.Error) {
+  set_layout = collection.vec_one(&ctx.set_layouts) or_return
+
   raw_bindings := make([]vk.DescriptorSetLayoutBinding, len(bindings), ctx.tmp_allocator)
   set_layout.bindings = make([]Descriptor_Set_Layout_Binding, len(bindings), ctx.allocator)
 
@@ -184,19 +190,6 @@ update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> error.Error {
 
   return nil
 }
-
-// add_bones :: proc(ctx: ^Vulkan_Context, bones: []Matrix) -> error.Error {
-//   copy_data(Matrix, ctx, bones, ctx.descriptor_pool.sets.data[DYNAMIC].descriptors[BONES].buffer.handle, ctx.bones) or_return
-//   ctx.bones += u32(len(bones))
-
-//   return nil
-// }
-
-// update_bones :: proc(ctx: ^Vulkan_Context, bones: []Matrix, offset: u32) -> error.Error {
-//   copy_data(Matrix, ctx, bones, ctx.descriptor_pool.sets.data[DYNAMIC].descriptors[BONES].buffer.handle, offset) or_return
-
-//   return nil
-// }
 
 @private
 submit_staging_data :: proc(ctx: ^Vulkan_Context) -> error.Error {
