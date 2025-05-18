@@ -49,19 +49,21 @@ log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, option
 }
 
 main :: proc() {
-  ctx: Context
-  err: mem.Allocator_Error
-
-  width: u32 = 1920
-  height: u32 = 1080
-  frames: u32 = 2
-
   context.logger.lowest_level = .Info
   context.logger.procedure = log_proc
 
- if ctx.bytes, err = make([]u8, 1024 * 1024 * 2, context.allocator); err != nil {
-    log.error("Primary allocation failed:", err)
-    return
+  if err := run(1920, 1080, 2); err != nil {
+    log.error("Failed to run appliation", err)
+  }
+}
+
+run :: proc(width: u32, height: u32, frames: u32) -> error.Error {
+  m_err: mem.Allocator_Error
+  ctx: Context
+
+  if ctx.bytes, m_err = make([]u8, 1024 * 1024 * 2, context.allocator); m_err != nil {
+    log.error("Primary allocation failed:", m_err)
+    return .OutOfMemory
   }
 
   defer delete(ctx.bytes)
@@ -74,17 +76,11 @@ main :: proc() {
   ctx.tmp_allocator = mem.arena_allocator(&ctx.tmp_arena)
   context.temp_allocator = ctx.tmp_allocator
 
-  if e := init(&ctx, width, height, frames); e != nil {
-    log.error("Failed to initialize environment:", e)
-    return
-  }
-
-  if e := loop(&ctx); e != nil {
-    log.error("Could not complete loop due to error:", e)
-    return
-  }
-
+  init(&ctx, width, height, frames) or_return
+  loop(&ctx) or_return
   deinit(&ctx)
+
+  return nil
 }
 
 init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error {
@@ -132,8 +128,7 @@ loop :: proc(ctx: ^Context) -> error.Error {
     mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
 
-    now := time.now()._nsec
-    tick_scene_animation(ctx, &ctx.cube_instance, now)
+    tick_scene_animation(ctx, &ctx.cube_instance, time.now()._nsec)
 
     if wl.render(&ctx.wl) != nil {
       log.error("Failed to render frame")

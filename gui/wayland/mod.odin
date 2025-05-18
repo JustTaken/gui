@@ -447,7 +447,7 @@ recv :: proc(ctx: ^Wayland_Context) -> error.Error {
   msg := posix.msghdr {
     msg_iov  = &iovec,
     msg_iovlen     = 1,
-    msg_control    = raw_data(buf),
+    msg_control    = rawptr(&buf[0]),
     msg_controllen = len(buf),
   }
 
