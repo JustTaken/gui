@@ -112,6 +112,10 @@ parse_rotation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragment
 
 @private
 parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_Frame) -> error.Error {
+  extract_translation :: proc(output: [3]f32) -> [3]f32 {
+    return {output[0], output[1], output[2]}
+  }
+
   assert(channel.sampler.input.component_kind == .F32)
   assert(channel.sampler.output.component_kind == .F32)
   assert(channel.sampler.input.component_count == 1)
@@ -124,7 +128,8 @@ parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragm
   #partial switch channel.sampler.interpolation {
     case .Linear:
       for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].translate = output[i]
+        frames[i].transforms[channel.target.node].translate = extract_translation(output[i])
+	    // log.info("  Parsing translation:", output[i])
       }
     case .Step:
         k := 0
@@ -134,7 +139,7 @@ parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragm
             k += 1
           }
 
-          frames[i].transforms[channel.target.node].translate = output[k - 1]
+          frames[i].transforms[channel.target.node].translate = extract_translation(output[k - 1])
         }
     case:
       return .InvalidAnimationInterpolation
@@ -145,6 +150,10 @@ parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragm
 
 @private
 parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_Frame) -> error.Error {
+  extract_scale :: proc(output: [3]f32) -> [3]f32 {
+    return {output[0], output[1], output[2]}
+  }
+
   assert(channel.sampler.input.component_kind == .F32)
   assert(channel.sampler.output.component_kind == .F32)
   assert(channel.sampler.input.component_count == 1)
@@ -157,7 +166,7 @@ parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_
   #partial switch channel.sampler.interpolation {
     case .Linear:
       for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].scale = output[i]
+        frames[i].transforms[channel.target.node].scale = extract_scale(output[i])
       }
     case .Step:
         k := 0
@@ -167,7 +176,7 @@ parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_
             k += 1
           }
 
-          frames[i].transforms[channel.target.node].scale = output[k - 1]
+          frames[i].transforms[channel.target.node].scale = extract_scale(output[k - 1])
         }
     case:
       return .InvalidAnimationInterpolation

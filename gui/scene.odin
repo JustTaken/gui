@@ -36,14 +36,15 @@ Scene_Instance :: struct {
 }
 
 Scene :: struct {
-	models: collection.Vector(Model),
+	all_models: collection.Vector(Model),
+	models: collection.Vector(^Model),
 	animations: map[string]Scene_Animation,
 	transforms_offset: u32,
 }
 
 Model :: struct {
 	geometries: collection.Vector(^vk.Geometry),
-	children: collection.Vector(Model),
+	children: collection.Vector(^Model),
 	bones: collection.Vector(Matrix),
 }
 
@@ -68,9 +69,15 @@ tick_scene_animation :: proc(ctx: ^Context, instance: ^Scene_Instance, time: i64
 
 	if previous_last == on_going.last_frame do return nil
 
+	// log.info("Sending transforms")
+	// for t in on_going.ref.transforms[on_going.last_frame] {
+	// 	log.info(t)
+	// }
+
 	vk.update_transforms(&ctx.vk, on_going.ref.transforms[on_going.last_frame], instance.scene.transforms_offset) or_return
 
 	if finish {
+		log.info("Finishing animation")
 		instance.on_going = nil
 	}
 
@@ -78,6 +85,11 @@ tick_scene_animation :: proc(ctx: ^Context, instance: ^Scene_Instance, time: i64
 }
 
 play_scene_animation :: proc(instance: ^Scene_Instance, name: string, time: i64) -> error.Error {
+	if instance.on_going != nil {
+		instance.on_going = nil
+		return nil
+	}
+
 	log.info("Playing animation", name, time)
 
 	on_going: On_Going_Animation
@@ -128,7 +140,7 @@ scene_instance_create :: proc(ctx: ^Context, scene: ^Scene, transform: Matrix) -
 	instance.models = collection.new_vec(Model_Instance, scene.models.len, ctx.allocator) or_return
 
 	for i in 0..<scene.models.len {
-		collection.vec_append(&instance.models, model_instance_create(ctx, &scene.models.data[i], transform) or_return) or_return
+		collection.vec_append(&instance.models, model_instance_create(ctx, scene.models.data[i], transform) or_return) or_return
 	}
 
 	return instance, nil
@@ -145,7 +157,7 @@ model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix) -
 	}
 
 	for i in 0..<model.children.len {
-		collection.vec_append(&instance.children, model_instance_create(ctx, &model.children.data[i], transform) or_return) or_return
+		collection.vec_append(&instance.children, model_instance_create(ctx, model.children.data[i], transform) or_return) or_return
 	}
 
 	for i in 0..<model.geometries.len {
@@ -267,18 +279,19 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32) -> (geometrie
   return geometries, nil
 }
 
-load_node :: proc(ctx: ^Context, glt: ^gltf.Gltf, scene: ^Scene, node: u32) -> (model: Model, err: error.Error) {
-	model.children = collection.new_vec(Model, u32(len(glt.nodes[node].children)), ctx.allocator) or_return
+load_node :: proc(ctx: ^Context, glt: ^gltf.Gltf, scene: ^Scene, node: u32) -> error.Error {
+	model := collection.vec_one(&scene.all_models) or_return
+	model.children = collection.new_vec(^Model, u32(len(glt.nodes[node].children)), ctx.allocator) or_return
 
 	for child in glt.nodes[node].children {
-		collection.vec_append(&model.children, load_node(ctx, glt, scene, child) or_return) or_return
+		collection.vec_append(&model.children, &scene.all_models.data[child]) or_return
 	}
 
-	if glt.nodes[node].mesh == nil do return model, nil
+	if glt.nodes[node].mesh == nil do return nil
 
 	model.geometries = load_mesh(ctx, glt, node) or_return
 
-	return model, nil
+	return nil
 }
 
 load_gltf_scene :: proc(ctx: ^Context, path: string) -> (scene: ^Scene, err: error.Error) {
@@ -290,9 +303,15 @@ load_gltf_scene :: proc(ctx: ^Context, path: string) -> (scene: ^Scene, err: err
 	glt := gltf.from_file(path, ctx.tmp_allocator) or_return
 	gltf_scene := &glt.scenes["Scene"]
 
-	scene.models = collection.new_vec(Model, u32(len(gltf_scene.nodes)), ctx.allocator) or_return
+	scene.all_models = collection.new_vec(Model, u32(len(glt.nodes)), ctx.allocator) or_return
+	scene.models = collection.new_vec(^Model, u32(len(gltf_scene.nodes)), ctx.allocator) or_return
+
+	for j in 0..<len(glt.nodes) {
+		load_node(ctx, &glt, scene, u32(j)) or_return
+	}
+
 	for j in 0..<len(gltf_scene.nodes) {
-		collection.vec_append(&scene.models, load_node(ctx, &glt, scene, gltf_scene.nodes[j]) or_return) or_return
+		collection.vec_append(&scene.models, &scene.all_models.data[gltf_scene.nodes[j]]) or_return
 	}
 
 	load_animations(ctx, &glt, scene)

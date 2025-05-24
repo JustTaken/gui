@@ -25,6 +25,8 @@ Context :: struct {
   rotate_right: matrix[4, 4]f32,
   translate_right: matrix[4, 4]f32,
   translate_left: matrix[4, 4]f32,
+  translate_down: matrix[4, 4]f32,
+  translate_up: matrix[4, 4]f32,
   translate_back: matrix[4, 4]f32,
   translate_for: matrix[4, 4]f32,
   scenes: collection.Vector(Scene),
@@ -99,12 +101,15 @@ init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error
   ctx.rotate_right = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, 1, 0})
   ctx.translate_right = linalg.matrix4_translate_f32({translation_velocity, 0, 0})
   ctx.translate_left = linalg.matrix4_translate_f32({-translation_velocity, 0, 0})
+  ctx.translate_down = linalg.matrix4_translate_f32({0, translation_velocity, 0})
+  ctx.translate_up = linalg.matrix4_translate_f32({0, -translation_velocity, 0})
   ctx.translate_back = linalg.matrix4_translate_f32({0, 0, -translation_velocity})
   ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity})
 
   ctx.view = linalg.matrix4_translate_f32({0,0, -20})
   ctx.scenes = collection.new_vec(Scene, 20, ctx.vk.allocator) or_return
   // ctx.bone = load_gltf_scene(ctx, "assets/bone.gltf") or_return
+  // ctx.cube = load_gltf_scene(ctx, "assets/translation.gltf") or_return
   ctx.cube = load_gltf_scene(ctx, "assets/cube_animation.gltf") or_return
   ctx.cube_instance = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
 
@@ -151,6 +156,8 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context, time: i64) -> error.Error
   if wl.is_key_pressed(keymap, .a) do new_view(ctx, ctx.translate_right * ctx.view)
   if wl.is_key_pressed(keymap, .s) do new_view(ctx, ctx.translate_back * ctx.view)
   if wl.is_key_pressed(keymap, .w) do new_view(ctx, ctx.translate_for * ctx.view)
+  if wl.is_key_pressed(keymap, .k) do new_view(ctx, ctx.translate_up * ctx.view)
+  if wl.is_key_pressed(keymap, .j) do new_view(ctx, ctx.translate_down * ctx.view)
   if wl.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.rotate_up * ctx.view)
   if wl.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
   if wl.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)

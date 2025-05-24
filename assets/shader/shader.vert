@@ -19,20 +19,19 @@ layout(set = 1, binding = 0) readonly buffer InstanceModel {
   mat4 models[];
 };
 
-layout(set = 1, binding = 1) readonly buffer InstanceModel {
+layout(set = 1, binding = 1) readonly buffer InstanceTransform {
   mat4 transforms[];
 };
 
-layout(set = 1, binding = 2) readonly buffer InstanceModel {
+layout(set = 1, binding = 2) readonly buffer InstanceOffset {
   int offsets[];
 };
 
 void main() {
-  int offset = offsets[gl_InstanceIndex]
+  int offset = offsets[gl_InstanceIndex];
   mat4 transform = transforms[offset];
 
-  gl_Position = projection * view * models[gl_InstanceIndex] * vec4(in_position, 1.0);
-  gl_Position = transform * gl_Position;
+  gl_Position = projection * view * models[gl_InstanceIndex] * transform * vec4(in_position, 1.0);
 
 
   vec3 ligth_direction = normalize(light - gl_Position.xyz);
