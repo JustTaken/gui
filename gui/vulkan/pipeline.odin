@@ -13,14 +13,6 @@ Pipeline_Layout :: struct {
   sets: collection.Vector(^Descriptor_Set_Layout),
 }
 
-// @private
-// Pipeline_Info :: struct {
-//   layout: ^Pipeline_Layout,
-//   geometries: Geometry_Group,
-//   vert: string,
-//   frag: string,
-// }
-
 @private
 Pipeline :: struct {
   handle: vk.Pipeline,
@@ -199,7 +191,7 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout:
     rasterizerDiscardEnable = false,
     polygonMode       = .FILL,
     cullMode    = {.FRONT},
-    frontFace         = .CLOCKWISE,
+    frontFace         = .COUNTER_CLOCKWISE,
     depthBiasEnable   = false,
     depthBiasClamp    = 0.0,
     depthBiasConstantFactor = 0.0,

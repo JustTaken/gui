@@ -24,11 +24,7 @@ parse_asset :: proc(ctx: ^Context) -> error.Error {
 
   ctx.raw_nodes = ctx.obj["nodes"].(json.Array)
   ctx.nodes = make([]Node, len(ctx.raw_nodes), ctx.allocator)
-  ctx.inverse_binding = make([]Matrix, len(ctx.raw_nodes), ctx.allocator)
-
-  for i in 0..<len(ctx.raw_nodes) {
-    ctx.inverse_binding[i] = linalg.MATRIX4F32_IDENTITY
-  }
+  // ctx.bind_pose= make([]Matrix, len(ctx.raw_nodes), ctx.allocator)
 
   ctx.raw_buffer_views = ctx.obj["bufferViews"].(json.Array)
   ctx.buffer_views = make([]Buffer_View, len(ctx.raw_buffer_views), ctx.allocator)

@@ -8,6 +8,8 @@ import "core:log"
 
 import "./../../error"
 
+FRAME_TIME :: 1.0 / 24.0
+
 @private
 Animation_Interpolation :: enum {
   Linear,
@@ -63,8 +65,16 @@ parse_rotation :: proc(channel: ^Animation_Channel, frames: []Animation_Frame) -
 
   #partial switch channel.sampler.interpolation {
     case .Linear:
-      for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].rotate = output[i]
+      k := 0
+
+      for i in 0..<len(frames) {
+        if frames[i].time >= input[k] {
+          k += 1
+          frames[i].transforms[channel.target.node].rotate = output[k - 1]
+        } else {
+          delta := (input[k] - frames[i].time) / (input[k] - input[k - 1])
+          frames[i].transforms[channel.target.node].rotate = output[k - 1] * delta + output[k] * (1.0 - delta)
+        }
       }
     case .Step:
         k := 0
@@ -96,22 +106,35 @@ parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Frame
 
   #partial switch channel.sampler.interpolation {
     case .Linear:
-      for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].translate = output[i]
+      k := 0
+
+      for i in 0..<len(frames) {
+        if frames[i].time >= input[k] {
+          k += 1
+          frames[i].transforms[channel.target.node].translate = output[k - 1]
+        } else {
+          delta := (input[k] - frames[i].time) / (input[k] - input[k - 1])
+          frames[i].transforms[channel.target.node].translate = output[k - 1] * delta + output[k] * (1.0 - delta)
+        }
       }
     case .Step:
-        k := 0
+      k := 0
 
-        for i in 0..<len(frames) {
-          if frames[i].time >= input[k] {
-            k += 1
-          }
-
-          frames[i].transforms[channel.target.node].translate = output[k - 1]
+      for i in 0..<len(frames) {
+        if frames[i].time >= input[k] {
+          k += 1
         }
+
+        frames[i].transforms[channel.target.node].translate = output[k - 1]
+      }
     case:
       return .InvalidAnimationInterpolation
   }
+
+  // log.info("TRANSLATION FOR NODE:", channel.target.node, channel.sampler.interpolation)
+  // for i in 0..<len(frames) {
+  //   log.info("TRANSLATION", frames[i].transforms[channel.target.node].translate)
+  // }
 
   return nil
 }
@@ -129,8 +152,16 @@ parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Frame) -> e
 
   #partial switch channel.sampler.interpolation {
     case .Linear:
-      for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].scale = output[i]
+      k := 0
+
+      for i in 0..<len(frames) {
+        if frames[i].time >= input[k] {
+          k += 1
+          frames[i].transforms[channel.target.node].scale = output[k - 1]
+        } else {
+          delta := (input[k] - frames[i].time) / (input[k] - input[k - 1])
+          frames[i].transforms[channel.target.node].scale = output[k - 1] * delta + output[k] * (1.0 - delta)
+        }
       }
     case .Step:
         k := 0
@@ -203,6 +234,7 @@ parse_animation_samplers :: proc(ctx: ^Context, raw: json.Array) -> (samplers: [
 
   for i in 0..<len(raw) {
     samplers[i] = parse_animation_sampler(ctx, raw[i].(json.Object)) or_return
+    // log.info("SAMPLER:", i, samplers[i].input.count, samplers[i].output.count)
   }
 
   return samplers, nil
@@ -233,7 +265,6 @@ parse_frames :: proc(ctx: ^Context, channels: []Animation_Channel, sampler: ^Ani
       t.translate = {0, 0, 0}
       t.scale = {1, 1, 1}
       t.compose = linalg.MATRIX4F32_IDENTITY
-      // t.compose = linalg.matrix4_scale_f32({1, 1, 1})
     }
   }
 

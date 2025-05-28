@@ -39,6 +39,7 @@ Scene_Instance :: struct {
 Scene :: struct {
   all_models: collection.Vector(Model),
   models: collection.Vector(^Model),
+  bind_pose: []Matrix,
   animations: map[string]Scene_Animation,
   transforms_offset: u32,
 }
@@ -373,15 +374,6 @@ load_gltf_scene :: proc(ctx: ^Context, path: string, max: u32) -> (scene: ^Scene
 
 @test
 main_test :: proc(t: ^testing.T) {
-  ctx: Context
-  err: error.Error
-
-  err = init_memory(&ctx, 1024 * 1024 * 2, 2)
-  testing.expect(t, err == nil)
-
-  ctx.scenes, err = collection.new_vec(Scene, 20, ctx.allocator)
-  testing.expect(t, err == nil)
-
-  ctx.cube, err = load_gltf_scene(&ctx, "assets/translation.gltf", 1)
+  glt, err := gltf.from_file("assets/translation.gltf", context.allocator)
   testing.expect(t, err == nil)
 }

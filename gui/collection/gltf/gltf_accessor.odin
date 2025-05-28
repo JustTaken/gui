@@ -70,6 +70,7 @@ parse_accessor :: proc(ctx: ^Context, raw: json.Object) -> (accessor: Accessor, 
 parse_accessors :: proc(ctx: ^Context) -> error.Error {
   for i in 0..<len(ctx.raw_accessors) {
     ctx.accessors[i] = parse_accessor(ctx, ctx.raw_accessors[i].(json.Object)) or_return
+    // log.info("ACCESSOR:", i, ctx.accessors[i].count)
   }
 
   return nil

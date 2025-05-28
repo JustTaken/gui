@@ -108,7 +108,7 @@ init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  erro
   ctx.view = linalg.matrix4_translate_f32({0, 0, -10})
   ctx.scenes = collection.new_vec(Scene, 20, ctx.allocator) or_return
 
-  ctx.cube = load_gltf_scene(ctx, "assets/translation.gltf", 1) or_return
+  ctx.cube = load_gltf_scene(ctx, "assets/rotation.gltf", 1) or_return
   ctx.cube_instance = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
 
   wl.add_listener(&ctx.wl, ctx, frame) or_return
@@ -164,7 +164,7 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context, time: i64) -> error.Error
   if wl.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
 
   if wl.is_key_pressed(keymap, .Space) {
-    play_scene_animation(&ctx.cube_instance, "FAnimation", time) or_return
+    play_scene_animation(&ctx.cube_instance, "FAnime", time) or_return
   }
 
   if ctx.view_update do vk.update_view(ctx.wl.vk, ctx.view) or_return

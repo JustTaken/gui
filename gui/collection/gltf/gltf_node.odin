@@ -11,7 +11,7 @@ Node :: struct {
   skin: Maybe(u32),
   parent: Maybe(u32),
   children: []u32,
-  transform: Transform,
+  transform: Invertable_Transform,
   evaluated: bool,
   cascated: bool,
 }
@@ -46,8 +46,7 @@ parse_node :: proc(ctx: ^Context, n: int) -> error.Error {
     node.transform.translate = {f32(t[0].(f64)), f32(t[1].(f64)), f32(t[2].(f64))}
   }
 
-  transform_apply(&node.transform)
-  ctx.inverse_binding[n] = linalg.inverse(node.transform.compose)
+  invertable_transform_apply(&node.transform)
 
   if mesh, ok := raw["mesh"]; ok {
     node.mesh = u32(mesh.(f64))
@@ -80,20 +79,21 @@ parse_node :: proc(ctx: ^Context, n: int) -> error.Error {
 evaluate_node :: proc(ctx: ^Context, n: int) {
   if ctx.nodes[n].cascated do return
 
+  ctx.nodes[n].transform.inverse = linalg.inverse(ctx.nodes[n].transform.compose)
+
   if ctx.nodes[n].parent != nil {
     evaluate_node(ctx, int(ctx.nodes[n].parent.?))
 
     ctx.nodes[n].transform.compose = ctx.nodes[ctx.nodes[n].parent.?].transform.compose * ctx.nodes[n].transform.compose
   }
 
-  // ctx.inverse_binding[n] = linalg.inverse(ctx.nodes[n].transform.compose)
 
   log.info("NODE:", n, ctx.nodes[n].name, ctx.nodes[n].parent)
   log.info("  TRANSLATE", ctx.nodes[n].transform.translate)
   log.info("  ROTATE", ctx.nodes[n].transform.rotate)
   log.info("  SCALE", ctx.nodes[n].transform.scale)
   log.info("  TRANSFORM", ctx.nodes[n].transform.compose)
-  log.info("  INVERSE", ctx.inverse_binding[n])
+  log.info("  INVERSE", ctx.nodes[n].transform.inverse)
 
   for i in 0..<len(ctx.animations) {
     for k in 0..<len(ctx.animations[i].frames) {
@@ -101,8 +101,7 @@ evaluate_node :: proc(ctx: ^Context, n: int) {
       transform := &ctx.animations[i].frames[k].transforms[n]
 
       transform_apply(transform)
-
-      transform.compose = ctx.inverse_binding[n] * transform.compose
+      transform.compose = ctx.nodes[n].transform.inverse * transform.compose
 
       if ctx.nodes[n].parent != nil {
         transform.compose = transforms[ctx.nodes[n].parent.?].compose * transform.compose 
@@ -129,14 +128,16 @@ parse_nodes :: proc(ctx: ^Context) -> error.Error {
 
       for i in 0..<len(ctx.nodes) {
         transform := &ctx.animations[j].frames[k].transforms[i]
-        // transform.compose = ctx.inverse_binding[i] * transform.compose
 
         log.info("  NODE", i, "PARENT:", ctx.nodes[i].parent)
         log.info("    TRANSLATE", transform.translate)
         log.info("    ROTATE", transform.rotate)
         log.info("    SCALE", transform.scale)
         log.info("    TRANSFORM", transform.compose)
+        // log.info("    INVERSE", ctx.nodes[i].transform.inverse * transform.compose)
+        // log.info("    INVERSE", transform.inverse * transform.compose)
 
+        // transform.inverse = transform.inverse * transform.compose
       }
     }
   }

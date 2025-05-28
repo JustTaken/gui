@@ -14,6 +14,14 @@ import "./../../error"
 @private
 Matrix :: matrix[4, 4]f32
 
+Invertable_Transform :: struct {
+  translate: [3]f32,
+  scale: [3]f32,
+  rotate: [4]f32,
+  compose: Matrix,
+  inverse: Matrix,
+}
+
 Transform :: struct {
   translate: [3]f32,
   scale: [3]f32,
@@ -46,7 +54,6 @@ Context :: struct {
   skins: []Skin,
   buffers: []Buffer,
   buffer_views: []Buffer_View,
-  inverse_binding: []Matrix,
   animations: []Animation,
   scenes: map[string]Scene,
   allocator: runtime.Allocator,
@@ -95,32 +102,21 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
 
 @private
 transform_apply :: proc(transform: ^Transform) {
-  translate := linalg.matrix4_translate_f32(transform.translate)
-  rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = transform.rotate[0], y = transform.rotate[1], z = transform.rotate[2], w = transform.rotate[3]))
-  scale := linalg.matrix4_scale_f32(transform.scale)
+  translate := linalg.matrix4_translate(transform.translate)
+  rotate := linalg.matrix4_from_quaternion(quaternion(x = transform.rotate[0], y = transform.rotate[1], z = transform.rotate[2], w = transform.rotate[3]))
+  scale := linalg.matrix4_scale(transform.scale)
 
   transform.compose = translate * rotate * scale
 }
 
-// @private
-// transform_inverse :: proc(transform: Transform) -> Matrix {
-//   norm := transform.rotate[0] * transform.rotate[0] + transform.rotate[1] * transform.rotate[1] + transform.rotate[2] * transform.rotate[2] + transform.rotate[3] * transform.rotate[3]
-//   if norm == 0 {
-//     norm = 1
-//   }
+@private
+invertable_transform_apply :: proc(transform: ^Invertable_Transform) {
+  translate := linalg.matrix4_translate(transform.translate)
+  rotate := linalg.matrix4_from_quaternion(quaternion(x = transform.rotate[0], y = transform.rotate[1], z = transform.rotate[2], w = transform.rotate[3]))
+  scale := linalg.matrix4_scale(transform.scale)
 
-//   translate := linalg.matrix4_translate_f32({-transform.translate[0], -transform.translate[1], -transform.translate[2]})
-//   rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = -transform.rotate[0], y = -transform.rotate[1], z = -transform.rotate[2], w = transform.rotate[3]))
-//   // rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = -transform.rotate[0] / norm, y = -transform.rotate[1] / norm, z = -transform.rotate[2] / norm, w = transform.rotate[3] / norm))
-//   scale := linalg.matrix4_scale_f32({1.0 / transform.scale[0], 1.0 / transform.scale[1], 1.0 / transform.scale[2]})
-
-//   log.info("INVERSE:", [3]f32{-transform.translate[0], -transform.translate[1], -transform.translate[2]}, [4]f32{-transform.rotate[0] / norm, -transform.rotate[1] / norm, -transform.rotate[2] / norm, transform.rotate[3] / norm}, [3]f32{1.0 / transform.scale[0], 1.0 / transform.scale[1], 1.0 / transform.scale[2]})
-//   log.info("INVERSE:", quaternion(x = -transform.rotate[0] / norm, y = -transform.rotate[1] / norm, z = -transform.rotate[2] / norm, w = transform.rotate[3] / norm) * quaternion(x = transform.rotate[0], y = transform.rotate[1], z = transform.rotate[2], w = transform.rotate[3]), [3]f32{1.0 / transform.scale[0], 1.0 / transform.scale[1], 1.0 / transform.scale[2]})
-//   log.info("INVERSE:", translate * rotate * scale)
-//   log.info("LINALG INVERSE:", linalg.inverse(transform.compose))
-
-//   return linalg.inverse(transform.compose)
-// }
+  transform.compose = translate * rotate * scale
+}
 
 @test
 first_test :: proc(t: ^testing.T) {
