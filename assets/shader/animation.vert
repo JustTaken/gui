@@ -33,7 +33,7 @@ void main() {
   int offset = offsets[gl_InstanceIndex];
   mat4 transform = transforms[offset + in_joints[0]] * in_weights[0] + transforms[offset + in_joints[1]] * in_weights[1] + transforms[offset + in_joints[2]] * in_weights[2] + transforms[offset + in_joints[3]] * in_weights[3];
 
-  gl_Position = projection * view * models[gl_InstanceIndex] * transform * vec4(in_position, 1.0);
+  gl_Position = projection * view * transform * models[gl_InstanceIndex] * vec4(in_position, 1.0);
 
   vec3 ligth_direction = normalize(light - gl_Position.xyz);
   out_color = vec4(length(dot(in_normal, ligth_direction)) * vec3(1, 1, 1), 1);

@@ -19,7 +19,6 @@ parse_scene :: proc(ctx: ^Context, raw: json.Object) -> (name: string, scene: Sc
     index := u32(raw_nodes[i].(f64))
 
     scene.nodes[i] = index
-    apply_node_transform(ctx, index, nil)
   }
 
   return name, scene, nil

@@ -12,7 +12,6 @@ import "./../../error"
 Animation_Interpolation :: enum {
   Linear,
   Step,
-  // CubicSpline,
 }
 
 @private
@@ -20,7 +19,6 @@ Animation_Path :: enum {
   Translation,
   Rotation,
   Scale,
-  // Weights,
 }
 
 @private
@@ -42,43 +40,18 @@ Animation_Channel :: struct {
   target: Animation_Target,
 }
 
-@private
-Animation_Transform :: struct {
-  translate: [3]f32,
-  scale: [3]f32,
-  rotate: [4]f32,
-}
-
-@private
-Animation_Fragmented_Frame :: struct {
-  time: f32,
-  transforms: []Animation_Transform,
-}
-
-@private
-Animation_Fragmented :: struct {
-  name: string,
-  frames: []Animation_Fragmented_Frame,
-}
-
-@private
 Animation_Frame :: struct {
   time: f32,
-  transforms: []Matrix,
+  transforms: []Transform,
 }
 
-@private
 Animation :: struct {
   name: string,
   frames: []Animation_Frame
 }
 
 @private
-parse_rotation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_Frame) -> error.Error {
-  extract_rotation :: proc(output: [4]f32) -> [4]f32 {
-    return {output[0], -output[1], -output[2], output[3]}
-  }
-
+parse_rotation :: proc(channel: ^Animation_Channel, frames: []Animation_Frame) -> error.Error {
   assert(channel.sampler.input.component_kind == .F32)
   assert(channel.sampler.output.component_kind == .F32)
   assert(channel.sampler.input.component_count == 1)
@@ -91,7 +64,7 @@ parse_rotation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragment
   #partial switch channel.sampler.interpolation {
     case .Linear:
       for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].rotate = extract_rotation(output[i])
+        frames[i].transforms[channel.target.node].rotate = output[i]
       }
     case .Step:
         k := 0
@@ -101,7 +74,7 @@ parse_rotation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragment
             k += 1
           }
 
-          frames[i].transforms[channel.target.node].rotate = extract_rotation(output[k - 1])
+          frames[i].transforms[channel.target.node].rotate = output[k - 1]
         }
     case:
       return .InvalidAnimationInterpolation
@@ -111,11 +84,7 @@ parse_rotation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragment
 }
 
 @private
-parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_Frame) -> error.Error {
-  extract_translation :: proc(output: [3]f32) -> [3]f32 {
-    return {output[0], output[1], output[2]}
-  }
-
+parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Frame) -> error.Error {
   assert(channel.sampler.input.component_kind == .F32)
   assert(channel.sampler.output.component_kind == .F32)
   assert(channel.sampler.input.component_count == 1)
@@ -128,8 +97,7 @@ parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragm
   #partial switch channel.sampler.interpolation {
     case .Linear:
       for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].translate = extract_translation(output[i])
-	    // log.info("  Parsing translation:", output[i])
+        frames[i].transforms[channel.target.node].translate = output[i]
       }
     case .Step:
         k := 0
@@ -139,7 +107,7 @@ parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragm
             k += 1
           }
 
-          frames[i].transforms[channel.target.node].translate = extract_translation(output[k - 1])
+          frames[i].transforms[channel.target.node].translate = output[k - 1]
         }
     case:
       return .InvalidAnimationInterpolation
@@ -149,11 +117,7 @@ parse_translation :: proc(channel: ^Animation_Channel, frames: []Animation_Fragm
 }
 
 @private
-parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_Frame) -> error.Error {
-  extract_scale :: proc(output: [3]f32) -> [3]f32 {
-    return {output[0], output[1], output[2]}
-  }
-
+parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Frame) -> error.Error {
   assert(channel.sampler.input.component_kind == .F32)
   assert(channel.sampler.output.component_kind == .F32)
   assert(channel.sampler.input.component_count == 1)
@@ -166,7 +130,7 @@ parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_
   #partial switch channel.sampler.interpolation {
     case .Linear:
       for i in 0..<len(output) {
-        frames[i].transforms[channel.target.node].scale = extract_scale(output[i])
+        frames[i].transforms[channel.target.node].scale = output[i]
       }
     case .Step:
         k := 0
@@ -176,7 +140,7 @@ parse_scale :: proc(channel: ^Animation_Channel, frames: []Animation_Fragmented_
             k += 1
           }
 
-          frames[i].transforms[channel.target.node].scale = extract_scale(output[k - 1])
+          frames[i].transforms[channel.target.node].scale = output[k - 1]
         }
     case:
       return .InvalidAnimationInterpolation
@@ -245,7 +209,7 @@ parse_animation_samplers :: proc(ctx: ^Context, raw: json.Array) -> (samplers: [
 }
 
 @private
-parse_channel_transforms :: proc(ctx: ^Context, channel: ^Animation_Channel, frames: []Animation_Fragmented_Frame) -> error.Error {
+parse_channel_transforms :: proc(ctx: ^Context, channel: ^Animation_Channel, frames: []Animation_Frame) -> error.Error {
   switch channel.target.path {
     case .Translation: parse_translation(channel, frames) or_return
     case .Scale: parse_scale(channel, frames) or_return
@@ -256,18 +220,20 @@ parse_channel_transforms :: proc(ctx: ^Context, channel: ^Animation_Channel, fra
 }
 
 @private
-parse_frames :: proc(ctx: ^Context, channels: []Animation_Channel, sampler: ^Animation_Sampler) -> (frames: []Animation_Fragmented_Frame, err: error.Error) {
-  frames = make([]Animation_Fragmented_Frame, sampler.input.count, ctx.allocator)
+parse_frames :: proc(ctx: ^Context, channels: []Animation_Channel, sampler: ^Animation_Sampler) -> (frames: []Animation_Frame, err: error.Error) {
+  frames = make([]Animation_Frame, sampler.input.count, ctx.allocator)
 
   input := (cast([^]f32)raw_data(sampler.input.bytes))[0:sampler.input.count]
   for i in 0..<sampler.input.count {
     frames[i].time = input[i]
-    frames[i].transforms = make([]Animation_Transform, len(ctx.nodes), ctx.allocator)
+    frames[i].transforms = make([]Transform, len(ctx.nodes), ctx.allocator)
 
     for &t in frames[i].transforms {
       t.rotate = {0, 0, 0, 0}
       t.translate = {0, 0, 0}
       t.scale = {1, 1, 1}
+      t.compose = linalg.MATRIX4F32_IDENTITY
+      // t.compose = linalg.matrix4_scale_f32({1, 1, 1})
     }
   }
 
@@ -279,7 +245,7 @@ parse_frames :: proc(ctx: ^Context, channels: []Animation_Channel, sampler: ^Ani
 }
 
 @private
-parse_animation :: proc(ctx: ^Context, raw: json.Object) -> (animation: Animation_Fragmented, err: error.Error) {
+parse_animation :: proc(ctx: ^Context, raw: json.Object) -> (animation: Animation, err: error.Error) {
   animation.name = strings.clone(raw["name"].(string), ctx.allocator)
 
   samplers := parse_animation_samplers(ctx, raw["samplers"].(json.Array)) or_return
@@ -304,15 +270,7 @@ parse_animation :: proc(ctx: ^Context, raw: json.Object) -> (animation: Animatio
 @private
 parse_animations :: proc(ctx: ^Context) -> error.Error {
   for i in 0..<len(ctx.raw_animations) {
-    ctx.fragmented_animations[i] = parse_animation(ctx, ctx.raw_animations[i].(json.Object)) or_return
-
-    ctx.animations[i].name = ctx.fragmented_animations[i].name
-    ctx.animations[i].frames = make([]Animation_Frame, len(ctx.fragmented_animations[i].frames), ctx.allocator)
-
-    for k in 0..<len(ctx.fragmented_animations[i].frames) {
-      ctx.animations[i].frames[k].time = ctx.fragmented_animations[i].frames[k].time
-      ctx.animations[i].frames[k].transforms = make([]Matrix, len(ctx.nodes), ctx.allocator)
-    }
+    ctx.animations[i] = parse_animation(ctx, ctx.raw_animations[i].(json.Object)) or_return
   }
 
   return nil

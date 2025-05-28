@@ -60,35 +60,34 @@ main :: proc() {
 }
 
 run :: proc(width: u32, height: u32, frames: u32) -> error.Error {
-  m_err: mem.Allocator_Error
   ctx: Context
 
-  if ctx.bytes, m_err = make([]u8, 1024 * 1024 * 2, context.allocator); m_err != nil {
-    log.error("Primary allocation failed:", m_err)
-    return .OutOfMemory
-  }
-
-  defer delete(ctx.bytes)
-
-  mem.arena_init(&ctx.arena, ctx.bytes)
-  ctx.allocator = mem.arena_allocator(&ctx.arena)
-  context.allocator = ctx.allocator
-
-  mem.arena_init(&ctx.tmp_arena, make([]u8, 1024 * 1024 * 1, context.allocator))
-  ctx.tmp_allocator = mem.arena_allocator(&ctx.tmp_arena)
-  context.temp_allocator = ctx.tmp_allocator
-
-  init(&ctx, width, height, frames) or_return
+  init_memory(&ctx, 1024 * 1024 * 2, 2) or_return
+  init_scene(&ctx, width, height, frames) or_return
   loop(&ctx) or_return
   deinit(&ctx)
 
   return nil
 }
 
-init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error {
-  mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
-  defer mem.end_arena_temp_memory(mark)
+init_memory :: proc(ctx: ^Context, bytes: u32, divisor: u32) -> error.Error {
+  if bytes, m_err := make([]u8, bytes, context.allocator); m_err == nil {
+    ctx.bytes = bytes
+  } else {
+    log.error("Primary allocation failed:")
+    return .OutOfMemory
+  }
 
+  mem.arena_init(&ctx.arena, ctx.bytes)
+  ctx.allocator = mem.arena_allocator(&ctx.arena)
+
+  mem.arena_init(&ctx.tmp_arena, make([]u8, bytes / divisor, ctx.allocator))
+  ctx.tmp_allocator = mem.arena_allocator(&ctx.tmp_arena)
+
+  return nil;
+}
+
+init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  error.Error {
   vk.vulkan_init(&ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
   wl.wayland_init(&ctx.wl, &ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
 
@@ -106,16 +105,15 @@ init :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) -> error.Error
   ctx.translate_back = linalg.matrix4_translate_f32({0, 0, -translation_velocity})
   ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity})
 
-  ctx.view = linalg.matrix4_translate_f32({0,0, -20})
-  ctx.scenes = collection.new_vec(Scene, 20, ctx.vk.allocator) or_return
-  // ctx.bone = load_gltf_scene(ctx, "assets/bone.gltf") or_return
-  // ctx.cube = load_gltf_scene(ctx, "assets/translation.gltf") or_return
-  ctx.cube = load_gltf_scene(ctx, "assets/cube_animation.gltf") or_return
+  ctx.view = linalg.matrix4_translate_f32({0, 0, -10})
+  ctx.scenes = collection.new_vec(Scene, 20, ctx.allocator) or_return
+
+  ctx.cube = load_gltf_scene(ctx, "assets/translation.gltf", 1) or_return
   ctx.cube_instance = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
 
+  wl.add_listener(&ctx.wl, ctx, frame) or_return
   vk.update_view(&ctx.vk, ctx.view) or_return
   vk.update_light(&ctx.vk, {0, 0, 0}) or_return
-  wl.add_listener(&ctx.wl, ctx, frame) or_return
 
   return nil
 }
@@ -126,6 +124,8 @@ deinit :: proc(ctx: ^Context) {
 
   log.info("TMP", ctx.tmp_arena.offset, ctx.tmp_arena.peak_used)
   log.info("MAIN", ctx.arena.offset - len(ctx.tmp_arena.data), ctx.arena.peak_used - len(ctx.tmp_arena.data))
+
+  delete(ctx.bytes)
 }
 
 loop :: proc(ctx: ^Context) -> error.Error {
@@ -144,8 +144,8 @@ loop :: proc(ctx: ^Context) -> error.Error {
 }
 
 new_view :: proc(ctx: ^Context, view: matrix[4, 4]f32) {
-    ctx.view = view
-    ctx.view_update = true
+  ctx.view = view
+  ctx.view_update = true
 }
 
 frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context, time: i64) -> error.Error {
@@ -162,8 +162,9 @@ frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context, time: i64) -> error.Error
   if wl.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
   if wl.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
   if wl.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
+
   if wl.is_key_pressed(keymap, .Space) {
-    play_scene_animation(&ctx.cube_instance, "First", time) or_return
+    play_scene_animation(&ctx.cube_instance, "FAnimation", time) or_return
   }
 
   if ctx.view_update do vk.update_view(ctx.wl.vk, ctx.view) or_return

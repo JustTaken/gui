@@ -6,12 +6,20 @@ import "core:log"
 import "core:encoding/json"
 import "core:fmt"
 import "core:path/filepath"
+import "core:math/linalg"
 
 import "core:testing"
 import "./../../error"
 
 @private
 Matrix :: matrix[4, 4]f32
+
+Transform :: struct {
+  translate: [3]f32,
+  scale: [3]f32,
+  rotate: [4]f32,
+  compose: Matrix,
+}
 
 @private
 Context :: struct {
@@ -38,7 +46,7 @@ Context :: struct {
   skins: []Skin,
   buffers: []Buffer,
   buffer_views: []Buffer_View,
-  fragmented_animations: []Animation_Fragmented,
+  inverse_binding: []Matrix,
   animations: []Animation,
   scenes: map[string]Scene,
   allocator: runtime.Allocator,
@@ -58,7 +66,7 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
   ctx: Context
   ctx.allocator = allocator
 
-  if bytes, ok := os.read_entire_file(path); ok {
+  if bytes, ok := os.read_entire_file(path, allocator = ctx.allocator); ok {
     if value, j_err := json.parse(bytes, allocator = ctx.allocator); j_err == nil {
         ctx.obj = value.(json.Object)
     } else do return gltf, .GltfLoadFailed
@@ -85,56 +93,33 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
   return gltf, nil
 }
 
-// @private
-// greater :: proc(first, second: f32) -> bool {
-//   return first > second + 0.001
-// }
+@private
+transform_apply :: proc(transform: ^Transform) {
+  translate := linalg.matrix4_translate_f32(transform.translate)
+  rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = transform.rotate[0], y = transform.rotate[1], z = transform.rotate[2], w = transform.rotate[3]))
+  scale := linalg.matrix4_scale_f32(transform.scale)
+
+  transform.compose = translate * rotate * scale
+}
 
 // @private
-// show_primitive :: proc(primitive: Mesh_Primitive) {
-//   for accessor in primitive.accessors {
-//     if accessor == nil do continue
-
-//     log.info("    Kind", accessor.component_kind)
-//     log.info("    Count", accessor.component_count)
-//     log.info("    Len", accessor.count)
-//   }
-// }
-
-// @private
-// show_mesh :: proc(mesh: ^Mesh) {
-//   log.info("Mesh:", mesh.name)
-
-//   for primitive in mesh.primitives {
-//     show_primitive(primitive)
-//   }
-// }
-
-// @private
-// show_joint :: proc(joint: ^Node) {
-//   log.info("  Joint", rawptr(joint), joint.name, joint.transform)
-// }
-
-// @private
-// show_skin :: proc(skin: ^Skin) {
-//   for joint in skin.joints {
-//     show_joint(joint)
-//   }
-// }
-
-// @private
-// show_node :: proc(node: ^Node) {
-//   if mesh := node.mesh; mesh != nil {
-//     show_mesh(mesh)
+// transform_inverse :: proc(transform: Transform) -> Matrix {
+//   norm := transform.rotate[0] * transform.rotate[0] + transform.rotate[1] * transform.rotate[1] + transform.rotate[2] * transform.rotate[2] + transform.rotate[3] * transform.rotate[3]
+//   if norm == 0 {
+//     norm = 1
 //   }
 
-//   if skin := node.skin; skin != nil {
-//     show_skin(skin)
-//   }
+//   translate := linalg.matrix4_translate_f32({-transform.translate[0], -transform.translate[1], -transform.translate[2]})
+//   rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = -transform.rotate[0], y = -transform.rotate[1], z = -transform.rotate[2], w = transform.rotate[3]))
+//   // rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = -transform.rotate[0] / norm, y = -transform.rotate[1] / norm, z = -transform.rotate[2] / norm, w = transform.rotate[3] / norm))
+//   scale := linalg.matrix4_scale_f32({1.0 / transform.scale[0], 1.0 / transform.scale[1], 1.0 / transform.scale[2]})
 
-//   for child in node.children {
-//     show_node(child)
-//   }
+//   log.info("INVERSE:", [3]f32{-transform.translate[0], -transform.translate[1], -transform.translate[2]}, [4]f32{-transform.rotate[0] / norm, -transform.rotate[1] / norm, -transform.rotate[2] / norm, transform.rotate[3] / norm}, [3]f32{1.0 / transform.scale[0], 1.0 / transform.scale[1], 1.0 / transform.scale[2]})
+//   log.info("INVERSE:", quaternion(x = -transform.rotate[0] / norm, y = -transform.rotate[1] / norm, z = -transform.rotate[2] / norm, w = transform.rotate[3] / norm) * quaternion(x = transform.rotate[0], y = transform.rotate[1], z = transform.rotate[2], w = transform.rotate[3]), [3]f32{1.0 / transform.scale[0], 1.0 / transform.scale[1], 1.0 / transform.scale[2]})
+//   log.info("INVERSE:", translate * rotate * scale)
+//   log.info("LINALG INVERSE:", linalg.inverse(transform.compose))
+
+//   return linalg.inverse(transform.compose)
 // }
 
 @test
@@ -142,12 +127,6 @@ first_test :: proc(t: ^testing.T) {
   glt: Gltf
   err: error.Error
   glt, err = from_file("assets/cube_animation.gltf", context.allocator)
-
-  // scene := glt.scenes["Scene"]
-
-  // for &node, i in scene.nodes {
-  //   show_node(node)
-  // }
 
   testing.expect(t, err == nil, "Failed to load animation")
 }

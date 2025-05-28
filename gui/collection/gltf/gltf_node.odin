@@ -7,44 +7,54 @@ import "core:log"
 
 Node :: struct {
   name: string,
-  mesh: ^Mesh,
+  mesh: Maybe(u32),
+  skin: Maybe(u32),
+  parent: Maybe(u32),
   children: []u32,
-  skin: ^Skin,
-  transform: Matrix,
+  transform: Transform,
+  evaluated: bool,
+  cascated: bool,
 }
 
 @private
-parse_node :: proc(ctx: ^Context, raw: json.Object) -> (node: Node, err: error.Error) {
+parse_node :: proc(ctx: ^Context, n: int) -> error.Error {
+  node := &ctx.nodes[n]
+
+  if node.evaluated do return nil
+
+  raw := ctx.raw_nodes[n].(json.Object)
   node.name = raw["name"].(string)
 
-  if mesh, ok := raw["mesh"]; ok {
-    node.mesh = &ctx.meshes[u32(mesh.(f64))]
-  }
-
-  node.transform = matrix[4, 4]f32 {
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, 0,
-    0, 0, 0, 1,
-  }
+  node.transform.translate = {0, 0, 0}
+  node.transform.rotate = {0, 0, 0, 0}
+  node.transform.scale = {1, 1, 1}
 
   if scale, ok := raw["scale"]; ok {
     s := scale.(json.Array)
 
-    node.transform = linalg.matrix4_scale_f32({cast(f32)s[0].(f64), cast(f32)s[1].(f64), cast(f32)s[2].(f64)}) * node.transform
+    node.transform.scale = {f32(s[0].(f64)), f32(s[1].(f64)), f32(s[2].(f64))}
   }
 
   if rotation, ok := raw["rotation"]; ok {
     r := rotation.(json.Array)
-    q: quaternion128 = quaternion(x = cast(f32)r[0].(f64), y = -cast(f32)r[1].(f64), z = -cast(f32)r[2].(f64), w = cast(f32)r[3].(f64))
-    mat := linalg.matrix3_from_quaternion_f32(q)
-    node.transform = node.transform * linalg.matrix4_from_matrix3_f32(mat)
+    node.transform.rotate = {f32(r[0].(f64)), f32(r[1].(f64)), f32(r[2].(f64)), f32(r[3].(f64))}
   }
 
   if translation, ok := raw["translation"]; ok {
     t := translation.(json.Array)
 
-    node.transform = linalg.matrix4_translate_f32({cast(f32)t[0].(f64), cast(f32)t[1].(f64), cast(f32)t[2].(f64)}) * node.transform
+    node.transform.translate = {f32(t[0].(f64)), f32(t[1].(f64)), f32(t[2].(f64))}
+  }
+
+  transform_apply(&node.transform)
+  ctx.inverse_binding[n] = linalg.inverse(node.transform.compose)
+
+  if mesh, ok := raw["mesh"]; ok {
+    node.mesh = u32(mesh.(f64))
+  }
+
+  if skin, ok := raw["skin"]; ok {
+    node.skin = u32(skin.(f64))
   }
 
   if children, ok := raw["children"]; ok {
@@ -53,48 +63,82 @@ parse_node :: proc(ctx: ^Context, raw: json.Object) -> (node: Node, err: error.E
     node.children = make([]u32, len(array), ctx.allocator)
 
     for i in 0..<len(array) {
-      node.children[i] = u32(array[i].(f64))
+      index := int(array[i].(f64))
+      node.children[i] = u32(index)
+
+      parse_node(ctx, index) or_return
+      ctx.nodes[index].parent = u32(n)
     }
   }
 
-  if skin, ok := raw["skin"]; ok {
-    node.skin = &ctx.skins[u32(skin.(f64))]
-  }
+  node.evaluated = true
 
-  return node, nil
+  return nil
 }
 
 @private
-apply_node_transform :: proc(ctx: ^Context, node: u32, parent: Maybe(u32)) {
-  if parent != nil {
-    ctx.nodes[node].transform = ctx.nodes[parent.?].transform * ctx.nodes[node].transform
+evaluate_node :: proc(ctx: ^Context, n: int) {
+  if ctx.nodes[n].cascated do return
+
+  if ctx.nodes[n].parent != nil {
+    evaluate_node(ctx, int(ctx.nodes[n].parent.?))
+
+    ctx.nodes[n].transform.compose = ctx.nodes[ctx.nodes[n].parent.?].transform.compose * ctx.nodes[n].transform.compose
   }
 
-  for i in 0..<len(ctx.fragmented_animations) {
-    for k in 0..<len(ctx.fragmented_animations[i].frames) {
-      frame := &ctx.fragmented_animations[i].frames[k]
+  // ctx.inverse_binding[n] = linalg.inverse(ctx.nodes[n].transform.compose)
 
-      translate := linalg.matrix4_translate_f32(frame.transforms[node].translate)
-      rotate := linalg.matrix4_from_quaternion_f32(quaternion(x = frame.transforms[node].rotate[0], y = frame.transforms[node].rotate[1], z = frame.transforms[node].rotate[2], w = frame.transforms[node].rotate[3]))
-      scale := linalg.matrix4_scale_f32(frame.transforms[node].scale)
+  log.info("NODE:", n, ctx.nodes[n].name, ctx.nodes[n].parent)
+  log.info("  TRANSLATE", ctx.nodes[n].transform.translate)
+  log.info("  ROTATE", ctx.nodes[n].transform.rotate)
+  log.info("  SCALE", ctx.nodes[n].transform.scale)
+  log.info("  TRANSFORM", ctx.nodes[n].transform.compose)
+  log.info("  INVERSE", ctx.inverse_binding[n])
 
-      ctx.animations[i].frames[k].transforms[node] = translate * rotate * scale
+  for i in 0..<len(ctx.animations) {
+    for k in 0..<len(ctx.animations[i].frames) {
+      transforms := ctx.animations[i].frames[k].transforms
+      transform := &ctx.animations[i].frames[k].transforms[n]
 
-      if parent != nil {
-        ctx.animations[i].frames[k].transforms[node] = ctx.animations[i].frames[k].transforms[parent.?] * ctx.animations[i].frames[k].transforms[node]
+      transform_apply(transform)
+
+      transform.compose = ctx.inverse_binding[n] * transform.compose
+
+      if ctx.nodes[n].parent != nil {
+        transform.compose = transforms[ctx.nodes[n].parent.?].compose * transform.compose 
       }
     }
   }
 
-  for child in ctx.nodes[node].children {
-    apply_node_transform(ctx, child, node)
-  }
+  ctx.nodes[n].cascated = true
 }
 
 @private
 parse_nodes :: proc(ctx: ^Context) -> error.Error {
   for i in 0..<len(ctx.raw_nodes) {
-    ctx.nodes[i] = parse_node(ctx, ctx.raw_nodes[i].(json.Object)) or_return
+    parse_node(ctx, len(ctx.raw_nodes) - i - 1) or_return
+  }
+
+  for i in 0..<len(ctx.nodes) {
+    evaluate_node(ctx, i)
+  }
+
+  for j in 0..<len(ctx.animations) {
+    for k in 0..<len(ctx.animations[j].frames) {
+      log.info("FRAME", k)
+
+      for i in 0..<len(ctx.nodes) {
+        transform := &ctx.animations[j].frames[k].transforms[i]
+        // transform.compose = ctx.inverse_binding[i] * transform.compose
+
+        log.info("  NODE", i, "PARENT:", ctx.nodes[i].parent)
+        log.info("    TRANSLATE", transform.translate)
+        log.info("    ROTATE", transform.rotate)
+        log.info("    SCALE", transform.scale)
+        log.info("    TRANSFORM", transform.compose)
+
+      }
+    }
   }
 
   return nil

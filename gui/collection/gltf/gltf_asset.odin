@@ -1,6 +1,7 @@
 package gltf
 
 import "core:encoding/json"
+import "core:math/linalg"
 import "./../../error"
 
 Asset :: struct {
@@ -23,6 +24,11 @@ parse_asset :: proc(ctx: ^Context) -> error.Error {
 
   ctx.raw_nodes = ctx.obj["nodes"].(json.Array)
   ctx.nodes = make([]Node, len(ctx.raw_nodes), ctx.allocator)
+  ctx.inverse_binding = make([]Matrix, len(ctx.raw_nodes), ctx.allocator)
+
+  for i in 0..<len(ctx.raw_nodes) {
+    ctx.inverse_binding[i] = linalg.MATRIX4F32_IDENTITY
+  }
 
   ctx.raw_buffer_views = ctx.obj["bufferViews"].(json.Array)
   ctx.buffer_views = make([]Buffer_View, len(ctx.raw_buffer_views), ctx.allocator)
@@ -35,7 +41,6 @@ parse_asset :: proc(ctx: ^Context) -> error.Error {
 
   if raw_animations, ok := ctx.obj["animations"]; ok {
     ctx.raw_animations = raw_animations.(json.Array)
-    ctx.fragmented_animations = make([]Animation_Fragmented, len(ctx.raw_animations), ctx.allocator)
     ctx.animations = make([]Animation, len(ctx.raw_animations), ctx.allocator)
   }
 

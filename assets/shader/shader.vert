@@ -31,7 +31,7 @@ void main() {
   int offset = offsets[gl_InstanceIndex];
   mat4 transform = transforms[offset];
 
-  gl_Position = projection * view * models[gl_InstanceIndex] * transform * vec4(in_position, 1.0);
+  gl_Position = projection * view * transform * models[gl_InstanceIndex] * vec4(in_position, 1.0);
 
 
   vec3 ligth_direction = normalize(light - gl_Position.xyz);

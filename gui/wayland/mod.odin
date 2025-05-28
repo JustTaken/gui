@@ -294,6 +294,7 @@ xdg_surface_create :: proc(ctx: ^Wayland_Context) -> error.Error {
   ctx.xdg_surface_id = get_id(ctx, "xdg_surface", {new_callback("configure", configure_callback)}, XDG_INTERFACES[:]) or_return
   ctx.get_toplevel_opcode = get_request_opcode(ctx, "get_toplevel", ctx.xdg_surface_id) or_return
   ctx.ack_configure_opcode = get_request_opcode(ctx, "ack_configure", ctx.xdg_surface_id) or_return
+
   ctx.xdg_toplevel_id = get_id(ctx, "xdg_toplevel", { new_callback("configure", toplevel_configure_callback), new_callback("close", toplevel_close_callback), new_callback("configure_bounds", toplevel_configure_bounds_callback), new_callback("wm_capabilities", toplevel_wm_capabilities_callback), }, XDG_INTERFACES[:]) or_return
 
   write(ctx, {BoundNewId(ctx.xdg_surface_id), Object(ctx.surface_id)}, ctx.xdg_wm_base_id, ctx.get_xdg_surface_opcode) or_return
@@ -317,8 +318,8 @@ dma_create :: proc(ctx: ^Wayland_Context) -> error.Error {
 dma_params_init :: proc(ctx: ^Wayland_Context) -> error.Error {
   ctx.dma_params_id = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback), }, DMA_INTERFACES[:]) or_return
   ctx.dma_params_create_immed_opcode = get_request_opcode(ctx, "create_immed", ctx.dma_params_id) or_return
-  ctx.dma_params_add_opcode = get_request_opcode(ctx, "add", ctx.dma_params_id) or_return
   ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id) or_return
+  ctx.dma_params_add_opcode = get_request_opcode(ctx, "add", ctx.dma_params_id) or_return
 
   return nil
 }
