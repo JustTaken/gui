@@ -664,15 +664,15 @@ global_remove_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argu
 
 @private
 seat_capabilities :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  SeatCapability :: enum {
+  Seat_Capability :: enum {
     Pointer  = 0,
     Keyboard = 1,
     Touch    = 2,
   }
 
-  SeatCapabilities :: bit_set[SeatCapability;u32]
+  Seat_Capabilities :: bit_set[Seat_Capability;u32]
 
-  capabilities := transmute(SeatCapabilities)u32(arguments[0].(Uint))
+  capabilities := transmute(Seat_Capabilities)u32(arguments[0].(Uint))
 
   if .Pointer in capabilities {
     ctx.pointer_id = get_id(ctx, "wl_pointer", { new_callback("leave", pointer_leave_callback), new_callback("enter", pointer_enter_callback), new_callback("motion", pointer_motion_callback), new_callback("button", pointer_button_callback), new_callback("frame", pointer_frame_callback), new_callback("axis", pointer_axis_callback), new_callback("axis_source", pointer_axis_source_callback), new_callback("axis_stop", pointer_axis_stop_callback), new_callback("axis_discrete", pointer_axis_discrete_callback), new_callback("axis_value120", pointer_axis_value120_callback), new_callback("axis_relative_direction", pointer_axis_relative_direction_callback), }, WAYLAND_INTERFACES[:]) or_return
@@ -698,9 +698,7 @@ keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Ar
     return .OutOfMemory
   }
 
-  mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
   ctx.keymap = xkb.keymap_from_bytes(data, ctx.allocator, ctx.tmp_allocator) or_return
-  mem.end_arena_temp_memory(mark)
 
   return nil
 }
@@ -717,7 +715,7 @@ keyboard_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Arg
 }
 @private
 keyboard_key_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  xkb.register_code(&ctx.keymap, u32(arguments[2].(Uint)), u32(arguments[3].(Uint)))
+  xkb.register_code(&ctx.keymap, u32(arguments[2].(Uint)), u32(arguments[3].(Uint))) or_return
 
   return nil
 }
@@ -904,16 +902,10 @@ dma_format_table_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []A
   count := size / tuple_size
   for i in 0 ..< count {
     offset := u32(i) * tuple_size
+    modifier := vector.one(&ctx.modifiers) or_return
 
-    format := intrinsics.unaligned_load((^u32)(raw_data(buf[offset:][0:format_size])))
-    modifier := intrinsics.unaligned_load((^u64)(raw_data(buf[offset + modifier_size:][0:modifier_size])))
-
-    mod := Modifier {
-      format   = format,
-      modifier = modifier,
-    }
-
-    vector.append(&ctx.modifiers, mod)
+    modifier.format = intrinsics.unaligned_load((^u32)(raw_data(buf[offset:][0:format_size])))
+    modifier.modifier = intrinsics.unaligned_load((^u64)(raw_data(buf[offset + modifier_size:][0:modifier_size])))
   }
 
   return nil
