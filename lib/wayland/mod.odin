@@ -38,6 +38,48 @@ KeyListener :: struct {
   f: Listen,
 }
 
+@private
+Ids :: struct {
+  display: u32,
+  registry: u32,
+  compositor: u32,
+  surface: u32,
+  seat: u32,
+  keyboard: u32,
+  pointer: u32,
+  xdg_wm_base: u32,
+  xdg_surface: u32,
+  xdg_toplevel: u32,
+  dma: u32,
+  dma_feedback: u32,
+  dma_params: u32,
+  buffer_base: u32,
+}
+
+@private
+Opcodes :: struct {
+  get_registry: u32,
+  registry_bind: u32,
+  create_surface: u32,
+  surface_attach: u32,
+  surface_commit: u32,
+  surface_damage: u32,
+  ack_configure:  u32,
+  get_pointer: u32,
+  get_keyboard: u32,
+  get_xdg_surface: u32,
+  get_toplevel: u32,
+  pong: u32,
+  destroy_buffer: u32,
+  dma_destroy: u32,
+  dma_create_param: u32,
+  dma_surface_feedback: u32,
+  dma_feedback_destroy: u32,
+  dma_params_create_immed: u32,
+  dma_params_add: u32,
+  dma_params_destroy: u32,
+}
+
 Wayland_Context :: struct {
   socket: posix.FD,
   objects: vector.Vector(InterfaceObject),
@@ -49,44 +91,11 @@ Wayland_Context :: struct {
   bytes: []u8,
   in_fds: vector.Buffer,
   out_fds: vector.Vector(interface.Fd),
-  header: []u8,
-  display_id: u32,
-  registry_id: u32,
-  compositor_id: u32,
-  surface_id: u32,
-  seat_id: u32,
-  keyboard_id: u32,
-  pointer_id: u32,
-  xdg_wm_base_id: u32,
-  xdg_surface_id: u32,
-  xdg_toplevel_id: u32,
-  dma_id: u32,
-  dma_feedback_id: u32,
-  dma_params_id: u32,
-  buffer_base_id: u32,
-  get_registry_opcode: u32,
-  registry_bind_opcode: u32,
-  create_surface_opcode: u32,
-  surface_attach_opcode: u32,
-  surface_commit_opcode: u32,
-  surface_damage_opcode: u32,
-  ack_configure_opcode:  u32,
-  get_pointer_opcode: u32,
-  get_keyboard_opcode: u32,
-  get_xdg_surface_opcode: u32,
-  get_toplevel_opcode: u32,
-  pong_opcode: u32,
-  destroy_buffer_opcode: u32,
-  dma_destroy_opcode: u32,
-  dma_create_param_opcode: u32,
-  dma_surface_feedback_opcode: u32,
-  dma_feedback_destroy_opcode: u32,
-  dma_params_create_immed_opcode: u32,
-  dma_params_add_opcode: u32,
-  dma_params_destroy_opcode: u32,
   dma_main_device: u64,
-  buffers: []Buffer,
-  buffer: ^Buffer,
+  buffers: vector.Vector(Buffer),
+  active_buffer: u32,
+  ids: Ids,
+  opcodes: Opcodes,
   width: u32,
   height: u32,
   running: bool,
@@ -150,22 +159,14 @@ wayland_init :: proc(ctx: ^Wayland_Context, vk: ^vulkan.Vulkan_Context, width: u
   ctx.out_fds = vector.new(interface.Fd, 100, ctx.allocator) or_return
   ctx.in_fds = vector.buffer_new(100, ctx.allocator) or_return
 
-  ctx.buffers = make([]Buffer, frame_count, ctx.allocator)
-  ctx.buffer = &ctx.buffers[0]
+  ctx.buffers = vector.new(Buffer, frame_count, ctx.allocator) or_return
+  ctx.active_buffer = 0
 
-  buffer := ctx.buffer
-  for i in 1 ..< frame_count {
-    buffer.next = &ctx.buffers[i]
-    buffer = buffer.next
-  }
+  ctx.ids.display = get_id(ctx, "wl_display", {new_callback("error", error_callback), new_callback("delete_id", delete_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
+  ctx.ids.registry = get_id(ctx, "wl_registry", { new_callback("global", global_callback), new_callback("global_remove", global_remove_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
+  ctx.opcodes.get_registry = get_request_opcode(ctx, "get_registry", ctx.ids.display) or_return
 
-  buffer.next = ctx.buffer
-
-  ctx.display_id = get_id(ctx, "wl_display", {new_callback("error", error_callback), new_callback("delete_id", delete_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
-  ctx.registry_id = get_id(ctx, "wl_registry", { new_callback("global", global_callback), new_callback("global_remove", global_remove_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
-  ctx.get_registry_opcode = get_request_opcode(ctx, "get_registry", ctx.display_id) or_return
-
-  write(ctx, {interface.BoundNewId(ctx.registry_id)}, ctx.display_id, ctx.get_registry_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.ids.registry)}, ctx.ids.display, ctx.opcodes.get_registry) or_return
   send(ctx) or_return
 
   roundtrip(ctx) or_return
@@ -174,11 +175,8 @@ wayland_init :: proc(ctx: ^Wayland_Context, vk: ^vulkan.Vulkan_Context, width: u
 
   dma_params_init(ctx) or_return
 
-  ctx.buffer_base_id = get_id(ctx, "wl_buffer", {new_callback("release", buffer_release_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
-  ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", ctx.buffer_base_id) or_return
-
   buffers_init(ctx) or_return
-  buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
+  buffer_write_swap(ctx, ctx.width, ctx.height) or_return
   send(ctx) or_return
 
   ctx.running = true
@@ -192,7 +190,7 @@ render :: proc(ctx: ^Wayland_Context) -> error.Error {
   roundtrip(ctx) or_return
   handle_input(ctx) or_return
 
-  buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
+  buffer_write_swap(ctx, ctx.width, ctx.height) or_return
 
   send(ctx) or_return
 
@@ -265,12 +263,12 @@ roundtrip :: proc(ctx: ^Wayland_Context) -> error.Error {
 
 @private
 surface_create :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.surface_id = get_id(ctx, "wl_surface", { new_callback("enter", enter_callback), new_callback("leave", leave_callback), new_callback("preferred_buffer_scale", preferred_buffer_scale_callback), new_callback("preferred_buffer_transform", preferred_buffer_transform_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
-  ctx.surface_attach_opcode = get_request_opcode(ctx, "attach", ctx.surface_id) or_return
-  ctx.surface_commit_opcode = get_request_opcode(ctx, "commit", ctx.surface_id) or_return
-  ctx.surface_damage_opcode = get_request_opcode(ctx, "damage", ctx.surface_id) or_return
+  ctx.ids.surface = get_id(ctx, "wl_surface", { new_callback("enter", enter_callback), new_callback("leave", leave_callback), new_callback("preferred_buffer_scale", preferred_buffer_scale_callback), new_callback("preferred_buffer_transform", preferred_buffer_transform_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
+  ctx.opcodes.surface_attach = get_request_opcode(ctx, "attach", ctx.ids.surface) or_return
+  ctx.opcodes.surface_commit = get_request_opcode(ctx, "commit", ctx.ids.surface) or_return
+  ctx.opcodes.surface_damage = get_request_opcode(ctx, "damage", ctx.ids.surface) or_return
 
-  write(ctx, {interface.BoundNewId(ctx.surface_id)}, ctx.compositor_id, ctx.create_surface_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.ids.surface)}, ctx.ids.compositor, ctx.opcodes.create_surface) or_return
   dma_create(ctx) or_return
 
   return nil
@@ -278,35 +276,35 @@ surface_create :: proc(ctx: ^Wayland_Context) -> error.Error {
 
 @private
 xdg_surface_create :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.xdg_surface_id = get_id(ctx, "xdg_surface", {new_callback("configure", configure_callback)}, interface.XDG_INTERFACES[:]) or_return
-  ctx.get_toplevel_opcode = get_request_opcode(ctx, "get_toplevel", ctx.xdg_surface_id) or_return
-  ctx.ack_configure_opcode = get_request_opcode(ctx, "ack_configure", ctx.xdg_surface_id) or_return
+  ctx.ids.xdg_surface = get_id(ctx, "xdg_surface", {new_callback("configure", configure_callback)}, interface.XDG_INTERFACES[:]) or_return
+  ctx.opcodes.get_toplevel = get_request_opcode(ctx, "get_toplevel", ctx.ids.xdg_surface) or_return
+  ctx.opcodes.ack_configure = get_request_opcode(ctx, "ack_configure", ctx.ids.xdg_surface) or_return
 
-  ctx.xdg_toplevel_id = get_id(ctx, "xdg_toplevel", { new_callback("configure", toplevel_configure_callback), new_callback("close", toplevel_close_callback), new_callback("configure_bounds", toplevel_configure_bounds_callback), new_callback("wm_capabilities", toplevel_wm_capabilities_callback), }, interface.XDG_INTERFACES[:]) or_return
+  ctx.ids.xdg_toplevel = get_id(ctx, "xdg_toplevel", { new_callback("configure", toplevel_configure_callback), new_callback("close", toplevel_close_callback), new_callback("configure_bounds", toplevel_configure_bounds_callback), new_callback("wm_capabilities", toplevel_wm_capabilities_callback), }, interface.XDG_INTERFACES[:]) or_return
 
-  write(ctx, {interface.BoundNewId(ctx.xdg_surface_id), interface.Object(ctx.surface_id)}, ctx.xdg_wm_base_id, ctx.get_xdg_surface_opcode) or_return
-  write(ctx, {interface.BoundNewId(ctx.xdg_toplevel_id)}, ctx.xdg_surface_id, ctx.get_toplevel_opcode) or_return
-  write(ctx, {}, ctx.surface_id, ctx.surface_commit_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.ids.xdg_surface), interface.Object(ctx.ids.surface)}, ctx.ids.xdg_wm_base, ctx.opcodes.get_xdg_surface) or_return
+  write(ctx, {interface.BoundNewId(ctx.ids.xdg_toplevel)}, ctx.ids.xdg_surface, ctx.opcodes.get_toplevel) or_return
+  write(ctx, {}, ctx.ids.surface, ctx.opcodes.surface_commit) or_return
 
   return nil
 }
 
 @(private = "file")
 dma_create :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.dma_feedback_id = get_id(ctx, "zwp_linux_dmabuf_feedback_v1", { new_callback("done", dma_done_callback), new_callback("format_table", dma_format_table_callback), new_callback("main_device", dma_main_device_callback), new_callback("tranche_done", dma_tranche_done_callback), new_callback("tranche_target_device", dma_tranche_target_device_callback), new_callback("tranche_formats", dma_tranche_formats_callback), new_callback("tranche_flags", dma_tranche_flags_callback), }, interface.DMA_INTERFACES[:]) or_return
-  ctx.dma_feedback_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_feedback_id) or_return
+  ctx.ids.dma_feedback = get_id(ctx, "zwp_linux_dmabuf_feedback_v1", { new_callback("done", dma_done_callback), new_callback("format_table", dma_format_table_callback), new_callback("main_device", dma_main_device_callback), new_callback("tranche_done", dma_tranche_done_callback), new_callback("tranche_target_device", dma_tranche_target_device_callback), new_callback("tranche_formats", dma_tranche_formats_callback), new_callback("tranche_flags", dma_tranche_flags_callback), }, interface.DMA_INTERFACES[:]) or_return
+  ctx.opcodes.dma_feedback_destroy = get_request_opcode(ctx, "destroy", ctx.ids.dma_feedback) or_return
 
-  write(ctx, {interface.BoundNewId(ctx.dma_feedback_id), interface.Object(ctx.surface_id)}, ctx.dma_id, ctx.dma_surface_feedback_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.ids.dma_feedback), interface.Object(ctx.ids.surface)}, ctx.ids.dma, ctx.opcodes.dma_surface_feedback) or_return
 
   return nil
 }
 
 @(private = "file")
 dma_params_init :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.dma_params_id = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback), }, interface.DMA_INTERFACES[:]) or_return
-  ctx.dma_params_create_immed_opcode = get_request_opcode(ctx, "create_immed", ctx.dma_params_id) or_return
-  ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id) or_return
-  ctx.dma_params_add_opcode = get_request_opcode(ctx, "add", ctx.dma_params_id) or_return
+  ctx.ids.dma_params = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback), }, interface.DMA_INTERFACES[:]) or_return
+  ctx.opcodes.dma_params_create_immed = get_request_opcode(ctx, "create_immed", ctx.ids.dma_params) or_return
+  ctx.opcodes.dma_params_destroy = get_request_opcode(ctx, "destroy", ctx.ids.dma_params) or_return
+  ctx.opcodes.dma_params_add = get_request_opcode(ctx, "add", ctx.ids.dma_params) or_return
 
   return nil
 }

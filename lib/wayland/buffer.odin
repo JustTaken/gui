@@ -3,6 +3,7 @@ package wayland
 import "lib:vulkan"
 import "lib:error"
 import "lib:wayland/interface"
+import "lib:collection/vector"
 
 @private
 Buffer :: struct {
@@ -13,12 +14,32 @@ Buffer :: struct {
   height:   u32,
   released: bool,
   bound:    bool,
-  frame:    ^vulkan.Frame,
-  next:     ^Buffer,
 }
 
 @private
-buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
+buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
+  ctx.ids.buffer_base = get_id(ctx, "wl_buffer", {new_callback("release", buffer_release_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
+  ctx.opcodes.destroy_buffer = get_request_opcode(ctx, "destroy", ctx.ids.buffer_base) or_return
+
+  vector.append(&ctx.buffers, Buffer { id = ctx.ids.buffer_base }) or_return
+  for i in 1 ..< ctx.buffers.cap {
+    vector.append(&ctx.buffers, Buffer { id = copy_id(ctx, ctx.ids.buffer_base) or_return }) or_return
+  }
+
+  for i in 0 ..< ctx.buffers.cap {
+    ctx.buffers.data[i].released = true
+    ctx.buffers.data[i].bound = false
+    ctx.buffers.data[i].width = 0
+    ctx.buffers.data[i].height = 0
+  }
+
+  return nil
+}
+
+@private
+buffer_write_swap :: proc(ctx: ^Wayland_Context, width: u32, height: u32) -> error.Error {
+  buffer := &ctx.buffers.data[ctx.active_buffer]
+
   if !buffer.released {
     return .BufferNotReleased
   }
@@ -26,54 +47,37 @@ buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, he
   defer buffer.released = false
 
   if buffer.width != width || buffer.height != height {
-    if buffer.bound do write(ctx, {}, buffer.id, ctx.destroy_buffer_opcode)
+    if buffer.bound do write(ctx, {}, buffer.id, ctx.opcodes.destroy_buffer)
 
-    vulkan.frame_resize(ctx.vk, buffer.frame, width, height) or_return
-    buffer_create(ctx, buffer, width, height)
+    vulkan.frame_resize(ctx.vk, ctx.active_buffer, width, height) or_return
+    buffer_create(ctx, ctx.active_buffer, width, height)
   }
 
-  vulkan.frame_draw(ctx.vk, buffer.frame, width, height) or_return
+  vulkan.frame_draw(ctx.vk, ctx.active_buffer, width, height) or_return
 
-  write(ctx, {interface.Object(buffer.id), interface.Int(0), interface.Int(0)}, ctx.surface_id, ctx.surface_attach_opcode)
-  write(ctx, {interface.Int(0), interface.Int(0), interface.Int(width), interface.Int(height)}, ctx.surface_id, ctx.surface_damage_opcode)
-  write(ctx, {}, ctx.surface_id, ctx.surface_commit_opcode)
+  write(ctx, {interface.Object(buffer.id), interface.Int(0), interface.Int(0)}, ctx.ids.surface, ctx.opcodes.surface_attach)
+  write(ctx, {interface.Int(0), interface.Int(0), interface.Int(width), interface.Int(height)}, ctx.ids.surface, ctx.opcodes.surface_damage)
+  write(ctx, {}, ctx.ids.surface, ctx.opcodes.surface_commit)
 
-  ctx.buffer = buffer.next
+  ctx.active_buffer = (ctx.active_buffer + 1) % ctx.buffers.len
 
   return nil
 }
 
 @private
-buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.buffers[0].id = ctx.buffer_base_id
-
-  for i in 0 ..< len(ctx.buffers) {
-    buffer := &ctx.buffers[i]
-
-    if i != 0 do buffer.id = copy_id(ctx, ctx.buffer.id) or_return
-
-    buffer.frame = vulkan.get_frame(ctx.vk, buffer.id - ctx.buffer_base_id)
-    buffer.released = true
-    buffer.bound = false
-    buffer.width = 0
-    buffer.height = 0
-  }
-
-  return nil
-}
-
-@private
-buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
+buffer_create :: proc(ctx: ^Wayland_Context, index: u32, width: u32, height: u32) -> error.Error {
+  buffer := &ctx.buffers.data[index]
   buffer.bound = true
 
-  write(ctx, {interface.BoundNewId(ctx.dma_params_id)}, ctx.dma_id, ctx.dma_create_param_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.ids.dma_params)}, ctx.ids.dma, ctx.opcodes.dma_create_param) or_return
+  frame := vulkan.get_frame(ctx.vk, index)
 
-  for i in 0 ..< buffer.frame.modifier.drmFormatModifierPlaneCount {
-    plane := &buffer.frame.planes[i]
-    modifier_hi := (buffer.frame.modifier.drmFormatModifier & 0xFFFFFFFF00000000) >> 32
-    modifier_lo := buffer.frame.modifier.drmFormatModifier & 0x00000000FFFFFFFF
+  for i in 0 ..< frame.modifier.drmFormatModifierPlaneCount {
+    plane := &frame.planes.data[i]
+    modifier_hi := (frame.modifier.drmFormatModifier & 0xFFFFFFFF00000000) >> 32
+    modifier_lo := frame.modifier.drmFormatModifier & 0x00000000FFFFFFFF
 
-    write(ctx, { interface.Fd(buffer.frame.fd), interface.Uint(i), interface.Uint(plane.offset), interface.Uint(plane.rowPitch), interface.Uint(modifier_hi), interface.Uint(modifier_lo), }, ctx.dma_params_id, ctx.dma_params_add_opcode) or_return
+    write(ctx, { interface.Fd(frame.fd), interface.Uint(i), interface.Uint(plane.offset), interface.Uint(plane.rowPitch), interface.Uint(modifier_hi), interface.Uint(modifier_lo), }, ctx.ids.dma_params, ctx.opcodes.dma_params_add) or_return
   }
 
   buffer.width = width
@@ -81,8 +85,8 @@ buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height
 
   format := vulkan.drm_format(ctx.vk.format)
 
-  write(ctx, {interface.BoundNewId(buffer.id), interface.Int(width), interface.Int(height), interface.Uint(format), interface.Uint(0)}, ctx.dma_params_id, ctx.dma_params_create_immed_opcode) or_return
-  write(ctx, {}, ctx.dma_params_id, ctx.dma_params_destroy_opcode) or_return
+  write(ctx, {interface.BoundNewId(buffer.id), interface.Int(width), interface.Int(height), interface.Uint(format), interface.Uint(0)}, ctx.ids.dma_params, ctx.opcodes.dma_params_create_immed) or_return
+  write(ctx, {}, ctx.ids.dma_params, ctx.opcodes.dma_params_destroy) or_return
 
   return nil
 }

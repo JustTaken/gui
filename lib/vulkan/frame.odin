@@ -5,29 +5,30 @@ import "core:sys/posix"
 import vk "vendor:vulkan"
 
 import "lib:error"
+import "lib:collection/vector"
 
 Frame :: struct {
-  fd:     i32,
+  fd: i32,
   render_pass: ^Render_Pass,
-  planes:       []vk.SubresourceLayout,
-  modifier:     vk.DrmFormatModifierPropertiesEXT,
-  image:  vk.Image,
-  memory:       vk.DeviceMemory,
-  view:   vk.ImageView,
-  depth:  vk.Image,
+  planes: vector.Vector(vk.SubresourceLayout),
+  modifier: vk.DrmFormatModifierPropertiesEXT,
+  image: vk.Image,
+  memory: vk.DeviceMemory,
+  view: vk.ImageView,
+  depth: vk.Image,
   depth_memory: vk.DeviceMemory,
-  depth_view:   vk.ImageView,
-  buffer:       vk.Framebuffer,
-  width:  u32,
-  height:       u32,
+  depth_view: vk.ImageView,
+  buffer: vk.Framebuffer,
+  width: u32,
+  height: u32,
 }
 
 @private
-frames_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, count: u32, width: u32, height: u32) -> (frames: []Frame, err: error.Error) {
-  frames = make([]Frame, count, ctx.allocator)
+frames_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, count: u32, width: u32, height: u32) -> (frames: vector.Vector(Frame), err: error.Error) {
+  frames = vector.new(Frame, count, ctx.allocator) or_return
 
   for i in 0 ..< count {
-    frames[i] = frame_create(ctx, render_pass, width, height) or_return
+    vector.append(&frames, frame_create(ctx, render_pass, width, height) or_return) or_return
   }
 
   return frames, nil
@@ -38,29 +39,29 @@ frame_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, width: u32
   frame.width = width
   frame.height = height
   frame.render_pass = render_pass
-  frame.planes = make([]vk.SubresourceLayout, 3, ctx.allocator)
+  frame.planes = vector.new(vk.SubresourceLayout, 3, ctx.allocator) or_return
 
-  modifiers := make([]u64, u32(len(ctx.modifiers)), ctx.tmp_allocator)
+  modifiers := vector.new(u64, ctx.modifiers.len, ctx.tmp_allocator) or_return
 
-  for modifier, i in ctx.modifiers {
-    modifiers[i] = modifier.drmFormatModifier
+  for i in 0..<ctx.modifiers.len {
+    vector.append(&modifiers, ctx.modifiers.data[i].drmFormatModifier) or_return
   }
 
   mem_info := vk.ExternalMemoryImageCreateInfo {
-    sType       = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+    sType = .EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
     handleTypes = {.DMA_BUF_EXT},
   }
 
   list_info := vk.ImageDrmFormatModifierListCreateInfoEXT {
-    sType      = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
-    pNext      = &mem_info,
-    drmFormatModifierCount = u32(len(ctx.modifiers)),
-    pDrmFormatModifiers    = &modifiers[0],
+    sType = .IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+    pNext = &mem_info,
+    drmFormatModifierCount = modifiers.len,
+    pDrmFormatModifiers = &modifiers.data[0],
   }
 
   export_info := vk.ExportMemoryAllocateInfo {
-    sType       = .EXPORT_MEMORY_ALLOCATE_INFO,
-    pNext       = nil,
+    sType = .EXPORT_MEMORY_ALLOCATE_INFO,
+    pNext = nil,
     handleTypes = {.DMA_BUF_EXT},
   }
 
@@ -74,7 +75,8 @@ frame_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, width: u32
 
   if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device.handle, frame.image, &properties) != .SUCCESS do return frame, .GetImageModifier
 
-  for modifier in ctx.modifiers {
+  for i in 0..<ctx.modifiers.len {
+    modifier := ctx.modifiers.data[i] 
     if modifier.drmFormatModifier == properties.drmFormatModifier {
       frame.modifier = modifier
       break
@@ -86,12 +88,12 @@ frame_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, width: u32
       aspectMask = {PLANE_INDICES[i]},
     }
 
-    vk.GetImageSubresourceLayout(ctx.device.handle, frame.image, &image_resource, &frame.planes[i])
+    vk.GetImageSubresourceLayout(ctx.device.handle, frame.image, &image_resource, vector.one(&frame.planes) or_return)
   }
 
   info := vk.MemoryGetFdInfoKHR {
-    sType      = .MEMORY_GET_FD_INFO_KHR,
-    memory     = frame.memory,
+    sType = .MEMORY_GET_FD_INFO_KHR,
+    memory = frame.memory,
     handleType = {.DMA_BUF_EXT},
   }
 
@@ -138,8 +140,8 @@ image_memory_create :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDe
   vk.GetImageMemoryRequirements(ctx.device.handle, image, &requirements)
 
   alloc_info := vk.MemoryAllocateInfo {
-    sType     = .MEMORY_ALLOCATE_INFO,
-    pNext     = pNext,
+    sType = .MEMORY_ALLOCATE_INFO,
+    pNext = pNext,
     allocationSize  = requirements.size,
     memoryTypeIndex = find_memory_type(
       physical_device,
@@ -183,13 +185,13 @@ image_view_create :: proc(ctx: ^Vulkan_Context, image: vk.Image, format: vk.Form
 framebuffer_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, view: vk.ImageView, depth: vk.ImageView, width: u32, height: u32) -> (vk.Framebuffer, error.Error) {
   attachments := [?]vk.ImageView{view, depth}
   info := vk.FramebufferCreateInfo {
-    sType     = .FRAMEBUFFER_CREATE_INFO,
-    renderPass      = render_pass.handle,
+    sType = .FRAMEBUFFER_CREATE_INFO,
+    renderPass = render_pass.handle,
     attachmentCount = u32(len(attachments)),
-    pAttachments    = &attachments[0],
-    width     = width,
-    height    = height,
-    layers    = 1,
+    pAttachments = &attachments[0],
+    width = width,
+    height = height,
+    layers = 1,
   }
 
   buffer: vk.Framebuffer
@@ -212,17 +214,18 @@ frame_destroy :: proc(ctx: ^Vulkan_Context, frame: ^Frame) {
 }
 
 get_frame :: proc(ctx: ^Vulkan_Context, index: u32) -> ^Frame {
-  return &ctx.frames[index]
+  return &ctx.frames.data[index]
 }
 
-frame_resize :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> error.Error {
-  frame_destroy(ctx, frame)
-  frame^ = frame_create(ctx, frame.render_pass, width, height) or_return
+frame_resize :: proc(ctx: ^Vulkan_Context, index: u32, width: u32, height: u32) -> error.Error {
+  frame_destroy(ctx, &ctx.frames.data[index])
+  ctx.frames.data[index] = frame_create(ctx, ctx.frames.data[index].render_pass, width, height) or_return
 
   return nil
 }
 
-frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> error.Error {
+frame_draw :: proc(ctx: ^Vulkan_Context, frame_index: u32, width: u32, height: u32) -> error.Error {
+  frame := &ctx.frames.data[frame_index]
   submit_staging_data(ctx) or_return
 
   area := vk.Rect2D {
@@ -236,8 +239,8 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
   }
 
   viewport := vk.Viewport {
-    width    = f32(width),
-    height   = f32(height),
+    width = f32(width),
+    height = f32(height),
     minDepth = 0,
     maxDepth = 1,
   }
@@ -248,17 +251,17 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
   }
 
   render_pass_info := vk.RenderPassBeginInfo {
-    sType     = .RENDER_PASS_BEGIN_INFO,
-    renderPass      = frame.render_pass.handle,
-    framebuffer     = frame.buffer,
-    renderArea      = area,
+    sType = .RENDER_PASS_BEGIN_INFO,
+    renderPass = frame.render_pass.handle,
+    framebuffer = frame.buffer,
+    renderArea = area,
     clearValueCount = u32(len(clear_values)),
-    pClearValues    = &clear_values[0],
+    pClearValues = &clear_values[0],
   }
 
   if vk.WaitForFences(ctx.device.handle, 1, &ctx.draw_fence, true, 0xFFFFFF) != .SUCCESS do return .WaitFencesFailed
 
-  cmd := ctx.command_buffers[0]
+  cmd := ctx.command_buffers.data[0]
 
   if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return .BeginCommandBufferFailed
 
@@ -297,7 +300,7 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32)
   wait_stage := vk.PipelineStageFlags{.COLOR_ATTACHMENT_OUTPUT}
 
   submit_info := vk.SubmitInfo {
-    sType        = .SUBMIT_INFO,
+    sType = .SUBMIT_INFO,
     commandBufferCount = 1,
     pCommandBuffers    = &cmd,
     pWaitDstStageMask  = &wait_stage,

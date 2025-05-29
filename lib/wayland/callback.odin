@@ -144,14 +144,14 @@ dma_format_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interfa
 }
 @private
 configure_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interface.Argument) -> error.Error {
-  write(ctx, {arguments[0]}, id, ctx.ack_configure_opcode)
+  write(ctx, {arguments[0]}, id, ctx.opcodes.ack_configure)
 
   return nil
 }
 
 @private
 ping_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interface.Argument) -> error.Error {
-  write(ctx, {arguments[0]}, ctx.xdg_wm_base_id, ctx.pong_opcode)
+  write(ctx, {arguments[0]}, ctx.ids.xdg_wm_base, ctx.opcodes.pong)
 
   return nil
 }
@@ -190,7 +190,7 @@ toplevel_wm_capabilities_callback :: proc(ctx: ^Wayland_Context, id: u32, arugme
 
 @private
 buffer_release_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interface.Argument) -> error.Error {
-  ctx.buffers[id - ctx.buffers[0].id].released = true
+  ctx.buffers.data[id - ctx.ids.buffer_base].released = true
   return nil
 }
 
@@ -255,7 +255,7 @@ dma_main_device_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []in
 
 @private
 dma_done_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interface.Argument) -> error.Error {
-  write(ctx, {}, id, ctx.dma_feedback_destroy_opcode)
+  write(ctx, {}, id, ctx.opcodes.dma_feedback_destroy)
 
   return nil
 }
@@ -326,31 +326,31 @@ global_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interface.A
 
   switch interface_name {
   case "xdg_wm_base":
-    ctx.xdg_wm_base_id = get_id(ctx, interface_name, {new_callback("ping", ping_callback)}, interface.XDG_INTERFACES[:]) or_return
-    ctx.pong_opcode = get_request_opcode(ctx, "pong", ctx.xdg_wm_base_id) or_return
-    ctx.get_xdg_surface_opcode = get_request_opcode(ctx, "get_xdg_surface", ctx.xdg_wm_base_id) or_return
+    ctx.ids.xdg_wm_base = get_id(ctx, interface_name, {new_callback("ping", ping_callback)}, interface.XDG_INTERFACES[:]) or_return
+    ctx.opcodes.pong = get_request_opcode(ctx, "pong", ctx.ids.xdg_wm_base) or_return
+    ctx.opcodes.get_xdg_surface = get_request_opcode(ctx, "get_xdg_surface", ctx.ids.xdg_wm_base) or_return
 
-    write(ctx, { arguments[0], interface.UnBoundNewId { id = interface.BoundNewId(ctx.xdg_wm_base_id), interface = str, version = version, }, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
+    write(ctx, { arguments[0], interface.UnBoundNewId { id = interface.BoundNewId(ctx.ids.xdg_wm_base), interface = str, version = version, }, }, ctx.ids.registry, ctx.opcodes.registry_bind) or_return
     xdg_surface_create(ctx)
   case "wl_compositor":
-    ctx.compositor_id = get_id(ctx, interface_name, {}, interface.WAYLAND_INTERFACES[:]) or_return
-    ctx.create_surface_opcode = get_request_opcode(ctx, "create_surface", ctx.compositor_id) or_return
+    ctx.ids.compositor = get_id(ctx, interface_name, {}, interface.WAYLAND_INTERFACES[:]) or_return
+    ctx.opcodes.create_surface = get_request_opcode(ctx, "create_surface", ctx.ids.compositor) or_return
 
-    write(ctx, { arguments[0], interface.UnBoundNewId { id = interface.BoundNewId(ctx.compositor_id), interface = str, version = version, }, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
+    write(ctx, { arguments[0], interface.UnBoundNewId { id = interface.BoundNewId(ctx.ids.compositor), interface = str, version = version, }, }, ctx.ids.registry, ctx.opcodes.registry_bind) or_return
     surface_create(ctx)
   case "wl_seat":
-    ctx.seat_id = get_id(ctx, interface_name, {new_callback("capabilities", seat_capabilities_callback), new_callback("name", seat_name_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
-    ctx.get_pointer_opcode = get_request_opcode(ctx, "get_pointer", ctx.seat_id) or_return
-    ctx.get_keyboard_opcode = get_request_opcode(ctx, "get_keyboard", ctx.seat_id) or_return
+    ctx.ids.seat = get_id(ctx, interface_name, {new_callback("capabilities", seat_capabilities_callback), new_callback("name", seat_name_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
+    ctx.opcodes.get_pointer = get_request_opcode(ctx, "get_pointer", ctx.ids.seat) or_return
+    ctx.opcodes.get_keyboard = get_request_opcode(ctx, "get_keyboard", ctx.ids.seat) or_return
 
-    write(ctx, { arguments[0], interface.UnBoundNewId{id = interface.BoundNewId(ctx.seat_id), interface = str, version = version}, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
+    write(ctx, { arguments[0], interface.UnBoundNewId{id = interface.BoundNewId(ctx.ids.seat), interface = str, version = version}, }, ctx.ids.registry, ctx.opcodes.registry_bind) or_return
   case "zwp_linux_dmabuf_v1":
-    ctx.dma_id = get_id(ctx, interface_name, { new_callback("format", dma_format_callback), new_callback("modifier", dma_modifier_callback), }, interface.DMA_INTERFACES[:]) or_return
-    ctx.dma_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_id) or_return
-    ctx.dma_create_param_opcode = get_request_opcode(ctx, "create_params", ctx.dma_id) or_return
-    ctx.dma_surface_feedback_opcode = get_request_opcode(ctx, "get_surface_feedback", ctx.dma_id) or_return
+    ctx.ids.dma = get_id(ctx, interface_name, { new_callback("format", dma_format_callback), new_callback("modifier", dma_modifier_callback), }, interface.DMA_INTERFACES[:]) or_return
+    ctx.opcodes.dma_destroy = get_request_opcode(ctx, "destroy", ctx.ids.dma) or_return
+    ctx.opcodes.dma_create_param = get_request_opcode(ctx, "create_params", ctx.ids.dma) or_return
+    ctx.opcodes.dma_surface_feedback = get_request_opcode(ctx, "get_surface_feedback", ctx.ids.dma) or_return
 
-    write(ctx, { arguments[0], interface.UnBoundNewId{id = interface.BoundNewId(ctx.dma_id), interface = str, version = version}, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
+    write(ctx, { arguments[0], interface.UnBoundNewId{id = interface.BoundNewId(ctx.ids.dma), interface = str, version = version}, }, ctx.ids.registry, ctx.opcodes.registry_bind) or_return
   }
 
   return nil
@@ -369,13 +369,13 @@ seat_capabilities_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []
   capabilities := transmute(Seat_Capabilities)u32(arguments[0].(interface.Uint))
 
   if .Pointer in capabilities {
-    ctx.pointer_id = get_id(ctx, "wl_pointer", { new_callback("leave", pointer_leave_callback), new_callback("enter", pointer_enter_callback), new_callback("motion", pointer_motion_callback), new_callback("button", pointer_button_callback), new_callback("frame", pointer_frame_callback), new_callback("axis", pointer_axis_callback), new_callback("axis_source", pointer_axis_source_callback), new_callback("axis_stop", pointer_axis_stop_callback), new_callback("axis_discrete", pointer_axis_discrete_callback), new_callback("axis_value120", pointer_axis_value120_callback), new_callback("axis_relative_direction", pointer_axis_relative_direction_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
-    write(ctx, {interface.BoundNewId(ctx.pointer_id)}, ctx.seat_id, ctx.get_pointer_opcode) or_return
+    ctx.ids.pointer = get_id(ctx, "wl_pointer", { new_callback("leave", pointer_leave_callback), new_callback("enter", pointer_enter_callback), new_callback("motion", pointer_motion_callback), new_callback("button", pointer_button_callback), new_callback("frame", pointer_frame_callback), new_callback("axis", pointer_axis_callback), new_callback("axis_source", pointer_axis_source_callback), new_callback("axis_stop", pointer_axis_stop_callback), new_callback("axis_discrete", pointer_axis_discrete_callback), new_callback("axis_value120", pointer_axis_value120_callback), new_callback("axis_relative_direction", pointer_axis_relative_direction_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
+    write(ctx, {interface.BoundNewId(ctx.ids.pointer)}, ctx.ids.seat, ctx.opcodes.get_pointer) or_return
   }
 
   if .Keyboard in capabilities {
-    ctx.keyboard_id = get_id(ctx, "wl_keyboard", { new_callback("leave", keyboard_leave_callback), new_callback("enter", keyboard_enter_callback), new_callback("key", keyboard_key_callback), new_callback("keymap", keyboard_keymap_callback), new_callback("modifiers", keyboard_modifiers_callback), new_callback("repeat_info", keyboard_repeat_info_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
-    write(ctx, {interface.BoundNewId(ctx.keyboard_id)}, ctx.seat_id, ctx.get_keyboard_opcode) or_return
+    ctx.ids.keyboard = get_id(ctx, "wl_keyboard", { new_callback("leave", keyboard_leave_callback), new_callback("enter", keyboard_enter_callback), new_callback("key", keyboard_key_callback), new_callback("keymap", keyboard_keymap_callback), new_callback("modifiers", keyboard_modifiers_callback), new_callback("repeat_info", keyboard_repeat_info_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
+    write(ctx, {interface.BoundNewId(ctx.ids.keyboard)}, ctx.ids.seat, ctx.opcodes.get_keyboard) or_return
   }
 
   return nil

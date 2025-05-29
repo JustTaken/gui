@@ -2,6 +2,7 @@ package vulk
 
 import vk "vendor:vulkan"
 import "lib:error"
+import "lib:collection/vector"
 
 Queue :: struct {
   handle: vk.Queue,
@@ -23,9 +24,7 @@ PLANE_INDICES := [?]vk.ImageAspectFlag {
 }
 
 @private
-get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: []vk.DrmFormatModifierPropertiesEXT, err: error.Error) {
-  l: u32 = 0
-
+get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: vector.Vector(vk.DrmFormatModifierPropertiesEXT), err: error.Error) {
   render_features: vk.FormatFeatureFlags = {.COLOR_ATTACHMENT, .COLOR_ATTACHMENT_BLEND}
   texture_features: vk.FormatFeatureFlags = {.SAMPLED_IMAGE, .SAMPLED_IMAGE_FILTER_LINEAR}
 
@@ -41,7 +40,7 @@ get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: []vk.DrmFormatMod
   vk.GetPhysicalDeviceFormatProperties2(ctx.physical_device, ctx.format, &properties)
   count := modifier_properties_list.drmFormatModifierCount
 
-  modifiers = make([]vk.DrmFormatModifierPropertiesEXT, count, ctx.allocator)
+  modifiers = vector.new(vk.DrmFormatModifierPropertiesEXT, u32(count), ctx.allocator) or_return
   drmFormatModifierProperties := make([]vk.DrmFormatModifierPropertiesEXT, count, ctx.tmp_allocator)
   modifier_properties_list.pDrmFormatModifierProperties = &drmFormatModifierProperties[0]
 
@@ -94,11 +93,10 @@ get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: []vk.DrmFormatMod
     if vk.GetPhysicalDeviceImageFormatProperties2(ctx.physical_device, &image_info, &image_properties) != .SUCCESS do continue
     if emp.externalMemoryFeatures < {.IMPORTABLE, .EXPORTABLE} do continue
 
-    modifiers[l] = modifier_properties
-    l += 1
+    vector.append(&modifiers, modifier_properties) or_return
   }
 
-  return modifiers[0:l], nil
+  return modifiers, nil
 }
 
 @private

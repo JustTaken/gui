@@ -107,12 +107,12 @@ copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer: vk.Bu
       flags = {.ONE_TIME_SUBMIT},
     }
 
-    if vk.BeginCommandBuffer(ctx.command_buffers[1], &begin_info) != .SUCCESS do return .BeginCommandBufferFailed
+    if vk.BeginCommandBuffer(ctx.command_buffers.data[1], &begin_info) != .SUCCESS do return .BeginCommandBufferFailed
 
     ctx.staging.recording = true
   }
 
-  vk.CmdCopyBuffer(ctx.command_buffers[1], ctx.staging.buffer.handle, dst_buffer, 1, &copy_info)
+  vk.CmdCopyBuffer(ctx.command_buffers.data[1], ctx.staging.buffer.handle, dst_buffer, 1, &copy_info)
 
   return nil
 }

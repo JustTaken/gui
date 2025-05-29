@@ -195,12 +195,12 @@ update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> error.Error {
 submit_staging_data :: proc(ctx: ^Vulkan_Context) -> error.Error {
   if !ctx.staging.recording do return nil
 
-  if vk.EndCommandBuffer(ctx.command_buffers[1]) != .SUCCESS do return .EndCommandBufferFailed
+  if vk.EndCommandBuffer(ctx.command_buffers.data[1]) != .SUCCESS do return .EndCommandBufferFailed
 
   submit_info := vk.SubmitInfo {
     sType        = .SUBMIT_INFO,
     commandBufferCount = 1,
-    pCommandBuffers    = &ctx.command_buffers[1],
+    pCommandBuffers    = &ctx.command_buffers.data[1],
   }
 
   vk.ResetFences(ctx.device.handle, 1, &ctx.copy_fence)

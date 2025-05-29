@@ -34,7 +34,7 @@ Vulkan_Context :: struct {
   default_group: ^Geometry_Group,
   boned_group: ^Geometry_Group,
 
-  render_pass:     Render_Pass,
+  render_pass: Render_Pass,
 
   fixed_set: ^Descriptor_Set,
   dynamic_set: ^Descriptor_Set,
@@ -47,21 +47,21 @@ Vulkan_Context :: struct {
   instances: u32,
   transforms: u32,
 
-  command_pool:    vk.CommandPool,
-  command_buffers: []vk.CommandBuffer,
-  staging:   StagingBuffer,
-  frames:    []Frame,
+  command_pool: vk.CommandPool,
+  command_buffers: vector.Vector(vk.CommandBuffer),
+  staging: StagingBuffer,
+  frames: vector.Vector(Frame),
   bones: u32,
-  copy_fence:      vk.Fence,
-  draw_fence:      vk.Fence,
-  semaphore:       vk.Semaphore,
-  format:    vk.Format,
-  depth_format:    vk.Format,
-  modifiers:       []vk.DrmFormatModifierPropertiesEXT,
-  arena:     ^mem.Arena,
-  allocator:       runtime.Allocator,
-  tmp_arena:       ^mem.Arena,
-  tmp_allocator:   runtime.Allocator,
+  copy_fence: vk.Fence,
+  draw_fence: vk.Fence,
+  semaphore: vk.Semaphore,
+  format: vk.Format,
+  depth_format: vk.Format,
+  modifiers: vector.Vector(vk.DrmFormatModifierPropertiesEXT),
+  arena: ^mem.Arena,
+  allocator: runtime.Allocator,
+  tmp_arena: ^mem.Arena,
+  tmp_allocator: runtime.Allocator,
 }
 
 vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
@@ -131,8 +131,8 @@ vulkan_deinit :: proc(ctx: ^Vulkan_Context) {
   vk.DestroyFence(ctx.device.handle, ctx.draw_fence, nil)
   vk.DestroyFence(ctx.device.handle, ctx.copy_fence, nil)
 
-  for &frame in ctx.frames {
-    frame_destroy(ctx, &frame)
+  for i in 0..<ctx.frames.len {
+    frame_destroy(ctx, &ctx.frames.data[i])
   }
 
   for i in 0..<ctx.set_layouts.len {
