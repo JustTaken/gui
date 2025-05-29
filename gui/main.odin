@@ -15,10 +15,14 @@ import "lib:error"
 import "lib:xkb"
 
 View :: struct {
-  rotation: [3]f32,
-  translation: [3]f32,
+  rotation: Matrix,
+  translation: [4]f32,
   arrow: [3]f32,
 }
+
+TRANSLATION_VELOCITY: f32 = 2.0 / 4.0
+ANGLE_VELOCITY: f32 = 3.14 / 64.0
+
 
 Context :: struct {
   bytes: []u8,
@@ -30,12 +34,6 @@ Context :: struct {
   rotate_down: matrix[4, 4]f32,
   rotate_left: matrix[4, 4]f32,
   rotate_right: matrix[4, 4]f32,
-  translate_right: matrix[4, 4]f32,
-  translate_left: matrix[4, 4]f32,
-  translate_down: matrix[4, 4]f32,
-  translate_up: matrix[4, 4]f32,
-  translate_back: matrix[4, 4]f32,
-  translate_for: matrix[4, 4]f32,
 
   view_update: bool,
 
@@ -107,23 +105,14 @@ init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  erro
   vulkan.vulkan_init(&ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
   wayland.wayland_init(&ctx.wl, &ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
 
-  angle_velocity: f32 = 3.14 / 64.0
-  translation_velocity: f32 = 2.0 / 4.0
 
-  ctx.rotate_up = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{1, 0, 0})
-  ctx.rotate_down = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{-1, 0, 0})
-  ctx.rotate_left = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, -1, 0})
-  ctx.rotate_right = linalg.matrix4_rotate_f32(angle_velocity, [3]f32{0, 1, 0})
-  ctx.translate_right = linalg.matrix4_translate_f32({translation_velocity, 0, 0})
-  ctx.translate_left = linalg.matrix4_translate_f32({-translation_velocity, 0, 0})
-  ctx.translate_down = linalg.matrix4_translate_f32({0, translation_velocity, 0})
-  ctx.translate_up = linalg.matrix4_translate_f32({0, -translation_velocity, 0})
-  ctx.translate_back = linalg.matrix4_translate_f32({0, 0, -translation_velocity})
-  ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity})
-
-  //ctx.view = linalg.matrix4_translate_f32({0, -5, -20})
+  ctx.rotate_up = linalg.matrix4_rotate_f32(ANGLE_VELOCITY, [3]f32{1, 0, 0})
+  ctx.rotate_down = linalg.matrix4_rotate_f32(ANGLE_VELOCITY, [3]f32{-1, 0, 0})
+  ctx.rotate_left = linalg.matrix4_rotate_f32(ANGLE_VELOCITY, [3]f32{0, -1, 0})
+  ctx.rotate_right = linalg.matrix4_rotate_f32(ANGLE_VELOCITY, [3]f32{0, 1, 0})
 
   ctx.view.arrow = {-2.5, 2, -10} 
+  ctx.view.rotation = linalg.MATRIX4F32_IDENTITY
   ctx.scenes = load_gltf_scenes(ctx, "assets/scene.gltf", 1) or_return
   ctx.ambient = scene_instance_create(ctx, &ctx.scenes, "Ambient", linalg.matrix4_translate_f32({0, -5, -20}), .WithView) or_return
   ctx.player = scene_instance_create(ctx, &ctx.scenes, "Arrows", linalg.matrix4_translate_f32(ctx.view.arrow), .WithoutView) or_return
@@ -145,13 +134,13 @@ deinit :: proc(ctx: ^Context) {
   delete(ctx.bytes)
 }
 
-view_translate :: proc(ctx: ^Context, translation: [3]f32) {
-  ctx.view.translation += translation
+view_translate :: proc(ctx: ^Context, translation: [4]f32) {
+  ctx.view.translation += translation * ctx.view.rotation
   ctx.view_update = true
 }
 
-view_rotate :: proc(ctx: ^Context, rotation: [3]f32) {
-  ctx.view.rotation += rotation
+view_rotate :: proc(ctx: ^Context, rotation: Matrix) {
+  ctx.view.rotation = rotation * ctx.view.rotation
   ctx.view_update = true
 }
 
@@ -159,28 +148,20 @@ frame :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Erro
   ctx := cast(^Context)(ptr)
   ctx.view_update = false
 
-  angle_velocity: f32 = 3.14 / 64.0
-  translation_velocity: f32 = 2.0 / 4.0
-
-  if xkb.is_key_pressed(keymap, .d) do view_translate(ctx, {-translation_velocity, 0, 0})
-  if xkb.is_key_pressed(keymap, .a) do view_translate(ctx, {translation_velocity, 0, 0})
-  if xkb.is_key_pressed(keymap, .s) do view_translate(ctx, {0, 0, -translation_velocity})
-  if xkb.is_key_pressed(keymap, .w) do view_translate(ctx, {0, 0, translation_velocity})
-  if xkb.is_key_pressed(keymap, .k) do view_translate(ctx, {0, -translation_velocity, 0})
-  if xkb.is_key_pressed(keymap, .j) do view_translate(ctx, {0, translation_velocity, 0})
-  if xkb.is_key_pressed(keymap, .ArrowUp) do view_rotate(ctx, {0, 1, 0})
-  if xkb.is_key_pressed(keymap, .ArrowDown) do view_rotate(ctx, {0, -1, 0})
-  if xkb.is_key_pressed(keymap, .ArrowLeft) do view_rotate(ctx, {1, 0, 0})
-  if xkb.is_key_pressed(keymap, .ArrowRight) do view_rotate(ctx, {-1, 0, 0})
+  if xkb.is_key_pressed(keymap, .d) do view_translate(ctx, {-TRANSLATION_VELOCITY, 0, 0, 1})
+  if xkb.is_key_pressed(keymap, .a) do view_translate(ctx, {TRANSLATION_VELOCITY, 0, 0, 1})
+  if xkb.is_key_pressed(keymap, .s) do view_translate(ctx, {0, 0, -TRANSLATION_VELOCITY, 1})
+  if xkb.is_key_pressed(keymap, .w) do view_translate(ctx, {0, 0, TRANSLATION_VELOCITY, 1})
+  if xkb.is_key_pressed(keymap, .k) do view_translate(ctx, {0, -TRANSLATION_VELOCITY, 0, 1})
+  if xkb.is_key_pressed(keymap, .j) do view_translate(ctx, {0, TRANSLATION_VELOCITY, 0, 1})
+  if xkb.is_key_pressed(keymap, .ArrowUp) do view_rotate(ctx, ctx.rotate_up)
+  if xkb.is_key_pressed(keymap, .ArrowDown) do view_rotate(ctx, ctx.rotate_down)
+  if xkb.is_key_pressed(keymap, .ArrowLeft) do view_rotate(ctx, ctx.rotate_left)
+  if xkb.is_key_pressed(keymap, .ArrowRight) do view_rotate(ctx, ctx.rotate_right)
 
   if ctx.view_update {
-    up := linalg.matrix4_rotate(angle_velocity * ctx.view.rotation[1], [3]f32{1, 0, 0})
-    left := linalg.matrix4_rotate(angle_velocity * ctx.view.rotation[0], [3]f32{0, 1, 0})
-
-    view := up * left  
-
-    vulkan.update_view(ctx.wl.vk, view * linalg.matrix4_translate_f32(ctx.view.translation)) or_return
-    scene_instance_update(ctx, &ctx.player, linalg.matrix4_translate_f32(ctx.view.arrow) * view) or_return
+    vulkan.update_view(ctx.wl.vk, ctx.view.rotation * linalg.matrix4_translate_f32({ctx.view.translation[0], ctx.view.translation[1], ctx.view.translation[2]})) or_return
+    scene_instance_update(ctx, &ctx.player, linalg.matrix4_translate_f32(ctx.view.arrow) * ctx.view.rotation) or_return
   }
 
   return nil
