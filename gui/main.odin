@@ -30,15 +30,12 @@ Context :: struct {
   translate_up: matrix[4, 4]f32,
   translate_back: matrix[4, 4]f32,
   translate_for: matrix[4, 4]f32,
-  scenes: vector.Vector(Scene),
-
 
   view_update: bool,
 
-  cube: ^Scene,
-  bone: ^Scene,
+  scenes: Scenes,
 
-  cube_instance: Scene_Instance,
+  ambient: Scene_Instance,
 
   allocator: runtime.Allocator,
   arena: mem.Arena,
@@ -52,7 +49,6 @@ log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, option
 }
 
 main :: proc() {
-  //context.logger.lowest_level = .Debug
   context.logger.lowest_level = .Info
   context.logger.procedure = log_proc
 
@@ -71,7 +67,7 @@ run :: proc(width: u32, height: u32, frames: u32) -> error.Error {
     mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
     defer mem.end_arena_temp_memory(mark)
 
-    tick_scene_animation(&ctx, &ctx.cube_instance, time.now()._nsec) or_return
+    //tick_scene_animation(&ctx, &ctx.scene, time.now()._nsec) or_return
 
     if wayland.render(&ctx.wl) != nil {
       log.error("Failed to render frame")
@@ -118,11 +114,10 @@ init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  erro
   ctx.translate_back = linalg.matrix4_translate_f32({0, 0, -translation_velocity})
   ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity})
 
-  ctx.view = linalg.matrix4_translate_f32({0, 0, -10})
-  ctx.scenes = vector.new(Scene, 20, ctx.allocator) or_return
+  ctx.view = linalg.matrix4_translate_f32({0, -3, -15})
 
-  ctx.cube = load_gltf_scene(ctx, "assets/rotation.gltf", 1) or_return
-  ctx.cube_instance = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
+  ctx.scenes = load_gltf_scenes(ctx, "assets/scene.gltf", 1) or_return
+  ctx.ambient = scene_instance_create(ctx, &ctx.scenes, "Ambient", linalg.MATRIX4F32_IDENTITY) or_return
 
   wayland.add_listener(&ctx.wl, ctx, frame) or_return
   vulkan.update_view(&ctx.vk, ctx.view) or_return
@@ -161,9 +156,9 @@ frame :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Erro
   if xkb.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
   if xkb.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
 
-  if xkb.is_key_pressed(keymap, .Space) {
-    play_scene_animation(&ctx.cube_instance, "FAnime", time) or_return
-  }
+//  if xkb.is_key_pressed(keymap, .Space) {
+//    play_scene_animation(&ctx.cube_instance, "FAnime", time) or_return
+//  }
 
   if ctx.view_update do vulkan.update_view(ctx.wl.vk, ctx.view) or_return
 

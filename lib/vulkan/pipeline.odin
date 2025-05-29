@@ -205,7 +205,7 @@ pipeline_create :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: 
     rasterizerDiscardEnable = false,
     polygonMode       = .FILL,
     cullMode    = {.FRONT},
-    frontFace         = .COUNTER_CLOCKWISE,
+    frontFace         = .CLOCKWISE,
     depthBiasEnable   = false,
     depthBiasClamp    = 0.0,
     depthBiasConstantFactor = 0.0,

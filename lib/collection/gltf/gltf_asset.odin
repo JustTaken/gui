@@ -35,7 +35,7 @@ parse_asset :: proc(ctx: ^Context) -> error.Error {
   ctx.buffers = vector.new(Buffer, u32(len(ctx.raw_buffers)), ctx.allocator) or_return
 
   ctx.raw_scenes = ctx.obj["scenes"].(json.Array)
-  ctx.scenes = make(map[string]Scene, len(raw) * 2, ctx.allocator)
+  ctx.scenes = vector.new(Scene, u32(len(ctx.raw_scenes)), ctx.allocator) or_return
 
   if raw_animations, ok := ctx.obj["animations"]; ok {
     ctx.raw_animations = raw_animations.(json.Array)

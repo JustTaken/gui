@@ -28,18 +28,21 @@ frames_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, count: u3
   frames = vector.new(Frame, count, ctx.allocator) or_return
 
   for i in 0 ..< count {
-    vector.append(&frames, frame_create(ctx, render_pass, width, height) or_return) or_return
+    frame := vector.one(&frames) or_return
+    frame.planes = vector.new(vk.SubresourceLayout, 3, ctx.allocator) or_return
+    frame.render_pass = render_pass
+
+    frame_create(ctx, frame, width, height) or_return
   }
 
   return frames, nil
 }
 
 @private
-frame_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, width: u32, height: u32) -> (frame: Frame, err: error.Error) {
+frame_create :: proc(ctx: ^Vulkan_Context, frame: ^Frame, width: u32, height: u32) -> error.Error {
   frame.width = width
   frame.height = height
-  frame.render_pass = render_pass
-  frame.planes = vector.new(vk.SubresourceLayout, 3, ctx.allocator) or_return
+  frame.planes.len = 0
 
   modifiers := vector.new(u64, ctx.modifiers.len, ctx.tmp_allocator) or_return
 
@@ -73,12 +76,16 @@ frame_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, width: u32
     sType = .IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
   }
 
-  if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device.handle, frame.image, &properties) != .SUCCESS do return frame, .GetImageModifier
+  if vk.GetImageDrmFormatModifierPropertiesEXT(ctx.device.handle, frame.image, &properties) != .SUCCESS {
+    return .GetImageModifier
+  }
 
   for i in 0..<ctx.modifiers.len {
     modifier := ctx.modifiers.data[i] 
+
     if modifier.drmFormatModifier == properties.drmFormatModifier {
       frame.modifier = modifier
+
       break
     }
   }
@@ -97,14 +104,16 @@ frame_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, width: u32
     handleType = {.DMA_BUF_EXT},
   }
 
-  if vk.GetMemoryFdKHR(ctx.device.handle, &info, &frame.fd) != .SUCCESS do return frame, .GetFdFailed
+  if vk.GetMemoryFdKHR(ctx.device.handle, &info, &frame.fd) != .SUCCESS {
+    return .GetFdFailed
+  }
 
   frame.depth = image_create(ctx, ctx.depth_format, .D2, .OPTIMAL, {.DEPTH_STENCIL_ATTACHMENT}, {}, nil, width, height) or_return
   frame.depth_memory = image_memory_create(ctx, ctx.physical_device, frame.depth, {.DEVICE_LOCAL}, nil ) or_return
   frame.depth_view = image_view_create(ctx, frame.depth, ctx.depth_format, {.DEPTH} ) or_return
   frame.buffer = framebuffer_create(ctx, frame.render_pass, frame.view, frame.depth_view, width, height) or_return
 
-  return frame, nil
+  return nil
 }
 
 @private
@@ -150,7 +159,9 @@ image_memory_create :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDe
     ) or_return,
   }
 
-  if vk.AllocateMemory(ctx.device.handle, &alloc_info, nil, &memory) != .SUCCESS do return memory, .AllocateDeviceMemory
+  if vk.AllocateMemory(ctx.device.handle, &alloc_info, nil, &memory) != .SUCCESS {
+    return memory, .AllocateDeviceMemory
+  }
 
   vk.BindImageMemory(ctx.device.handle, image, memory, vk.DeviceSize(0))
 
@@ -158,7 +169,7 @@ image_memory_create :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDe
 }
 
 @private
-image_view_create :: proc(ctx: ^Vulkan_Context, image: vk.Image, format: vk.Format, aspect: vk.ImageAspectFlags) -> (vk.ImageView, error.Error) {
+image_view_create :: proc(ctx: ^Vulkan_Context, image: vk.Image, format: vk.Format, aspect: vk.ImageAspectFlags) -> (view: vk.ImageView, err: error.Error) {
   range := vk.ImageSubresourceRange {
     levelCount = 1,
     layerCount = 1,
@@ -175,14 +186,15 @@ image_view_create :: proc(ctx: ^Vulkan_Context, image: vk.Image, format: vk.Form
     subresourceRange = range,
   }
 
-  view: vk.ImageView
-  if vk.CreateImageView(ctx.device.handle, &info, nil, &view) != .SUCCESS do return view, .CreateImageViewFailed
+  if vk.CreateImageView(ctx.device.handle, &info, nil, &view) != .SUCCESS {
+    return view, .CreateImageViewFailed
+  }
 
   return view, nil
 }
 
 @private
-framebuffer_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, view: vk.ImageView, depth: vk.ImageView, width: u32, height: u32) -> (vk.Framebuffer, error.Error) {
+framebuffer_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, view: vk.ImageView, depth: vk.ImageView, width: u32, height: u32) -> (buffer: vk.Framebuffer, err: error.Error) {
   attachments := [?]vk.ImageView{view, depth}
   info := vk.FramebufferCreateInfo {
     sType = .FRAMEBUFFER_CREATE_INFO,
@@ -194,8 +206,9 @@ framebuffer_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, view
     layers = 1,
   }
 
-  buffer: vk.Framebuffer
-  if vk.CreateFramebuffer(ctx.device.handle, &info, nil, &buffer) != .SUCCESS do return buffer, .CreateFramebufferFailed
+  if vk.CreateFramebuffer(ctx.device.handle, &info, nil, &buffer) != .SUCCESS {
+    return buffer, .CreateFramebufferFailed
+  }
 
   return buffer, nil
 }
@@ -218,14 +231,17 @@ get_frame :: proc(ctx: ^Vulkan_Context, index: u32) -> ^Frame {
 }
 
 frame_resize :: proc(ctx: ^Vulkan_Context, index: u32, width: u32, height: u32) -> error.Error {
-  frame_destroy(ctx, &ctx.frames.data[index])
-  ctx.frames.data[index] = frame_create(ctx, ctx.frames.data[index].render_pass, width, height) or_return
+  frame := get_frame(ctx, index)
+
+  frame_destroy(ctx, frame)
+  frame_create(ctx, frame, width, height) or_return
 
   return nil
 }
 
 frame_draw :: proc(ctx: ^Vulkan_Context, frame_index: u32, width: u32, height: u32) -> error.Error {
-  frame := &ctx.frames.data[frame_index]
+  frame := get_frame(ctx, frame_index)
+
   submit_staging_data(ctx) or_return
 
   area := vk.Rect2D {

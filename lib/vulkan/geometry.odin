@@ -49,7 +49,7 @@ geometry_group_append :: proc(group: ^Geometry_Group) -> (geometry: ^Geometry, e
   return geometry, nil
 }
 
-geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, vertex_count: u32, indices: []u8, index_size: u32, index_count: u32, max_instances: u32, transform: Matrix, bonned_pipeline: bool) -> (geometry: ^Geometry, err: error.Error) {
+geometry_create :: proc($T: typeid, ctx: ^Vulkan_Context, vertices: []T, indices: []u16, max_instances: u32, transform: Matrix, bonned_pipeline: bool) -> (geometry: ^Geometry, err: error.Error) {
   if bonned_pipeline {
     geometry = geometry_group_append(ctx.boned_group) or_return
   } else {
@@ -58,16 +58,16 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
 
   geometry.instance_offset = ctx.instances
   geometry.transform = transform
-  geometry.count = index_count
+  geometry.count = u32(len(indices))
   ctx.instances += max_instances
 
   geometry.instances = vector.new(Instance, max_instances, ctx.allocator) or_return
 
-  geometry.vertex = buffer_create(ctx, vertex_size * vertex_count, {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
-  copy_data(u8, ctx, vertices, geometry.vertex.handle, 0) or_return
+  geometry.vertex = buffer_create(ctx, u32(len(vertices) * size_of(T)), {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
+  copy_data(T, ctx, vertices, geometry.vertex.handle, 0) or_return
 
-  geometry.indice = buffer_create(ctx, index_size * index_count, {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
-  copy_data(u8, ctx, indices, geometry.indice.handle, 0) or_return
+  geometry.indice = buffer_create(ctx, u32(len(indices) * size_of(u16)), {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
+  copy_data(u16, ctx, indices, geometry.indice.handle, 0) or_return
 
   return geometry, nil
 }
@@ -109,8 +109,6 @@ add_transforms :: proc(ctx: ^Vulkan_Context, bones: []Matrix) -> (offset: u32, e
 update_transforms :: proc(ctx: ^Vulkan_Context, bones: []Matrix, offset: u32) -> error.Error {
   if len(bones) > 0 {
     copy_data(Matrix, ctx, bones, ctx.dynamic_set.descriptors[DYNAMIC_TRANSFORMS].buffer.handle, offset) or_return
-  } else {
-    log.info("Are you passing me a zero sized array? you dumb ass")
   }
 
   return nil

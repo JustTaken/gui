@@ -56,12 +56,12 @@ Context :: struct {
   buffers: vector.Vector(Buffer),
   buffer_views: vector.Vector(Buffer_View),
   animations: vector.Vector(Animation),
-  scenes: map[string]Scene,
+  scenes: vector.Vector(Scene),
   allocator: runtime.Allocator,
 }
 
 Gltf :: struct {
-  scenes: map[string]Scene,
+  scenes: vector.Vector(Scene),
   animations: vector.Vector(Animation),
   nodes: vector.Vector(Node),
   skins: vector.Vector(Skin),

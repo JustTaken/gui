@@ -234,7 +234,7 @@ resize :: proc(ctx: ^Wayland_Context, width: u32, height: u32) -> error.Error {
 
   scale := matrix[4, 4]f32{
     1 / (aspect * tan_fovy), 0, 0, 0, 
-    0, 1 / (tan_fovy), 0, 0, 
+    0, -1 / (tan_fovy), 0, 0, 
     0, 0, 1 / (far - near), 0, 
     0, 0, 0, 1, 
   }
