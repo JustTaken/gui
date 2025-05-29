@@ -13,21 +13,22 @@ odin run lib/scan -- "<path-to-dma-buf.xml>" "<dma-interfaces-output-path.odin>"
 ```
 
 ### Examples
-This is the command used to generate `window/wayland/interface_wayland.odin`
+This is the command used to generate `lib/wayland/interface_wayland.odin`
 ```bash
-odin run lib/scan -- assets/xml/wayland.xml gui/wayland/interface_wayland.odin WAYLAND_INTERFACES protocol
+odin run lib/scan -- assets/xml/wayland.xml lib/wayland/interface_wayland.odin WAYLAND_INTERFACES protocol
 ```
 
-This is the command used to generate `gui/wayland/interface.odin`
+This is the command used to generate `lib/wayland/interface.odin`
 ```bash
-odin run lib/scan -- gui/wayland/interface.odin protocol
+odin run lib/scan -- lib/wayland/interface.odin protocol
 ```
 
 ## Compile Shaders
 Fow now this is required to be done manually
 
 ```bash
-glslc assets/shader/shader.vert -o assets/output/vert.spv
+glslc assets/shader/boned.vert -o assets/output/boned.spv
+glslc assets/shader/unboned.vert -o assets/output/unboned.spv
 glslc assets/shader/shader.frag -o assets/output/frag.spv
 ```
 
