@@ -16,18 +16,11 @@ import "lib:vulkan"
 import "lib:collection/vector"
 import "lib:xkb"
 import "lib:error"
-
-@private
-Callback :: proc(_: ^Wayland_Context, _: u32, _: []Argument) -> error.Error
-@private
-CallbackConfig :: struct {
-  name:     string,
-  function: Callback,
-}
+import "lib:wayland/interface"
 
 @private
 InterfaceObject :: struct {
-  interface: ^Interface,
+  interface: ^interface.Interface,
   callbacks: vector.Vector(Callback),
 }
 
@@ -37,8 +30,7 @@ Modifier :: struct {
   modifier: u64,
 }
 
-@private
-Listen :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Error
+@private Listen :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Error
 
 @private
 KeyListener :: struct {
@@ -51,16 +43,13 @@ Wayland_Context :: struct {
   objects: vector.Vector(InterfaceObject),
   output: vector.Buffer,
   input: vector.Buffer,
-  values: vector.Vector(Argument),
+  values: vector.Vector(interface.Argument),
   listeners: vector.Vector(KeyListener),
-  bytes: []u8,
-  in_fds: []Fd,
-  in_fds_len: u32,
-  in_fd_index: u32,
-  out_fds: [^]Fd,
-  out_fds_len: u32,
-  header: []u8,
   modifiers: vector.Vector(Modifier),
+  bytes: []u8,
+  in_fds: vector.Buffer,
+  out_fds: vector.Vector(interface.Fd),
+  header: []u8,
   display_id: u32,
   registry_id: u32,
   compositor_id: u32,
@@ -109,7 +98,7 @@ Wayland_Context :: struct {
   tmp_allocator: runtime.Allocator,
 }
 
-wayland_init :: proc(ctx: ^Wayland_Context, v: ^vulkan.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
+wayland_init :: proc(ctx: ^Wayland_Context, vk: ^vulkan.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
   log.info("Initializing Wayland")
 
   mark := mem.begin_arena_temp_memory(tmp_arena)
@@ -120,7 +109,7 @@ wayland_init :: proc(ctx: ^Wayland_Context, v: ^vulkan.Vulkan_Context, width: u3
   ctx.tmp_arena = tmp_arena
   ctx.tmp_allocator = mem.arena_allocator(tmp_arena)
 
-  ctx.vk = v
+  ctx.vk = vk
 
   xdg_path := os.get_env("XDG_RUNTIME_DIR", allocator = ctx.tmp_allocator)
   wayland_path := os.get_env("WAYLAND_DISPLAY", allocator = ctx.tmp_allocator)
@@ -150,22 +139,17 @@ wayland_init :: proc(ctx: ^Wayland_Context, v: ^vulkan.Vulkan_Context, width: u3
 
   resize(ctx, width, height) or_return
 
-  ctx.values = vector.new(Argument, 40, ctx.allocator) or_return
+  ctx.values = vector.new(interface.Argument, 40, ctx.allocator) or_return
   ctx.objects = vector.new(InterfaceObject, 40, ctx.allocator) or_return
   ctx.output = vector.buffer_new(4096, ctx.allocator) or_return
   ctx.input = vector.buffer_new(4096, ctx.allocator) or_return
   ctx.modifiers = vector.new(Modifier, 512, ctx.allocator) or_return
   ctx.listeners = vector.new(KeyListener, 10, ctx.allocator) or_return
   ctx.bytes = make([]u8, 1024, ctx.allocator)
-  ctx.header = make([]u8, 512, ctx.allocator)
-  ctx.out_fds = ([^]Fd)(raw_data(ctx.header[mem.align_formula(size_of(posix.cmsghdr), size_of(uint)):]))
-  ctx.out_fds_len = 0
-  ctx.in_fds = make([]Fd, 10, ctx.allocator)
-  ctx.in_fds_len = 0
-  ctx.in_fd_index = 0
 
-  // ctx.input_buffer.cap = 0
-  ctx.running = true
+  ctx.out_fds = vector.new(interface.Fd, 100, ctx.allocator) or_return
+  ctx.in_fds = vector.buffer_new(100, ctx.allocator) or_return
+
   ctx.buffers = make([]Buffer, frame_count, ctx.allocator)
   ctx.buffer = &ctx.buffers[0]
 
@@ -177,25 +161,27 @@ wayland_init :: proc(ctx: ^Wayland_Context, v: ^vulkan.Vulkan_Context, width: u3
 
   buffer.next = ctx.buffer
 
-  ctx.display_id = get_id(ctx, "wl_display", {new_callback("error", error_callback), new_callback("delete_id", delete_callback)}, WAYLAND_INTERFACES[:]) or_return
-  ctx.registry_id = get_id(ctx, "wl_registry", { new_callback("global", global_callback), new_callback("global_remove", global_remove_callback), }, WAYLAND_INTERFACES[:]) or_return
+  ctx.display_id = get_id(ctx, "wl_display", {new_callback("error", error_callback), new_callback("delete_id", delete_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
+  ctx.registry_id = get_id(ctx, "wl_registry", { new_callback("global", global_callback), new_callback("global_remove", global_remove_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
   ctx.get_registry_opcode = get_request_opcode(ctx, "get_registry", ctx.display_id) or_return
 
-  write(ctx, {BoundNewId(ctx.registry_id)}, ctx.display_id, ctx.get_registry_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.registry_id)}, ctx.display_id, ctx.get_registry_opcode) or_return
   send(ctx) or_return
 
   roundtrip(ctx) or_return
   send(ctx) or_return
   roundtrip(ctx) or_return
 
-  dma_params_init(ctx)
+  dma_params_init(ctx) or_return
 
-  ctx.buffer_base_id = get_id(ctx, "wl_buffer", {new_callback("release", buffer_release_callback)}, WAYLAND_INTERFACES[:]) or_return
+  ctx.buffer_base_id = get_id(ctx, "wl_buffer", {new_callback("release", buffer_release_callback)}, interface.WAYLAND_INTERFACES[:]) or_return
   ctx.destroy_buffer_opcode = get_request_opcode(ctx, "destroy", ctx.buffer_base_id) or_return
 
   buffers_init(ctx) or_return
   buffer_write_swap(ctx, ctx.buffer, ctx.width, ctx.height) or_return
   send(ctx) or_return
+
+  ctx.running = true
 
   return nil
 }
@@ -279,27 +265,27 @@ roundtrip :: proc(ctx: ^Wayland_Context) -> error.Error {
 
 @private
 surface_create :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.surface_id = get_id(ctx, "wl_surface", { new_callback("enter", enter_callback), new_callback("leave", leave_callback), new_callback("preferred_buffer_scale", preferred_buffer_scale_callback), new_callback("preferred_buffer_transform", preferred_buffer_transform_callback), }, WAYLAND_INTERFACES[:]) or_return
+  ctx.surface_id = get_id(ctx, "wl_surface", { new_callback("enter", enter_callback), new_callback("leave", leave_callback), new_callback("preferred_buffer_scale", preferred_buffer_scale_callback), new_callback("preferred_buffer_transform", preferred_buffer_transform_callback), }, interface.WAYLAND_INTERFACES[:]) or_return
   ctx.surface_attach_opcode = get_request_opcode(ctx, "attach", ctx.surface_id) or_return
   ctx.surface_commit_opcode = get_request_opcode(ctx, "commit", ctx.surface_id) or_return
   ctx.surface_damage_opcode = get_request_opcode(ctx, "damage", ctx.surface_id) or_return
 
-  write(ctx, {BoundNewId(ctx.surface_id)}, ctx.compositor_id, ctx.create_surface_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.surface_id)}, ctx.compositor_id, ctx.create_surface_opcode) or_return
   dma_create(ctx) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 xdg_surface_create :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.xdg_surface_id = get_id(ctx, "xdg_surface", {new_callback("configure", configure_callback)}, XDG_INTERFACES[:]) or_return
+  ctx.xdg_surface_id = get_id(ctx, "xdg_surface", {new_callback("configure", configure_callback)}, interface.XDG_INTERFACES[:]) or_return
   ctx.get_toplevel_opcode = get_request_opcode(ctx, "get_toplevel", ctx.xdg_surface_id) or_return
   ctx.ack_configure_opcode = get_request_opcode(ctx, "ack_configure", ctx.xdg_surface_id) or_return
 
-  ctx.xdg_toplevel_id = get_id(ctx, "xdg_toplevel", { new_callback("configure", toplevel_configure_callback), new_callback("close", toplevel_close_callback), new_callback("configure_bounds", toplevel_configure_bounds_callback), new_callback("wm_capabilities", toplevel_wm_capabilities_callback), }, XDG_INTERFACES[:]) or_return
+  ctx.xdg_toplevel_id = get_id(ctx, "xdg_toplevel", { new_callback("configure", toplevel_configure_callback), new_callback("close", toplevel_close_callback), new_callback("configure_bounds", toplevel_configure_bounds_callback), new_callback("wm_capabilities", toplevel_wm_capabilities_callback), }, interface.XDG_INTERFACES[:]) or_return
 
-  write(ctx, {BoundNewId(ctx.xdg_surface_id), Object(ctx.surface_id)}, ctx.xdg_wm_base_id, ctx.get_xdg_surface_opcode) or_return
-  write(ctx, {BoundNewId(ctx.xdg_toplevel_id)}, ctx.xdg_surface_id, ctx.get_toplevel_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.xdg_surface_id), interface.Object(ctx.surface_id)}, ctx.xdg_wm_base_id, ctx.get_xdg_surface_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.xdg_toplevel_id)}, ctx.xdg_surface_id, ctx.get_toplevel_opcode) or_return
   write(ctx, {}, ctx.surface_id, ctx.surface_commit_opcode) or_return
 
   return nil
@@ -307,17 +293,17 @@ xdg_surface_create :: proc(ctx: ^Wayland_Context) -> error.Error {
 
 @(private = "file")
 dma_create :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.dma_feedback_id = get_id(ctx, "zwp_linux_dmabuf_feedback_v1", { new_callback("done", dma_done_callback), new_callback("format_table", dma_format_table_callback), new_callback("main_device", dma_main_device_callback), new_callback("tranche_done", dma_tranche_done_callback), new_callback("tranche_target_device", dma_tranche_target_device_callback), new_callback("tranche_formats", dma_tranche_formats_callback), new_callback("tranche_flags", dma_tranche_flags_callback), }, DMA_INTERFACES[:]) or_return
+  ctx.dma_feedback_id = get_id(ctx, "zwp_linux_dmabuf_feedback_v1", { new_callback("done", dma_done_callback), new_callback("format_table", dma_format_table_callback), new_callback("main_device", dma_main_device_callback), new_callback("tranche_done", dma_tranche_done_callback), new_callback("tranche_target_device", dma_tranche_target_device_callback), new_callback("tranche_formats", dma_tranche_formats_callback), new_callback("tranche_flags", dma_tranche_flags_callback), }, interface.DMA_INTERFACES[:]) or_return
   ctx.dma_feedback_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_feedback_id) or_return
 
-  write(ctx, {BoundNewId(ctx.dma_feedback_id), Object(ctx.surface_id)}, ctx.dma_id, ctx.dma_surface_feedback_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.dma_feedback_id), interface.Object(ctx.surface_id)}, ctx.dma_id, ctx.dma_surface_feedback_opcode) or_return
 
   return nil
 }
 
 @(private = "file")
 dma_params_init :: proc(ctx: ^Wayland_Context) -> error.Error {
-  ctx.dma_params_id = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback), }, DMA_INTERFACES[:]) or_return
+  ctx.dma_params_id = get_id(ctx, "zwp_linux_buffer_params_v1", { new_callback("created", param_created_callback), new_callback("failed", param_failed_callback), }, interface.DMA_INTERFACES[:]) or_return
   ctx.dma_params_create_immed_opcode = get_request_opcode(ctx, "create_immed", ctx.dma_params_id) or_return
   ctx.dma_params_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_params_id) or_return
   ctx.dma_params_add_opcode = get_request_opcode(ctx, "add", ctx.dma_params_id) or_return
@@ -326,11 +312,11 @@ dma_params_init :: proc(ctx: ^Wayland_Context) -> error.Error {
 }
 
 @private
-write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opcode: u32, loc := #caller_location) -> error.Error {
+write :: proc(ctx: ^Wayland_Context, arguments: []interface.Argument, object_id: u32, opcode: u32, loc := #caller_location) -> error.Error {
   object := get_object(ctx, object_id) or_return
   request := get_request(object, opcode) or_return
 
-  start := ctx.output.offset
+  start := ctx.output.vec.len
 
   vector.write(u32, &ctx.output, object_id) or_return
   vector.write(u16, &ctx.output, u16(opcode)) or_return
@@ -341,26 +327,25 @@ write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opco
 
   for kind, i in request.arguments {
     #partial switch kind {
-    case .BoundNewId: vector.write(BoundNewId, &ctx.output, arguments[i].(BoundNewId)) or_return
-    case .Uint: vector.write(Uint, &ctx.output, arguments[i].(Uint)) or_return
-    case .Int: vector.write(Int, &ctx.output, arguments[i].(Int)) or_return
-    case .Fixed: vector.write(Fixed, &ctx.output, arguments[i].(Fixed)) or_return
-    case .Object: vector.write(Object, &ctx.output, arguments[i].(Object)) or_return
+    case .BoundNewId: vector.write(interface.BoundNewId, &ctx.output, arguments[i].(interface.BoundNewId)) or_return
+    case .Uint: vector.write(interface.Uint, &ctx.output, arguments[i].(interface.Uint)) or_return
+    case .Int: vector.write(interface.Int, &ctx.output, arguments[i].(interface.Int)) or_return
+    case .Fixed: vector.write(interface.Fixed, &ctx.output, arguments[i].(interface.Fixed)) or_return
+    case .Object: vector.write(interface.Object, &ctx.output, arguments[i].(interface.Object)) or_return
     case .UnBoundNewId:
-      value := arguments[i].(UnBoundNewId)
+      value := arguments[i].(interface.UnBoundNewId)
       l := len(value.interface)
       vector.write(u32, &ctx.output, u32(l)) or_return
       vector.write_n(u8, &ctx.output, ([]u8)(value.interface)) or_return
       vector.padd_n(&ctx.output, u32(mem.align_formula(l, size_of(u32)) - l)) or_return
-      vector.write(Uint, &ctx.output, value.version) or_return
-      vector.write(BoundNewId, &ctx.output, value.id) or_return
-    case .Fd:
-      fd_append(ctx, arguments[i].(Fd))
+      vector.write(interface.Uint, &ctx.output, value.version) or_return
+      vector.write(interface.BoundNewId, &ctx.output, value.id) or_return
+    case .Fd: vector.append(&ctx.out_fds, arguments[i].(interface.Fd)) or_return
     case:
     }
   }
 
-  intrinsics.unaligned_store(total_len, u16(ctx.output.offset - start))
+  intrinsics.unaligned_store(total_len, u16(ctx.output.vec.len - start))
 
   return nil
 }
@@ -380,14 +365,14 @@ read :: proc(ctx: ^Wayland_Context) -> error.Error {
 
   for kind in event.arguments {
     #partial switch kind {
-    case .Object: read_and_write(ctx, Object) or_return
-    case .Uint: read_and_write(ctx, Uint) or_return
-    case .Int: read_and_write(ctx, Int) or_return
-    case .Fixed: read_and_write(ctx, Fixed) or_return
-    case .BoundNewId: read_and_write(ctx, BoundNewId) or_return
-    case .String: read_and_write_collection(ctx, String, &bytes_len) or_return
-    case .Array: read_and_write_collection(ctx, Array, &bytes_len) or_return
-    case .Fd: read_fd_and_write(ctx) or_return
+    case .Object: read_and_write(ctx, interface.Object) or_return
+    case .Uint: read_and_write(ctx, interface.Uint) or_return
+    case .Int: read_and_write(ctx, interface.Int) or_return
+    case .Fixed: read_and_write(ctx, interface.Fixed) or_return
+    case .BoundNewId: read_and_write(ctx, interface.BoundNewId) or_return
+    case .String: read_and_write_collection(ctx, interface.String, &bytes_len) or_return
+    case .Array: read_and_write_collection(ctx, interface.Array, &bytes_len) or_return
+    case .Fd: read_fd(ctx) or_return
     case: return .OutOfBounds
     }
   }
@@ -410,8 +395,8 @@ read_and_write :: proc(ctx: ^Wayland_Context, $T: typeid) -> error.Error {
 }
 
 @private
-read_fd_and_write :: proc(ctx: ^Wayland_Context) -> error.Error {
-  vector.append(&ctx.values, ctx.in_fds[ctx.in_fd_index]) or_return
+read_fd :: proc(ctx: ^Wayland_Context) -> error.Error {
+  vector.append(&ctx.values, vector.read(interface.Fd, &ctx.in_fds) or_return) or_return
   return nil
 }
 
@@ -440,89 +425,86 @@ recv :: proc(ctx: ^Wayland_Context) -> error.Error {
     iov_len  = uint(ctx.input.vec.cap),
   }
 
-  t_size := size_of(posix.FD)
-  t_align := mem.align_formula(t_size * 10, size_of(uint))
+  t_align := mem.align_formula(size_of(posix.FD) * 10, size_of(uint))
   cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
 
-  buf := make([]u8, u32(cmsg_align + t_align), ctx.tmp_allocator)
+  buf := vector.new(u8, u32(cmsg_align + t_align), ctx.tmp_allocator) or_return
 
   msg := posix.msghdr {
-    msg_iov  = &iovec,
-    msg_iovlen     = 1,
-    msg_control    = rawptr(&buf[0]),
-    msg_controllen = len(buf),
+    msg_iov = &iovec,
+    msg_iovlen = 1,
+    msg_control = rawptr(&buf.data[0]),
+    msg_controllen = uint(buf.cap),
   }
 
   count := posix.recvmsg(ctx.socket, &msg, {})
   alig := u32(mem.align_formula(size_of(posix.cmsghdr), size_of(uint)))
-  cmsg := (^posix.cmsghdr)(msg.msg_control)
-  ctx.in_fd_index = 0
-
-  if cmsg.cmsg_len > 0 {
-    ctx.in_fds_len = (u32(cmsg.cmsg_len) - alig) / size_of(Fd)
-
-    for i in 0 ..< ctx.in_fds_len {
-      ctx.in_fds[i] = intrinsics.unaligned_load((^Fd)(raw_data(buf[alig + size_of(Fd) * i:])) )
-    }
-  }
 
   vector.reader_reset(&ctx.input, u32(count))
+  vector.reader_reset(&ctx.in_fds, 0)
+
+  cmsg := (^posix.cmsghdr)(msg.msg_control)
+  if cmsg.cmsg_len <= 0 do return nil
+
+  fd_count := (u32(cmsg.cmsg_len) - alig) / size_of(interface.Fd)
+  fds := (cast([^]interface.Fd)(raw_data(buf.data[alig:alig + size_of(interface.Fd) * fd_count])))[0:fd_count]
+  vector.write_n(interface.Fd, &ctx.in_fds, fds) or_return
 
   return nil
 }
 
 @private
-fd_append :: proc(ctx: ^Wayland_Context, fd: Fd) {
-  ctx.out_fds[ctx.out_fds_len] = fd
-  ctx.out_fds_len += 1
-}
-
-@private
 send :: proc(ctx: ^Wayland_Context) -> error.Error {
-  if ctx.output.offset == 0 {
+  if ctx.output.vec.len == 0 {
     return nil
   }
 
   io := posix.iovec {
     iov_base = rawptr(&ctx.output.vec.data[0]),
-    iov_len  = uint(ctx.output.offset),
+    iov_len  = uint(ctx.output.vec.len),
   }
 
   cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
-  fd_size := ctx.out_fds_len * size_of(Fd)
+  fd_size := ctx.out_fds.len * size_of(interface.Fd)
 
-  socket_msg := posix.msghdr {
-    msg_name       = nil,
-    msg_namelen    = 0,
-    msg_iov  = &io,
-    msg_iovlen     = 1,
-    msg_control    = raw_data(ctx.header),
-    msg_controllen = uint(cmsg_align + mem.align_formula(int(fd_size), size_of(uint))),
-    msg_flags      = {},
-  }
+  header := vector.buffer_new(u32(cmsg_align + mem.align_formula(int(fd_size), size_of(uint))), ctx.tmp_allocator) or_return
 
-  cmsg := (^posix.cmsghdr)(socket_msg.msg_control)
+  cmsg: posix.cmsghdr
   cmsg.cmsg_len = uint(cmsg_align) + uint(fd_size)
   cmsg.cmsg_type = posix.SCM_RIGHTS
   cmsg.cmsg_level = posix.SOL_SOCKET
+
+  vector.write(posix.cmsghdr, &header, cmsg) or_return
+  vector.padd_n(&header, u32(cmsg_align - size_of(posix.cmsghdr))) or_return
+  vector.write_n(interface.Fd, &header, vector.data(&ctx.out_fds)) or_return
+
+  socket_msg := posix.msghdr {
+    msg_name = nil,
+    msg_namelen = 0,
+    msg_iov = &io,
+    msg_iovlen = 1,
+    msg_control = rawptr(&header.vec.data[0]),
+    msg_controllen = uint(mem.align_formula(int(header.vec.len), size_of(uint))),
+    msg_flags = {},
+  }
 
   if posix.sendmsg(ctx.socket, &socket_msg, {}) < 0 {
     return .SendMessageFailed
   }
 
-  ctx.output.offset = 0
-  ctx.out_fds_len = 0
+  ctx.output.vec.len = 0
+  ctx.out_fds.len = 0
 
   return nil
 }
 
 @private
-ctx_append :: proc(ctx: ^Wayland_Context, callbacks: []CallbackConfig, interface: ^Interface) -> error.Error {
+object_append :: proc(ctx: ^Wayland_Context, callbacks: []CallbackConfig, interface: ^interface.Interface) -> error.Error {
   if len(callbacks) != len(interface.events) {
+    log.error("Cannot create object interface if all events are not registred with callbacks")
     return .OutOfBounds
   }
 
-  err: mem.Allocator_Error
   object := vector.one(&ctx.objects) or_return
 
   object.interface = interface
@@ -547,10 +529,10 @@ get_object :: proc(ctx: ^Wayland_Context, id: u32) -> (InterfaceObject, error.Er
 }
 
 @private
-get_id :: proc(ctx: ^Wayland_Context, name: string, callbacks: []CallbackConfig, interfaces: []Interface, loc := #caller_location) -> (id: u32, err: error.Error) {
+get_id :: proc(ctx: ^Wayland_Context, name: string, callbacks: []CallbackConfig, interfaces: []interface.Interface, loc := #caller_location) -> (id: u32, err: error.Error) {
   for &inter in interfaces {
     if inter.name == name {
-      ctx_append(ctx, callbacks, &inter) or_return
+      object_append(ctx, callbacks, &inter) or_return
       id = ctx.objects.len
       break
     }
@@ -571,7 +553,7 @@ copy_id :: proc(ctx: ^Wayland_Context, id: u32) -> (i: u32, err: error.Error) {
 }
 
 @private
-get_event :: proc(object: InterfaceObject, opcode: u32) -> (^Event, error.Error) {
+get_event :: proc(object: InterfaceObject, opcode: u32) -> (^interface.Event, error.Error) {
   if len(object.interface.events) <= int(opcode) {
     return nil, .OutOfBounds
   }
@@ -580,7 +562,7 @@ get_event :: proc(object: InterfaceObject, opcode: u32) -> (^Event, error.Error)
 }
 
 @private
-get_request :: proc(object: InterfaceObject, opcode: u32) -> (^Request, error.Error) {
+get_request :: proc(object: InterfaceObject, opcode: u32) -> (^interface.Request, error.Error) {
   if len(object.interface.requests) <= int(opcode) {
     return nil, .OutOfBounds
   }
@@ -589,7 +571,7 @@ get_request :: proc(object: InterfaceObject, opcode: u32) -> (^Request, error.Er
 }
 
 @private
-get_event_opcode :: proc(interface: ^Interface, name: string) -> (u32, error.Error) {
+get_event_opcode :: proc(interface: ^interface.Interface, name: string) -> (u32, error.Error) {
   for event, i in interface.events {
     if event.name == name {
       return u32(i), nil
@@ -611,368 +593,4 @@ get_request_opcode :: proc(ctx: ^Wayland_Context, name: string, object_id: u32) 
   }
 
   return 0, .OutOfBounds
-}
-
-@private
-new_callback :: proc(name: string, callback: Callback) -> CallbackConfig {
-  return CallbackConfig{name = name, function = callback}
-}
-
-@private
-global_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  ok: bool
-  str := arguments[1].(String)
-  version := arguments[2].(Uint)
-  interface_name := string(str[0:len(str) - 1])
-
-  switch interface_name {
-  case "xdg_wm_base":
-    ctx.xdg_wm_base_id = get_id(ctx, interface_name, {new_callback("ping", ping_callback)}, XDG_INTERFACES[:]) or_return
-    ctx.pong_opcode = get_request_opcode(ctx, "pong", ctx.xdg_wm_base_id) or_return
-    ctx.get_xdg_surface_opcode = get_request_opcode(ctx, "get_xdg_surface", ctx.xdg_wm_base_id) or_return
-
-    write(ctx, { arguments[0], UnBoundNewId { id = BoundNewId(ctx.xdg_wm_base_id), interface = str, version = version, }, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
-    xdg_surface_create(ctx)
-  case "wl_compositor":
-    ctx.compositor_id = get_id(ctx, interface_name, {}, WAYLAND_INTERFACES[:]) or_return
-    ctx.create_surface_opcode = get_request_opcode(ctx, "create_surface", ctx.compositor_id) or_return
-
-    write(ctx, { arguments[0], UnBoundNewId { id = BoundNewId(ctx.compositor_id), interface = str, version = version, }, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
-    surface_create(ctx)
-  case "wl_seat":
-    ctx.seat_id = get_id(ctx, interface_name, {new_callback("capabilities", seat_capabilities), new_callback("name", seat_name)}, WAYLAND_INTERFACES[:]) or_return
-    ctx.get_pointer_opcode = get_request_opcode(ctx, "get_pointer", ctx.seat_id) or_return
-    ctx.get_keyboard_opcode = get_request_opcode(ctx, "get_keyboard", ctx.seat_id) or_return
-
-    write(ctx, { arguments[0], UnBoundNewId{id = BoundNewId(ctx.seat_id), interface = str, version = version}, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
-  case "zwp_linux_dmabuf_v1":
-    ctx.dma_id = get_id(ctx, interface_name, { new_callback("format", dma_format_callback), new_callback("modifier", dma_modifier_callback), }, DMA_INTERFACES[:]) or_return
-    ctx.dma_destroy_opcode = get_request_opcode(ctx, "destroy", ctx.dma_id) or_return
-    ctx.dma_create_param_opcode = get_request_opcode(ctx, "create_params", ctx.dma_id) or_return
-    ctx.dma_surface_feedback_opcode = get_request_opcode(ctx, "get_surface_feedback", ctx.dma_id) or_return
-
-    write(ctx, { arguments[0], UnBoundNewId{id = BoundNewId(ctx.dma_id), interface = str, version = version}, }, ctx.registry_id, ctx.registry_bind_opcode) or_return
-  }
-
-  return nil
-}
-
-@private
-global_remove_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-}
-
-@private
-seat_capabilities :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  Seat_Capability :: enum {
-    Pointer  = 0,
-    Keyboard = 1,
-    Touch    = 2,
-  }
-
-  Seat_Capabilities :: bit_set[Seat_Capability;u32]
-
-  capabilities := transmute(Seat_Capabilities)u32(arguments[0].(Uint))
-
-  if .Pointer in capabilities {
-    ctx.pointer_id = get_id(ctx, "wl_pointer", { new_callback("leave", pointer_leave_callback), new_callback("enter", pointer_enter_callback), new_callback("motion", pointer_motion_callback), new_callback("button", pointer_button_callback), new_callback("frame", pointer_frame_callback), new_callback("axis", pointer_axis_callback), new_callback("axis_source", pointer_axis_source_callback), new_callback("axis_stop", pointer_axis_stop_callback), new_callback("axis_discrete", pointer_axis_discrete_callback), new_callback("axis_value120", pointer_axis_value120_callback), new_callback("axis_relative_direction", pointer_axis_relative_direction_callback), }, WAYLAND_INTERFACES[:]) or_return
-    write(ctx, {BoundNewId(ctx.pointer_id)}, ctx.seat_id, ctx.get_pointer_opcode) or_return
-  }
-
-  if .Keyboard in capabilities {
-    ctx.keyboard_id = get_id(ctx, "wl_keyboard", { new_callback("leave", keyboard_leave_callback), new_callback("enter", keyboard_enter_callback), new_callback("key", keyboard_key_callback), new_callback("keymap", keyboard_keymap_callback), new_callback("modifiers", keyboard_modifiers_callback), new_callback("repeat_info", keyboard_repeat_info_callback), }, WAYLAND_INTERFACES[:]) or_return
-    write(ctx, {BoundNewId(ctx.keyboard_id)}, ctx.seat_id, ctx.get_keyboard_opcode) or_return
-  }
-
-  return nil
-}
-
-@private
-keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  size := uint(arguments[2].(Uint))
-
-  data := ([^]u8)(posix.mmap(nil, size, {.READ}, {.PRIVATE}, posix.FD(arguments[1].(Fd)), 0))[0:size]
-  defer posix.munmap(raw_data(data), size)
-
-  if data == nil {
-    return .OutOfMemory
-  }
-
-  ctx.keymap = xkb.keymap_from_bytes(data, ctx.allocator, ctx.tmp_allocator) or_return
-
-  return nil
-}
-
-@private
-keyboard_enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-keyboard_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-keyboard_key_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  xkb.register_code(&ctx.keymap, u32(arguments[2].(Uint)), u32(arguments[3].(Uint))) or_return
-
-  return nil
-}
-@private
-keyboard_modifiers_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  xkb.set_modifiers(&ctx.keymap, u32(arguments[1].(Uint)))
-
-  return nil
-}
-@private
-keyboard_repeat_info_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-pointer_enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_motion_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_button_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_axis_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_frame_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_axis_source_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_axis_stop_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_axis_discrete_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_axis_create_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_axis_value120_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-pointer_axis_relative_direction_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-seat_name :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-}
-
-@private
-dma_modifier_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-dma_format_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-configure_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  write(ctx, {arguments[0]}, id, ctx.ack_configure_opcode)
-
-  return nil
-}
-
-@private
-ping_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  write(ctx, {arguments[0]}, ctx.xdg_wm_base_id, ctx.pong_opcode)
-
-  return nil
-}
-
-@private
-toplevel_configure_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  width := u32(arguments[0].(Int))
-  height := u32(arguments[1].(Int))
-
-  if width == 0 || height == 0 do return nil
-  if width == ctx.width && height == ctx.height do return nil
-
-  resize(ctx, width, height) or_return
-
-  return nil
-}
-
-@private
-toplevel_close_callback :: proc(ctx: ^Wayland_Context, id: u32, arugments: []Argument) -> error.Error {
-  ctx.running = false
-
-  return nil
-}
-
-@private
-toplevel_configure_bounds_callback :: proc(ctx: ^Wayland_Context, id: u32, arugments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-toplevel_wm_capabilities_callback :: proc(ctx: ^Wayland_Context, id: u32, arugments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-buffer_release_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  ctx.buffers[id - ctx.buffers[0].id].released = true
-  return nil
-}
-
-@private
-enter_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-preferred_buffer_scale_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-preferred_buffer_transform_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-dma_tranche_flags_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-@private
-dma_format_table_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  fd := posix.FD(arguments[0].(Fd))
-  size := u32(arguments[1].(Uint))
-
-  buf := ([^]u8)(posix.mmap(nil, uint(size), {.READ}, {.PRIVATE}, fd, 0))[0:size]
-  defer posix.munmap(raw_data(buf), uint(size))
-
-  if buf == nil do return .OutOfMemory
-
-  format_size: u32 = size_of(u32)
-  modifier_size: u32 = size_of(u64)
-  tuple_size := u32(mem.align_formula(int(format_size + modifier_size), int(modifier_size)))
-
-  count := size / tuple_size
-  for i in 0 ..< count {
-    offset := u32(i) * tuple_size
-    modifier := vector.one(&ctx.modifiers) or_return
-
-    modifier.format = intrinsics.unaligned_load((^u32)(raw_data(buf[offset:][0:format_size])))
-    modifier.modifier = intrinsics.unaligned_load((^u64)(raw_data(buf[offset + modifier_size:][0:modifier_size])))
-  }
-
-  return nil
-}
-
-@private
-dma_main_device_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  ctx.dma_main_device = intrinsics.unaligned_load((^u64)(raw_data(arguments[0].(Array))))
-
-  return nil
-}
-
-@private
-dma_done_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  write(ctx, {}, id, ctx.dma_feedback_destroy_opcode)
-
-  return nil
-}
-
-@private
-dma_tranche_target_device_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-dma_tranche_formats_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  array := arguments[0].(Array)
-  indices := ([^]u16)(raw_data(array))[0:len(array) / 2]
-
-  l: u32 = 0
-  modifiers := ctx.modifiers
-  ctx.modifiers.len = 0
-
-  for i in indices {
-    vector.append(&ctx.modifiers, modifiers.data[i])
-  }
-
-  return nil
-}
-
-@private
-dma_tranche_done_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-param_created_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-param_failed_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return .DmaBufFailed
-}
-
-@private
-delete_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  return nil
-  
-}
-
-@private
-error_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  log.error(string(arguments[2].(String)))
-
-  return nil
 }

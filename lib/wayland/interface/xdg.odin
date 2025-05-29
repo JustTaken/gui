@@ -1,4 +1,4 @@
-package wayland
+package interface
 
 XDG_INTERFACES := [?]Interface {
   Interface {

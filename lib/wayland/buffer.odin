@@ -2,7 +2,9 @@ package wayland
 
 import "lib:vulkan"
 import "lib:error"
+import "lib:wayland/interface"
 
+@private
 Buffer :: struct {
   data:     []u8,
   id:       u32,
@@ -32,8 +34,8 @@ buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, he
 
   vulkan.frame_draw(ctx.vk, buffer.frame, width, height) or_return
 
-  write(ctx, {Object(buffer.id), Int(0), Int(0)}, ctx.surface_id, ctx.surface_attach_opcode)
-  write(ctx, {Int(0), Int(0), Int(width), Int(height)}, ctx.surface_id, ctx.surface_damage_opcode)
+  write(ctx, {interface.Object(buffer.id), interface.Int(0), interface.Int(0)}, ctx.surface_id, ctx.surface_attach_opcode)
+  write(ctx, {interface.Int(0), interface.Int(0), interface.Int(width), interface.Int(height)}, ctx.surface_id, ctx.surface_damage_opcode)
   write(ctx, {}, ctx.surface_id, ctx.surface_commit_opcode)
 
   ctx.buffer = buffer.next
@@ -64,14 +66,14 @@ buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
 buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height: u32) -> error.Error {
   buffer.bound = true
 
-  write(ctx, {BoundNewId(ctx.dma_params_id)}, ctx.dma_id, ctx.dma_create_param_opcode) or_return
+  write(ctx, {interface.BoundNewId(ctx.dma_params_id)}, ctx.dma_id, ctx.dma_create_param_opcode) or_return
 
   for i in 0 ..< buffer.frame.modifier.drmFormatModifierPlaneCount {
     plane := &buffer.frame.planes[i]
     modifier_hi := (buffer.frame.modifier.drmFormatModifier & 0xFFFFFFFF00000000) >> 32
     modifier_lo := buffer.frame.modifier.drmFormatModifier & 0x00000000FFFFFFFF
 
-    write(ctx, { Fd(buffer.frame.fd), Uint(i), Uint(plane.offset), Uint(plane.rowPitch), Uint(modifier_hi), Uint(modifier_lo), }, ctx.dma_params_id, ctx.dma_params_add_opcode) or_return
+    write(ctx, { interface.Fd(buffer.frame.fd), interface.Uint(i), interface.Uint(plane.offset), interface.Uint(plane.rowPitch), interface.Uint(modifier_hi), interface.Uint(modifier_lo), }, ctx.dma_params_id, ctx.dma_params_add_opcode) or_return
   }
 
   buffer.width = width
@@ -79,7 +81,7 @@ buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height
 
   format := vulkan.drm_format(ctx.vk.format)
 
-  write(ctx, {BoundNewId(buffer.id), Int(width), Int(height), Uint(format), Uint(0)}, ctx.dma_params_id, ctx.dma_params_create_immed_opcode) or_return
+  write(ctx, {interface.BoundNewId(buffer.id), interface.Int(width), interface.Int(height), interface.Uint(format), interface.Uint(0)}, ctx.dma_params_id, ctx.dma_params_create_immed_opcode) or_return
   write(ctx, {}, ctx.dma_params_id, ctx.dma_params_destroy_opcode) or_return
 
   return nil

@@ -1,4 +1,4 @@
-package wayland
+package interface
 
 Int :: distinct i32
 Uint :: distinct u32
@@ -8,11 +8,13 @@ BoundNewId :: distinct u32
 Fd :: distinct i32
 String :: distinct []u8
 Array :: distinct []u8
+
 UnBoundNewId :: struct {
   interface: String,
   version:   Uint,
   id:  BoundNewId,
 }
+
 ArgumentKind :: enum {
   Int,
   Uint,
@@ -24,6 +26,7 @@ ArgumentKind :: enum {
   String,
   Array,
 }
+
 Argument :: union {
   Int,
   Uint,
@@ -35,14 +38,17 @@ Argument :: union {
   String,
   Array,
 }
+
 Request :: struct {
   name:      string,
   arguments: []ArgumentKind,
 }
+
 Event :: struct {
   name:      string,
   arguments: []ArgumentKind,
 }
+
 Interface :: struct {
   name:     string,
   requests: []Request,

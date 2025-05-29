@@ -14,9 +14,7 @@ Vector :: struct(T: typeid) {
 }
 
 new :: proc($T: typeid, cap: u32, allocator: runtime.Allocator) -> (vec: Vector(T), err: error.Error) {
-  e: mem.Allocator_Error
-  d: []T
-  d, e = make([]T, cap, allocator)
+  d, e := make([]T, cap, allocator)
 
   if e != nil {
     log.info("Failed to allocate memory for:", typeid_of(T), cap)
@@ -44,11 +42,17 @@ append :: proc(vec: ^Vector($T), item: T, loc := #caller_location) -> error.Erro
 
 remove :: proc(vec: ^Vector($T), index: u32) -> error.Error {
   if index >= vec.len {
+    log.error("Cannot remove elements pass the vector length")
     return .OutOfBounds
   }
 
-  vec.data[index] = vec.data[vec.len - 1]
+  if vec.len == 0 {
+    log.error("Vector does not have elements to be removed")
+    return .OutOfBounds
+  }
+
   vec.len -= 1
+  vec.data[index] = vec.data[vec.len]
   return nil
 }
 
@@ -94,6 +98,7 @@ data :: proc(vec: ^Vector($T)) -> []T {
 
 offset :: proc(vec: ^Vector($T), o: u32) -> ([]T, error.Error) {
   if o > vec.len {
+    log.error("Failed to get vector offset, cap:", vec.cap, "offset", o)
     return nil, .OutOfBounds
   }
 

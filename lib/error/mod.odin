@@ -20,6 +20,7 @@ Error :: enum {
   MemoryNotFound,
   EnviromentVariablesNotSet,
   WaylandSocketNotAvaiable,
+  ErrorEvent,
   SendMessageFailed,
   BufferNotReleased,
   CreateDescriptorSetLayoutFailed,

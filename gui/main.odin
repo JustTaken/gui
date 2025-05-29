@@ -52,6 +52,7 @@ log_proc :: proc(data: rawptr, level: runtime.Logger_Level, text: string, option
 }
 
 main :: proc() {
+  //context.logger.lowest_level = .Debug
   context.logger.lowest_level = .Info
   context.logger.procedure = log_proc
 

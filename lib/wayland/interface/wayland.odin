@@ -1,4 +1,4 @@
-package wayland
+package interface
 
 WAYLAND_INTERFACES := [?]Interface {
   Interface {
