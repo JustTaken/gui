@@ -12,6 +12,7 @@ import "lib:collection/gltf"
 import "lib:vulkan"
 import "lib:wayland"
 import "lib:error"
+import "lib:xkb"
 
 Context :: struct {
   bytes: []u8,
@@ -144,22 +145,22 @@ new_view :: proc(ctx: ^Context, view: matrix[4, 4]f32) {
   ctx.view_update = true
 }
 
-frame :: proc(ptr: rawptr, keymap: ^wayland.Keymap_Context, time: i64) -> error.Error {
+frame :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Error {
   ctx := cast(^Context)(ptr)
   ctx.view_update = false
 
-  if wayland.is_key_pressed(keymap, .d) do new_view(ctx, ctx.translate_left * ctx.view)
-  if wayland.is_key_pressed(keymap, .a) do new_view(ctx, ctx.translate_right * ctx.view)
-  if wayland.is_key_pressed(keymap, .s) do new_view(ctx, ctx.translate_back * ctx.view)
-  if wayland.is_key_pressed(keymap, .w) do new_view(ctx, ctx.translate_for * ctx.view)
-  if wayland.is_key_pressed(keymap, .k) do new_view(ctx, ctx.translate_up * ctx.view)
-  if wayland.is_key_pressed(keymap, .j) do new_view(ctx, ctx.translate_down * ctx.view)
-  if wayland.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.rotate_up * ctx.view)
-  if wayland.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
-  if wayland.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
-  if wayland.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
+  if xkb.is_key_pressed(keymap, .d) do new_view(ctx, ctx.translate_left * ctx.view)
+  if xkb.is_key_pressed(keymap, .a) do new_view(ctx, ctx.translate_right * ctx.view)
+  if xkb.is_key_pressed(keymap, .s) do new_view(ctx, ctx.translate_back * ctx.view)
+  if xkb.is_key_pressed(keymap, .w) do new_view(ctx, ctx.translate_for * ctx.view)
+  if xkb.is_key_pressed(keymap, .k) do new_view(ctx, ctx.translate_up * ctx.view)
+  if xkb.is_key_pressed(keymap, .j) do new_view(ctx, ctx.translate_down * ctx.view)
+  if xkb.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.rotate_up * ctx.view)
+  if xkb.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
+  if xkb.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
+  if xkb.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
 
-  if wayland.is_key_pressed(keymap, .Space) {
+  if xkb.is_key_pressed(keymap, .Space) {
     play_scene_animation(&ctx.cube_instance, "FAnime", time) or_return
   }
 

@@ -1,4 +1,4 @@
-package wayland
+package xkb
 
 import "base:runtime"
 import "core:log"
@@ -8,15 +8,13 @@ import "core:testing"
 import "core:unicode"
 
 import "lib:error"
+import "lib:collection/vector"
 
-@(private = "file")
-Identifier :: distinct []u8
-@(private = "file")
-Name :: distinct []u8
-@(private = "file")
-String :: distinct []u8
+@private Identifier :: distinct []u8
+@private Name :: distinct []u8
+@private String :: distinct []u8
 
-@(private = "file")
+@private
 Keyword :: enum {
   Keymap,
   Keycodes,
@@ -25,7 +23,7 @@ Keyword :: enum {
   Symbols,
 }
 
-@(private = "file")
+@private
 Symbol :: enum {
   Greater,
   Less,
@@ -45,7 +43,7 @@ Symbol :: enum {
   Eof,
 }
 
-@(private = "file")
+@private
 Token :: union {
   Symbol,
   Identifier,
@@ -54,7 +52,7 @@ Token :: union {
   Name,
 }
 
-@(private = "file")
+@private
 Xkb_Keycodes :: struct {
   name:    String,
   minimum: u32,
@@ -62,25 +60,25 @@ Xkb_Keycodes :: struct {
   pairs:   map[u32]u32,
 }
 
-@(private = "file")
+@private
 Xkb_Type_Map :: struct {
   modifiers: []Modifier,
   number:    u32,
 }
 
-@(private = "file")
+@private
 Xkb_Type_Preserve :: struct {
   modifiers: []Modifier,
   value:     Modifier,
 }
 
-@(private = "file")
+@private
 Xkb_Type_Level :: struct {
   number: u32,
   value:  String,
 }
 
-@(private = "file")
+@private
 Xkb_Type :: struct {
   name:      String,
   modifiers: []Modifier,
@@ -89,110 +87,96 @@ Xkb_Type :: struct {
   preserves: []Xkb_Type_Preserve,
 }
 
-@(private = "file")
+@private
 Xkb_Types :: struct {
   name:      String,
   modifiers: []Modifier,
   types:     []Xkb_Type,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Interpret_Match_Kind :: enum {
   AnyOf,
   Exactly,
   AnyOfOrNone,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Interpret_Match :: struct {
   key:       Code,
   kind:      Xkb_Compatibility_Interpret_Match_Kind,
   modifiers: []Modifier,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Action_Attribute :: Identifier
 
-@(private = "file")
+@private
 Xkb_Compatibility_Action_MovePtr :: struct {
   x: i32,
   y: i32,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Action_Mods :: struct {
   modifiers:  Modifier,
   attributes: []Xkb_Compatibility_Action_Attribute,
 }
-@(private = "file")
-Xkb_Compatibility_Action_LockMods :: distinct Xkb_Compatibility_Action_Mods
-@(private = "file")
-Xkb_Compatibility_Action_LatchMods :: distinct Xkb_Compatibility_Action_Mods
-@(private = "file")
-Xkb_Compatibility_Action_SetMods :: distinct Xkb_Compatibility_Action_Mods
 
-@(private = "file")
+@private Xkb_Compatibility_Action_LockMods :: distinct Xkb_Compatibility_Action_Mods
+@private Xkb_Compatibility_Action_LatchMods :: distinct Xkb_Compatibility_Action_Mods
+@private Xkb_Compatibility_Action_SetMods :: distinct Xkb_Compatibility_Action_Mods
+
+@private
 Xkb_Compatibility_Action_Controls :: struct {
   value: Identifier,
 }
 
-@(private = "file")
-Xkb_Compatibility_Action_LockControls :: distinct Xkb_Compatibility_Action_Controls
-@(private = "file")
-Xkb_Compatibility_Action_LatchControls :: distinct Xkb_Compatibility_Action_Controls
-@(private = "file")
-Xkb_Compatibility_Action_SetControls :: distinct Xkb_Compatibility_Action_Controls
+@private Xkb_Compatibility_Action_LockControls :: distinct Xkb_Compatibility_Action_Controls
+@private Xkb_Compatibility_Action_LatchControls :: distinct Xkb_Compatibility_Action_Controls
+@private Xkb_Compatibility_Action_SetControls :: distinct Xkb_Compatibility_Action_Controls
 
-@(private = "file")
+@private
 Xkb_Compatibility_Action_Group :: struct {
   value: i32,
 }
 
-@(private = "file")
-Xkb_Compatibility_Action_LockGroup :: distinct Xkb_Compatibility_Action_Group
-@(private = "file")
-Xkb_Compatibility_Action_SetGroup :: distinct Xkb_Compatibility_Action_Group
-@(private = "file")
-Xkb_Compatibility_Action_LatchGroup :: distinct Xkb_Compatibility_Action_Group
+@private Xkb_Compatibility_Action_LockGroup :: distinct Xkb_Compatibility_Action_Group
+@private Xkb_Compatibility_Action_SetGroup :: distinct Xkb_Compatibility_Action_Group
+@private Xkb_Compatibility_Action_LatchGroup :: distinct Xkb_Compatibility_Action_Group
+@private Xkb_Compatibility_Action_Terminate :: struct { }
 
-@(private = "file")
-Xkb_Compatibility_Action_Terminate :: struct {
-}
-
-@(private = "file")
+@private
 Xkb_Compatibility_Action_Switch :: struct {
   screen:     u32,
   attributes: Identifier,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Action_Private :: struct {
   kind:       Identifier,
   attributes: Identifier,
   data:       []Identifier,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Action_Ptr :: struct {
   affect: Identifier,
   button: i32,
   count:  u32,
 }
 
-@(private = "file")
-Xkb_Compatibility_Action_SetPtr :: distinct Xkb_Compatibility_Action_Ptr
-@(private = "file")
-Xkb_Compatibility_Action_LockPtrBtn :: distinct Xkb_Compatibility_Action_Ptr
-@(private = "file")
-Xkb_Compatibility_Action_PtrBtn :: distinct Xkb_Compatibility_Action_Ptr
+@private Xkb_Compatibility_Action_SetPtr :: distinct Xkb_Compatibility_Action_Ptr
+@private Xkb_Compatibility_Action_LockPtrBtn :: distinct Xkb_Compatibility_Action_Ptr
+@private Xkb_Compatibility_Action_PtrBtn :: distinct Xkb_Compatibility_Action_Ptr
 
-@(private = "file")
+@private
 Xkb_Compatibility_Action_SwitchScreen :: struct {
   value: u32,
   same:  bool,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Interpret_Action :: union {
   Xkb_Compatibility_Action_MovePtr,
   Xkb_Compatibility_Action_LockMods,
@@ -212,7 +196,7 @@ Xkb_Compatibility_Interpret_Action :: union {
   Xkb_Compatibility_Action_SwitchScreen,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Interpret :: struct {
   match:    Xkb_Compatibility_Interpret_Match,
   action:   Xkb_Compatibility_Interpret_Action,
@@ -221,7 +205,7 @@ Xkb_Compatibility_Interpret :: struct {
   repeat:   bool,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility_Indicator :: struct {
   name:     String,
   modifier: Modifier,
@@ -230,7 +214,7 @@ Xkb_Compatibility_Indicator :: struct {
   controls: Identifier,
 }
 
-@(private = "file")
+@private
 Xkb_Compatibility :: struct {
   name:     String,
   modifiers:      []Modifier,
@@ -241,57 +225,57 @@ Xkb_Compatibility :: struct {
   default_action: Xkb_Compatibility_Interpret_Action,
 }
 
-@(private = "file")
+@private
 Xkb_Symbols_Pair :: struct {
   key:   u32,
   codes: []Code,
 }
 
-@(private = "file")
+@private
 Xkb_Symbols_Map :: struct {
   modifier: Modifier,
   codes:    []u32,
 }
 
-@(private = "file")
+@private
 Xkb_Symbols :: struct {
   name:  String,
   pairs: []Xkb_Symbols_Pair,
   maps:  []Xkb_Symbols_Map,
 }
 
-@(private = "file")
+@private
 Tokenizer :: struct {
-  line:      u32,
-  offset:    u32,
-  token:     Token,
-  bytes:     []u8,
-  keycodes:  Xkb_Keycodes,
-  types:     Xkb_Types,
-  compatibility:   Xkb_Compatibility,
-  symbols:   Xkb_Symbols,
-  xkb_types:       [dynamic]Xkb_Type,
-  xkb_maps:  [dynamic]Xkb_Type_Map,
-  xkb_levels:      [dynamic]Xkb_Type_Level,
-  xkb_preserves:   [dynamic]Xkb_Type_Preserve,
-  xkb_interprets:  [dynamic]Xkb_Compatibility_Interpret,
-  xkb_indicators:  [dynamic]Xkb_Compatibility_Indicator,
-  pairs:     [dynamic]Xkb_Symbols_Pair,
-  maps:      [dynamic]Xkb_Symbols_Map,
-  codes:     [dynamic]Code,
-  identifiers:     [dynamic]Identifier,
-  modifiers:       [dynamic]Modifier,
-  numbers:   [dynamic]u32,
+  line: u32,
+  offset: u32,
+  token: Token,
+  bytes: []u8,
+  keycodes: Xkb_Keycodes,
+  types: Xkb_Types,
+  compatibility: Xkb_Compatibility,
+  symbols: Xkb_Symbols,
+  xkb_types: vector.Vector(Xkb_Type),
+  xkb_maps: vector.Vector(Xkb_Type_Map),
+  xkb_levels: vector.Vector(Xkb_Type_Level),
+  xkb_preserves: vector.Vector(Xkb_Type_Preserve),
+  xkb_interprets: vector.Vector(Xkb_Compatibility_Interpret),
+  xkb_indicators: vector.Vector(Xkb_Compatibility_Indicator),
+  pairs: vector.Vector(Xkb_Symbols_Pair),
+  maps: vector.Vector(Xkb_Symbols_Map),
+  codes: vector.Vector(Code),
+  identifiers: vector.Vector(Identifier),
+  modifiers: vector.Vector(Modifier),
+  numbers: vector.Vector(u32),
   code_equivalent: map[string]Code,
 }
 
-@(private = "file")
+@private
 KeyCode :: struct {
   key:    u32,
   values: []Code,
 }
 
-@(private = "file")
+@private
 Modifier :: enum {
   Shift = 0,
   Control = 2,
@@ -306,14 +290,14 @@ Modifier :: enum {
   Lock,
 }
 
-@(private = "file")
+@private
 Modifiers :: bit_set[Modifier;u32]
 
 Keymap_Context :: struct {
   codes:   map[u32][]Code,
   modifiers:     Modifiers,
   pressed_map:   #sparse[Code]bool,
-  pressed_array: [dynamic]Code,
+  pressed_array: vector.Vector(Code),
 }
 
 keymap_from_bytes :: proc(bytes: []u8, allocator: runtime.Allocator, tmp_allocator: runtime.Allocator) -> (keymap: Keymap_Context, err: error.Error) {
@@ -322,9 +306,11 @@ keymap_from_bytes :: proc(bytes: []u8, allocator: runtime.Allocator, tmp_allocat
   tokenizer := parse_keymap(bytes, tmp_allocator) or_return
 
   keymap.codes = make(map[u32][]Code, 100, allocator)
-  keymap.pressed_array = make([dynamic]Code, 20, allocator)
+  keymap.pressed_array = vector.new(Code, 20, allocator) or_return
 
-  for pair in tokenizer.pairs[:] {
+  for i in 0..<tokenizer.pairs.len {
+    pair := &tokenizer.pairs.data[i]
+
     if len(pair.codes) != 0 {
       id := tokenizer.keycodes.pairs[pair.key]
       keymap.codes[id] = pair.codes
@@ -334,7 +320,7 @@ keymap_from_bytes :: proc(bytes: []u8, allocator: runtime.Allocator, tmp_allocat
   return keymap, nil
 }
 
-register_code :: proc(keymap: ^Keymap_Context, id: u32, state: u32) {
+register_code :: proc(keymap: ^Keymap_Context, id: u32, state: u32) -> error.Error {
   value, ok := keymap.codes[id + 8]
 
   if ok && len(value) > 0 {
@@ -348,11 +334,11 @@ register_code :: proc(keymap: ^Keymap_Context, id: u32, state: u32) {
 
     if state == 1 {
       keymap.pressed_map[code] = true
-      append(&keymap.pressed_array, code)
+      vector.append(&keymap.pressed_array, code) or_return
     } else if state == 0 {
-      for i in 0 ..< len(keymap.pressed_array) {
-        if keymap.pressed_array[i] == code {
-          unordered_remove(&keymap.pressed_array, i)
+      for i in 0 ..<keymap.pressed_array.len {
+        if keymap.pressed_array.data[i] == code {
+          vector.remove(&keymap.pressed_array, i)
           break
         }
       }
@@ -360,10 +346,8 @@ register_code :: proc(keymap: ^Keymap_Context, id: u32, state: u32) {
       keymap.pressed_map[code] = false
     }
   }
-}
 
-get_pressed_keys :: proc(keymap: ^Keymap_Context) -> []Code {
-  return keymap.pressed_array[:]
+  return nil
 }
 
 is_key_pressed :: proc(keymap: ^Keymap_Context, code: Code) -> bool {
@@ -374,7 +358,7 @@ set_modifiers :: proc(keymap: ^Keymap_Context, mask: u32) {
   keymap.modifiers = transmute(Modifiers)(mask)
 }
 
-@(private = "file")
+@private
 parse_keymap :: proc(bytes: []u8, allocator: runtime.Allocator) -> (tokenizer: Tokenizer, err: error.Error) {
   tokenizer = Tokenizer {
     bytes  = bytes,
@@ -382,17 +366,18 @@ parse_keymap :: proc(bytes: []u8, allocator: runtime.Allocator) -> (tokenizer: T
     line   = 0,
   }
 
-  tokenizer.xkb_types = make([dynamic]Xkb_Type, 1000, allocator)
-  tokenizer.xkb_maps = make([dynamic]Xkb_Type_Map, 1000, allocator)
-  tokenizer.xkb_levels = make([dynamic]Xkb_Type_Level, 500, allocator)
-  tokenizer.xkb_preserves = make([dynamic]Xkb_Type_Preserve, 500, allocator)
-  tokenizer.xkb_interprets = make([dynamic]Xkb_Compatibility_Interpret, 256, allocator)
-  tokenizer.xkb_indicators = make([dynamic]Xkb_Compatibility_Indicator, 100, allocator)
-  tokenizer.codes = make([dynamic]Code, 0, 1000, allocator)
-  tokenizer.pairs = make([dynamic]Xkb_Symbols_Pair, 0, 500, allocator)
-  tokenizer.maps = make([dynamic]Xkb_Symbols_Map, 0, 500, allocator)
-  tokenizer.identifiers = make([dynamic]Identifier, 1000, allocator)
-  tokenizer.modifiers = make([dynamic]Modifier, 500, allocator)
+  tokenizer.xkb_types = vector.new(Xkb_Type, 50, allocator) or_return
+  tokenizer.xkb_maps = vector.new(Xkb_Type_Map, 200, allocator) or_return
+  tokenizer.xkb_levels = vector.new(Xkb_Type_Level, 150, allocator) or_return
+  tokenizer.xkb_preserves = vector.new(Xkb_Type_Preserve, 30, allocator) or_return
+  tokenizer.xkb_interprets = vector.new(Xkb_Compatibility_Interpret, 200, allocator) or_return
+  tokenizer.xkb_indicators = vector.new(Xkb_Compatibility_Indicator, 10, allocator) or_return
+  tokenizer.codes = vector.new(Code, 200, allocator) or_return
+  tokenizer.pairs = vector.new(Xkb_Symbols_Pair, 100, allocator) or_return
+  tokenizer.maps = vector.new(Xkb_Symbols_Map, 10, allocator) or_return
+  tokenizer.identifiers = vector.new(Identifier, 100, allocator) or_return
+  tokenizer.modifiers = vector.new(Modifier, 500, allocator) or_return
+  tokenizer.numbers = vector.new(u32, 50, allocator) or_return
 
   tokenizer.keycodes.pairs = make(map[u32]u32, 1000, allocator)
   tokenizer.code_equivalent = make(map[string]Code, 500, allocator)
@@ -522,7 +507,7 @@ parse_keymap :: proc(bytes: []u8, allocator: runtime.Allocator) -> (tokenizer: T
   return tokenizer, nil
 }
 
-@(private = "file")
+@private
 key_pair_from_bytes :: proc(identifier: []u8) -> u32 {
   key: u32 = 0
   for i in 0 ..< len(identifier) {
@@ -532,7 +517,7 @@ key_pair_from_bytes :: proc(identifier: []u8) -> u32 {
   return key
 }
 
-@(private = "file")
+@private
 parse_keycodes_indicator :: proc(tokenizer: ^Tokenizer) -> error.Error {
   advance(tokenizer) or_return
   assert_type(tokenizer, Identifier) or_return
@@ -547,7 +532,7 @@ parse_keycodes_indicator :: proc(tokenizer: ^Tokenizer) -> error.Error {
   return nil
 }
 
-@(private = "file")
+@private
 parse_keycodes_alias :: proc(tokenizer: ^Tokenizer) -> error.Error {
   advance(tokenizer) or_return
   assert_type(tokenizer, Name) or_return
@@ -567,7 +552,7 @@ parse_keycodes_alias :: proc(tokenizer: ^Tokenizer) -> error.Error {
   return nil
 }
 
-@(private = "file")
+@private
 parse_keycodes_property :: proc(tokenizer: ^Tokenizer) -> error.Error {
   out: ^u32
   if assert_identifier(tokenizer, Identifier(minimum_word[:])) == nil {
@@ -589,7 +574,7 @@ parse_keycodes_property :: proc(tokenizer: ^Tokenizer) -> error.Error {
 }
 
 
-@(private = "file")
+@private
 parse_keycodes_pair :: proc(tokenizer: ^Tokenizer) -> error.Error {
   key := key_pair_from_bytes(([]u8)(tokenizer.token.(Name)))
 
@@ -605,7 +590,7 @@ parse_keycodes_pair :: proc(tokenizer: ^Tokenizer) -> error.Error {
   return nil
 }
 
-@(private = "file")
+@private
 parse_keycodes :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> error.Error {
   advance(tokenizer) or_return
   assert_type(tokenizer, String) or_return
@@ -646,7 +631,7 @@ parse_keycodes :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> e
   return nil
 }
 
-@(private = "file")
+@private
 modifier_from_bytes :: proc(bytes: []u8) -> (Modifier, bool) {
   if eql(numlock_word[:], bytes) {
     return .NumLock, true
@@ -675,7 +660,7 @@ modifier_from_bytes :: proc(bytes: []u8) -> (Modifier, bool) {
   return nil, false
 }
 
-@(private = "file")
+@private
 parse_modifier_combination :: proc(tokenizer: ^Tokenizer) -> error.Error {
   outer: for assert_type(tokenizer, Identifier) == nil {
     modifier, ok := modifier_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
@@ -685,7 +670,7 @@ parse_modifier_combination :: proc(tokenizer: ^Tokenizer) -> error.Error {
       return nil
     }
 
-    append(&tokenizer.modifiers, modifier)
+    vector.append(&tokenizer.modifiers, modifier) or_return
 
     advance(tokenizer) or_return
     assert_type(tokenizer, Symbol) or_return
@@ -701,7 +686,7 @@ parse_modifier_combination :: proc(tokenizer: ^Tokenizer) -> error.Error {
   return nil
 }
 
-@(private = "file")
+@private
 parse_map :: proc(tokenizer: ^Tokenizer) -> error.Error {
   xkb_map: Xkb_Type_Map
   advance(tokenizer) or_return
@@ -711,10 +696,10 @@ parse_map :: proc(tokenizer: ^Tokenizer) -> error.Error {
 
   advance(tokenizer) or_return
 
-  start := len(tokenizer.modifiers)
+  start := tokenizer.modifiers.len
   parse_modifier_combination(tokenizer) or_return
 
-  xkb_map.modifiers = tokenizer.modifiers[start:]
+  xkb_map.modifiers = vector.offset(&tokenizer.modifiers, start) or_return
 
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .SquareClose) or_return
@@ -729,12 +714,12 @@ parse_map :: proc(tokenizer: ^Tokenizer) -> error.Error {
 
   advance(tokenizer) or_return
 
-  append(&tokenizer.xkb_maps, xkb_map)
+  vector.append(&tokenizer.xkb_maps, xkb_map) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 parse_preserve :: proc(tokenizer: ^Tokenizer) -> error.Error {
   preserve: Xkb_Type_Preserve
 
@@ -745,10 +730,10 @@ parse_preserve :: proc(tokenizer: ^Tokenizer) -> error.Error {
 
   advance(tokenizer) or_return
 
-  start := len(tokenizer.modifiers)
+  start := tokenizer.modifiers.len
   parse_modifier_combination(tokenizer) or_return
 
-  preserve.modifiers = tokenizer.modifiers[start:]
+  preserve.modifiers = vector.offset(&tokenizer.modifiers, start) or_return
 
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .SquareClose) or_return
@@ -769,12 +754,12 @@ parse_preserve :: proc(tokenizer: ^Tokenizer) -> error.Error {
 
   advance(tokenizer) or_return
 
-  append(&tokenizer.xkb_preserves, preserve)
+  vector.append(&tokenizer.xkb_preserves, preserve) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 parse_level_name :: proc(tokenizer: ^Tokenizer) -> error.Error {
   level: Xkb_Type_Level
 
@@ -800,12 +785,12 @@ parse_level_name :: proc(tokenizer: ^Tokenizer) -> error.Error {
 
   advance(tokenizer) or_return
 
-  append(&tokenizer.xkb_levels, level)
+  vector.append(&tokenizer.xkb_levels, level) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 parse_type :: proc(tokenizer: ^Tokenizer) -> error.Error {
   typ: Xkb_Type
 
@@ -820,9 +805,9 @@ parse_type :: proc(tokenizer: ^Tokenizer) -> error.Error {
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .BraceOpen) or_return
 
-  map_start := len(tokenizer.xkb_maps)
-  preserve_start := len(tokenizer.xkb_preserves)
-  level_start := len(tokenizer.xkb_levels)
+  map_start := tokenizer.xkb_maps.len
+  preserve_start := tokenizer.xkb_preserves.len
+  level_start := tokenizer.xkb_levels.len
 
   advance(tokenizer) or_return
   for assert_type(tokenizer, Identifier) == nil {
@@ -839,9 +824,9 @@ parse_type :: proc(tokenizer: ^Tokenizer) -> error.Error {
 
       advance(tokenizer) or_return
 
-      start := len(tokenizer.modifiers)
+      start := tokenizer.modifiers.len
       parse_modifier_combination(tokenizer) or_return
-      typ.modifiers = tokenizer.modifiers[start:]
+      typ.modifiers = vector.offset(&tokenizer.modifiers, start) or_return
     } else if eql(property, preserve_word[:]) {
       parse_preserve(tokenizer) or_return
     } else {
@@ -857,16 +842,16 @@ parse_type :: proc(tokenizer: ^Tokenizer) -> error.Error {
   assert_symbol(tokenizer, .BraceClose) or_return
   advance(tokenizer) or_return
 
-  typ.levels = tokenizer.xkb_levels[level_start:]
-  typ.maps = tokenizer.xkb_maps[map_start:]
-  typ.preserves = tokenizer.xkb_preserves[preserve_start:]
+  typ.levels = vector.offset(&tokenizer.xkb_levels, level_start) or_return
+  typ.maps = vector.offset(&tokenizer.xkb_maps, map_start) or_return
+  typ.preserves = vector.offset(&tokenizer.xkb_preserves, preserve_start) or_return
 
-  append(&tokenizer.xkb_types, typ)
+  vector.append(&tokenizer.xkb_types, typ) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 parse_types :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> error.Error {
   advance(tokenizer) or_return
   assert_type(tokenizer, String) or_return
@@ -880,7 +865,7 @@ parse_types :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> erro
   assert_type(tokenizer, Identifier) or_return
   assert_identifier(tokenizer, Identifier(virtual_modifiers_word[:]))
 
-  start := len(tokenizer.modifiers)
+  start := tokenizer.modifiers.len
   advance(tokenizer) or_return
   for assert_type(tokenizer, Identifier) == nil {
     modifier, ok := modifier_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
@@ -889,7 +874,7 @@ parse_types :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> erro
       return .ModifierNotFound
     }
 
-    append(&tokenizer.modifiers, modifier)
+    vector.append(&tokenizer.modifiers, modifier) or_return
     advance(tokenizer) or_return
     assert_type(tokenizer, Symbol) or_return
 
@@ -897,7 +882,7 @@ parse_types :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> erro
     advance(tokenizer) or_return
   }
 
-  tokenizer.types.modifiers = tokenizer.modifiers[start:]
+  tokenizer.types.modifiers = vector.offset(&tokenizer.modifiers, start) or_return
 
   advance(tokenizer) or_return
   for assert_type(tokenizer, Identifier) == nil {
@@ -920,7 +905,7 @@ parse_types :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> erro
   return nil
 }
 
-@(private = "file")
+@private
 parse_interpret_property :: proc(tokenizer: ^Tokenizer) -> error.Error {
   assert_symbol(tokenizer, .Dot) or_return
 
@@ -947,7 +932,7 @@ parse_interpret_property :: proc(tokenizer: ^Tokenizer) -> error.Error {
   return nil
 }
 
-@(private = "file")
+@private
 match_kind_from_bytes :: proc(bytes: []u8) -> Xkb_Compatibility_Interpret_Match_Kind {
   if eql(bytes, any_of_word[:]) {
     return .AnyOf
@@ -960,7 +945,7 @@ match_kind_from_bytes :: proc(bytes: []u8) -> Xkb_Compatibility_Interpret_Match_
   return nil
 }
 
-@(private = "file")
+@private
 parse_interpret_match :: proc(tokenizer: ^Tokenizer) -> (match: Xkb_Compatibility_Interpret_Match, err: error.Error) {
   assert_type(tokenizer, Identifier) or_return
 
@@ -981,9 +966,9 @@ parse_interpret_match :: proc(tokenizer: ^Tokenizer) -> (match: Xkb_Compatibilit
   advance(tokenizer) or_return
   assert_type(tokenizer, Identifier) or_return
 
-  start := len(tokenizer.modifiers)
+  start := tokenizer.modifiers.len
   parse_modifier_combination(tokenizer) or_return
-  match.modifiers = tokenizer.modifiers[start:]
+  match.modifiers = vector.offset(&tokenizer.modifiers, start) or_return
 
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .ParenClose) or_return
@@ -993,14 +978,14 @@ parse_interpret_match :: proc(tokenizer: ^Tokenizer) -> (match: Xkb_Compatibilit
   return match, nil
 }
 
-@(private = "file")
+@private
 parse_interpret_mods :: proc(tokenizer: ^Tokenizer) -> (mods: Identifier, err: error.Error) {
   assert_type(tokenizer, Identifier) or_return
 
   return tokenizer.token.(Identifier), nil
 }
 
-@(private = "file")
+@private
 parse_interpret_action_arguments :: proc(tokenizer: ^Tokenizer) -> error.Error {
   advance(tokenizer) or_return
 
@@ -1008,14 +993,14 @@ parse_interpret_action_arguments :: proc(tokenizer: ^Tokenizer) -> error.Error {
     advance(tokenizer) or_return
 
     assert_type(tokenizer, Identifier) or_return
-    append(&tokenizer.identifiers, tokenizer.token.(Identifier))
+    vector.append(&tokenizer.identifiers, tokenizer.token.(Identifier)) or_return
     advance(tokenizer) or_return
 
   }
   return nil
 }
 
-@(private = "file")
+@private
 parse_interpret_action_mods :: proc(tokenizer: ^Tokenizer) -> (mods: Xkb_Compatibility_Action_Mods, err: error.Error) {
   ok: bool
 
@@ -1034,14 +1019,14 @@ parse_interpret_action_mods :: proc(tokenizer: ^Tokenizer) -> (mods: Xkb_Compati
     // return mods, .ModifierNotFound
   }
 
-  start := len(tokenizer.identifiers)
+  start := tokenizer.identifiers.len
   parse_interpret_action_arguments(tokenizer) or_return
-  mods.attributes = tokenizer.identifiers[start:]
+  mods.attributes = vector.offset(&tokenizer.identifiers, start) or_return
 
   return mods, nil
 }
 
-@(private = "file")
+@private
 parse_interpret_action_group :: proc(tokenizer: ^Tokenizer) -> (group: Xkb_Compatibility_Action_Group, err: error.Error) {
   assert_type(tokenizer, Identifier) or_return
   assert_identifier(tokenizer, Identifier(group_word[:])) or_return
@@ -1057,7 +1042,7 @@ parse_interpret_action_group :: proc(tokenizer: ^Tokenizer) -> (group: Xkb_Compa
   return group, nil
 }
 
-@(private = "file")
+@private
 parse_interpret_action_controls :: proc(tokenizer: ^Tokenizer) -> (controls: Xkb_Compatibility_Action_Controls, err: error.Error) {
   assert_type(tokenizer, Identifier) or_return
   assert_identifier(tokenizer, Identifier(controls_word[:])) or_return
@@ -1076,7 +1061,6 @@ parse_interpret_action_controls :: proc(tokenizer: ^Tokenizer) -> (controls: Xkb
 }
 
 parse_interpret_action_ptr :: proc(tokenizer: ^Tokenizer) -> (ptr: Xkb_Compatibility_Action_Ptr, err: error.Error) {
-
   outer: for assert_type(tokenizer, Identifier) == nil {
     property := cast([]u8)(tokenizer.token.(Identifier))
 
@@ -1085,7 +1069,6 @@ parse_interpret_action_ptr :: proc(tokenizer: ^Tokenizer) -> (ptr: Xkb_Compatibi
     assert_symbol(tokenizer, .Equal) or_return
 
     advance(tokenizer) or_return
-    // assert_type(tokenizer, Identifier) or_return
     if eql(property, button_word[:]) {
       b, e := parse_integer(tokenizer)
       if e != nil {
@@ -1116,7 +1099,7 @@ parse_interpret_action_ptr :: proc(tokenizer: ^Tokenizer) -> (ptr: Xkb_Compatibi
   return ptr, nil
 }
 
-@(private = "file")
+@private
 parse_integer :: proc(tokenizer: ^Tokenizer) -> (i: i32, err: error.Error) {
   if assert_type(tokenizer, Symbol) == nil {
     symbol := tokenizer.token.(Symbol)
@@ -1136,7 +1119,7 @@ parse_integer :: proc(tokenizer: ^Tokenizer) -> (i: i32, err: error.Error) {
   return i, nil
 }
 
-@(private = "file")
+@private
 parse_interpret_private :: proc(tokenizer: ^Tokenizer) -> (private: Xkb_Compatibility_Action_Private, err: error.Error) {
   assert_type(tokenizer, Identifier) or_return
   assert_identifier(tokenizer, Identifier(type_word[:])) or_return
@@ -1153,7 +1136,7 @@ parse_interpret_private :: proc(tokenizer: ^Tokenizer) -> (private: Xkb_Compatib
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .Comma) or_return
 
-  start := len(tokenizer.identifiers)
+  start := tokenizer.identifiers.len
   advance(tokenizer) or_return
   for assert_type(tokenizer, Identifier) == nil {
     assert_identifier(tokenizer, Identifier(data_word[:])) or_return
@@ -1175,7 +1158,7 @@ parse_interpret_private :: proc(tokenizer: ^Tokenizer) -> (private: Xkb_Compatib
 
     advance(tokenizer) or_return
     assert_type(tokenizer, Identifier) or_return
-    append(&tokenizer.identifiers, tokenizer.token.(Identifier))
+    vector.append(&tokenizer.identifiers, tokenizer.token.(Identifier)) or_return
 
     advance(tokenizer) or_return
     assert_type(tokenizer, Symbol) or_return
@@ -1187,12 +1170,12 @@ parse_interpret_private :: proc(tokenizer: ^Tokenizer) -> (private: Xkb_Compatib
     advance(tokenizer) or_return
   }
 
-  private.data = tokenizer.identifiers[start:]
+  private.data = vector.offset(&tokenizer.identifiers, start) or_return
 
   return private, nil
 }
 
-@(private = "file")
+@private
 parse_interpret_move_ptr :: proc(tokenizer: ^Tokenizer) -> (move_ptr: Xkb_Compatibility_Action_MovePtr, err: error.Error) {
   assert_type(tokenizer, Identifier) or_return
   assert_identifier(tokenizer, Identifier(x_word[:])) or_return
@@ -1224,7 +1207,7 @@ parse_interpret_move_ptr :: proc(tokenizer: ^Tokenizer) -> (move_ptr: Xkb_Compat
 
 }
 
-@(private = "file")
+@private
 parse_interpret_switch_screen :: proc(tokenizer: ^Tokenizer) -> (screen: Xkb_Compatibility_Action_SwitchScreen, err: error.Error) {
   assert_type(tokenizer, Identifier) or_return
   assert_identifier(tokenizer, Identifier(screen_word[:])) or_return
@@ -1255,7 +1238,7 @@ parse_interpret_switch_screen :: proc(tokenizer: ^Tokenizer) -> (screen: Xkb_Com
 }
 
 
-@(private = "file")
+@private
 parse_interpret_action :: proc(tokenizer: ^Tokenizer) -> (action: Xkb_Compatibility_Interpret_Action, err: error.Error) {
   ok: bool
 
@@ -1328,7 +1311,7 @@ parse_interpret_action :: proc(tokenizer: ^Tokenizer) -> (action: Xkb_Compatibil
   return action, nil
 }
 
-@(private = "file")
+@private
 parse_interpret :: proc(tokenizer: ^Tokenizer) -> error.Error {
   ok: bool
   interpret: Xkb_Compatibility_Interpret
@@ -1366,12 +1349,12 @@ parse_interpret :: proc(tokenizer: ^Tokenizer) -> error.Error {
     advance(tokenizer) or_return
   }
 
-  append(&tokenizer.xkb_interprets, interpret)
+  vector.append(&tokenizer.xkb_interprets, interpret) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 parse_indicator :: proc(tokenizer: ^Tokenizer) -> error.Error {
   assert_type(tokenizer, String) or_return
   ok: bool
@@ -1413,12 +1396,12 @@ parse_indicator :: proc(tokenizer: ^Tokenizer) -> error.Error {
     advance(tokenizer) or_return
   }
 
-  append(&tokenizer.xkb_indicators, indicator)
+  vector.append(&tokenizer.xkb_indicators, indicator) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 parse_compatibility :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> error.Error {
   advance(tokenizer) or_return
   assert_type(tokenizer, String) or_return
@@ -1432,7 +1415,7 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator)
   assert_type(tokenizer, Identifier) or_return
   assert_identifier(tokenizer, Identifier(virtual_modifiers_word[:])) or_return
 
-  start := len(tokenizer.modifiers)
+  start := tokenizer.modifiers.len
   advance(tokenizer) or_return
   outer: for assert_type(tokenizer, Identifier) == nil {
     modifier, ok := modifier_from_bytes(cast([]u8)(tokenizer.token.(Identifier)))
@@ -1441,7 +1424,7 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator)
       return .ModifierNotFound
     }
 
-    append(&tokenizer.modifiers, modifier)
+    vector.append(&tokenizer.modifiers, modifier) or_return
     advance(tokenizer) or_return
     assert_type(tokenizer, Symbol) or_return
 
@@ -1453,9 +1436,9 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator)
     }
   }
 
-  tokenizer.types.modifiers = tokenizer.modifiers[start:]
-  interpret_start := len(tokenizer.xkb_interprets)
-  indicator_start := len(tokenizer.xkb_indicators)
+  tokenizer.types.modifiers = vector.offset(&tokenizer.modifiers, start) or_return
+  interpret_start := tokenizer.xkb_interprets.len
+  indicator_start := tokenizer.xkb_indicators.len
 
   advance(tokenizer) or_return
   for assert_type(tokenizer, Identifier) == nil {
@@ -1486,8 +1469,8 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator)
     advance(tokenizer) or_return
   }
 
-  tokenizer.compatibility.interprets = tokenizer.xkb_interprets[interpret_start:]
-  tokenizer.compatibility.indicators = tokenizer.xkb_indicators[indicator_start:]
+  tokenizer.compatibility.interprets = vector.offset(&tokenizer.xkb_interprets, interpret_start) or_return
+  tokenizer.compatibility.indicators = vector.offset(&tokenizer.xkb_indicators, indicator_start) or_return
 
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .BraceClose) or_return
@@ -1499,13 +1482,13 @@ parse_compatibility :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator)
   return nil
 }
 
-@(private = "file")
+@private
 parse_key :: proc(tokenizer: ^Tokenizer, is_array: bool, allocator: runtime.Allocator) -> error.Error {
   pair: Xkb_Symbols_Pair
 
   assert_type(tokenizer, Name) or_return
   pair.key = key_pair_from_bytes(([]u8)(tokenizer.token.(Name)))
-  start := len(tokenizer.codes)
+  start := tokenizer.codes.len
 
   advance(tokenizer) or_return
   assert_type(tokenizer, Symbol) or_return
@@ -1566,10 +1549,10 @@ parse_key :: proc(tokenizer: ^Tokenizer, is_array: bool, allocator: runtime.Allo
     advance(tokenizer) or_return
   }
 
-  pair.codes = tokenizer.codes[start:]
+  pair.codes = vector.offset(&tokenizer.codes, start) or_return
 
-  if len(tokenizer.codes) > start {
-    append(&tokenizer.pairs, pair)
+  if tokenizer.codes.len > start {
+    vector.append(&tokenizer.pairs, pair) or_return
   }
 
   assert_type(tokenizer, Symbol) or_return
@@ -1578,7 +1561,7 @@ parse_key :: proc(tokenizer: ^Tokenizer, is_array: bool, allocator: runtime.Allo
   return nil
 }
 
-@(private = "file")
+@private
 parse_modifier_map :: proc(tokenizer: ^Tokenizer) -> error.Error {
   ok: bool
   symbols_map: Xkb_Symbols_Map
@@ -1590,11 +1573,11 @@ parse_modifier_map :: proc(tokenizer: ^Tokenizer) -> error.Error {
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .BraceOpen) or_return
 
-  start := len(tokenizer.numbers)
+  start := tokenizer.numbers.len
 
   advance(tokenizer) or_return
   for assert_type(tokenizer, Name) == nil {
-    append(&tokenizer.numbers, key_pair_from_bytes(([]u8)(tokenizer.token.(Name))))
+    vector.append(&tokenizer.numbers, key_pair_from_bytes(([]u8)(tokenizer.token.(Name)))) or_return
 
     advance(tokenizer) or_return
 
@@ -1608,20 +1591,20 @@ parse_modifier_map :: proc(tokenizer: ^Tokenizer) -> error.Error {
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .BraceClose) or_return
 
-  symbols_map.codes = tokenizer.numbers[start:]
+  symbols_map.codes = vector.offset(&tokenizer.numbers, start) or_return
 
-  append(&tokenizer.maps, symbols_map)
+  vector.append(&tokenizer.maps, symbols_map) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 parse_key_symbols :: proc(tokenizer: ^Tokenizer) -> error.Error {
   for assert_type(tokenizer, Identifier) == nil {
     code := code_from_bytes(tokenizer, cast([]u8)(tokenizer.token.(Identifier)))
 
     if code != nil {
-      append(&tokenizer.codes, code)
+      vector.append(&tokenizer.codes, code) or_return
     }
 
     advance(tokenizer) or_return
@@ -1638,7 +1621,7 @@ parse_key_symbols :: proc(tokenizer: ^Tokenizer) -> error.Error {
   return nil
 }
 
-@(private = "file")
+@private
 parse_symbols :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> error.Error {
   advance(tokenizer) or_return
   assert_type(tokenizer, String) or_return
@@ -1674,8 +1657,8 @@ parse_symbols :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> er
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .Semicolon) or_return
 
-  pairs_start := len(tokenizer.pairs)
-  maps_start := len(tokenizer.maps)
+  pairs_start := tokenizer.pairs.len
+  maps_start := tokenizer.maps.len
 
   advance(tokenizer) or_return
   for assert_type(tokenizer, Identifier) == nil {
@@ -1704,44 +1687,24 @@ parse_symbols :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> er
   assert_type(tokenizer, Symbol) or_return
   assert_symbol(tokenizer, .Semicolon) or_return
 
-  tokenizer.symbols.maps = tokenizer.maps[maps_start:]
-  tokenizer.symbols.pairs = tokenizer.pairs[pairs_start:]
+  tokenizer.symbols.maps = vector.offset(&tokenizer.maps, maps_start) or_return
+  tokenizer.symbols.pairs = vector.offset(&tokenizer.pairs, pairs_start) or_return
 
   return nil
 }
 
-@(private = "file")
+@private
 assert_identifier :: proc(tokenizer: ^Tokenizer, identifier: Identifier, loc := #caller_location) -> error.Error {
   if !eql(([]u8)(tokenizer.token.(Identifier)), ([]u8)(identifier)) {
-    // log.info(
-    //   #procedure,
-    //   "expected:",
-    //   identifier,
-    //   "found",
-    //   tokenizer.token.(Identifier),
-    //   "called by",
-    //   loc.procedure,
-    //   loc.line,
-    // )
     return .IdentifierAssertionFailed
   }
 
   return nil
 }
 
-@(private = "file")
+@private
 assert_keyword :: proc(tokenizer: ^Tokenizer, keyword: Keyword, loc := #caller_location) -> error.Error {
   if tokenizer.token.(Keyword) != keyword {
-    // log.info(
-    //   #procedure,
-    //   "expected:",
-    //   keyword,
-    //   "found",
-    //   tokenizer.token.(Keyword),
-    //   "called by",
-    //   loc.procedure,
-    //   loc.line,
-    // )
     return .KeywordAssertionFailed
   }
 
@@ -1749,62 +1712,38 @@ assert_keyword :: proc(tokenizer: ^Tokenizer, keyword: Keyword, loc := #caller_l
 
 }
 
-@(private = "file")
+@private
 assert_symbol :: proc(tokenizer: ^Tokenizer, symbol: Symbol, loc := #caller_location) -> error.Error {
   if tokenizer.token.(Symbol) != symbol {
-    // log.info(
-    //   #procedure,
-    //   "expected",
-    //   symbol,
-    //   "found",
-    //   tokenizer.token.(Symbol),
-    //   "called by",
-    //   loc.procedure,
-    //   loc.line,
-    // )
     return .SymbolAssertionFailed
   }
 
   return nil
 }
 
-@(private = "file")
+@private
 assert_type :: proc(tokenizer: ^Tokenizer, $T: typeid, loc := #caller_location) -> error.Error {
   t, ok := tokenizer.token.(T)
 
   if !ok {
-    #partial switch t in tokenizer.token {
-    case:
-      // log.info(
-      //   #procedure,
-      //   "expected",
-      //   typeid_of(T),
-      //   "found",
-      //   reflect.union_variant_typeid(t),
-      //   "called by",
-      //   loc.procedure,
-      //   loc.line,
-      // )
-    }
     return .TypeAssertionFailed
   }
 
   return nil
 }
 
-@(private = "file")
+@private
 advance :: proc(tokenizer: ^Tokenizer, loc := #caller_location) -> error.Error {
   tokenizer.token = next(tokenizer)
 
   if tokenizer.token == nil {
-    // log.info(#procedure, "called by", loc.procedure, loc.line)
     return .InvalidToken
   }
 
   return nil
 }
 
-@(private = "file")
+@private
 next :: proc(tokenizer: ^Tokenizer) -> Token {
   skip_whitespace(tokenizer)
 
@@ -1876,7 +1815,7 @@ next :: proc(tokenizer: ^Tokenizer) -> Token {
   return nil
 }
 
-@(private = "file")
+@private
 skip_whitespace :: proc(tokenizer: ^Tokenizer) {
   for !at_end(tokenizer) && tokenizer.bytes[tokenizer.offset] == '\n' {
     tokenizer.line += 1
@@ -1889,7 +1828,7 @@ skip_whitespace :: proc(tokenizer: ^Tokenizer) {
   }
 }
 
-@(private = "file")
+@private
 get_keyword :: proc(bytes: []u8) -> Maybe(Keyword) {
   if eql(xkb_keymap[:], bytes) do return .Keymap
   if eql(xkb_keycodes[:], bytes) do return .Keycodes
@@ -1910,17 +1849,17 @@ eql :: proc(first: []u8, second: []u8) -> bool {
   return true
 }
 
-@(private = "file")
+@private
 at_end :: proc(tokenizer: ^Tokenizer) -> bool {
   return tokenizer.offset >= u32(len(tokenizer.bytes))
 }
 
-@(private = "file")
+@private
 is_number :: proc(u: u8) -> bool {
   return u >= '0' && u <= '9'
 }
 
-@(private = "file")
+@private
 to_number :: proc(bytes: Identifier) -> (u32, error.Error) {
   number: u32
 
@@ -1933,29 +1872,28 @@ to_number :: proc(bytes: Identifier) -> (u32, error.Error) {
   return number, nil
 }
 
-@(private = "file")
+@private
 is_ascci :: proc(u: u8) -> bool {
   return is_lower_ascci(u) || is_upper_ascci(u) || is_number(u) || u == '_'
 }
 
-@(private = "file")
+@private
 is_lower_ascci :: proc(u: u8) -> bool {
   return u >= 'a' && u <= 'z'
 }
 
-@(private = "file")
+@private
 is_upper_ascci :: proc(u: u8) -> bool {
   return u >= 'A' && u <= 'Z'
 }
 
-@(private = "file")
+@private
 code_from_bytes :: proc(tokenizer: ^Tokenizer, bytes: []u8) -> Code {
   code := tokenizer.code_equivalent[string(bytes)]
   return code
 }
 
 Code :: enum {
-  Null = 0,
   Escape = 27,
   Space = 32,
   Exclamation,
@@ -2060,129 +1998,129 @@ Code :: enum {
   ArrowRight,
 }
 
-@(private = "file")
+@private
 key_word := [?]u8{'k', 'e', 'y'}
-@(private = "file")
+@private
 type_word := [?]u8{'t', 'y', 'p', 'e'}
-@(private = "file")
+@private
 data_word := [?]u8{'d', 'a', 't', 'a'}
-@(private = "file")
+@private
 name_word := [?]u8{'n', 'a', 'm', 'e'}
-@(private = "file")
+@private
 symbols_word := [?]u8{'s', 'y', 'm', 'b', 'o', 'l', 's'}
-@(private = "file")
+@private
 modifier_map_word := [?]u8{'m', 'o', 'd', 'i', 'f', 'i', 'e', 'r', '_', 'm', 'a', 'p'}
 
-@(private = "file")
+@private
 numlock_word := [?]u8{'N', 'u', 'm', 'L', 'o', 'c', 'k'}
-@(private = "file")
+@private
 alt_word := [?]u8{'A', 'l', 't'}
-@(private = "file")
+@private
 level_three_word := [?]u8{'L', 'e', 'v', 'e', 'l', 'T', 'h', 'r', 'e', 'e'}
-@(private = "file")
+@private
 super_word := [?]u8{'S', 'u', 'p', 'e', 'r'}
-@(private = "file")
+@private
 level_five_word := [?]u8{'L', 'e', 'v', 'e', 'l', 'F', 'i', 'v', 'e'}
-@(private = "file")
+@private
 meta_word := [?]u8{'M', 'e', 't', 'a'}
-@(private = "file")
+@private
 hyper_word := [?]u8{'H', 'y', 'p', 'e', 'r'}
-@(private = "file")
+@private
 scroll_lock_word := [?]u8{'S', 'c', 'r', 'o', 'l', 'l', 'L', 'o', 'c', 'k'}
-@(private = "file")
+@private
 shift_word := [?]u8{'S', 'h', 'i', 'f', 't'}
-@(private = "file")
+@private
 control_word := [?]u8{'C', 'o', 'n', 't', 'r', 'o', 'l'}
-@(private = "file")
+@private
 lock_word := [?]u8{'L', 'o', 'c', 'k'}
 
-@(private = "file")
+@private
 lock_mods_word := [?]u8{'L', 'o', 'c', 'k', 'M', 'o', 'd', 's'}
-@(private = "file")
+@private
 latch_mods_word := [?]u8{'L', 'a', 't', 'c', 'h', 'M', 'o', 'd', 's'}
-@(private = "file")
+@private
 set_mods_word := [?]u8{'S', 'e', 't', 'M', 'o', 'd', 's'}
-@(private = "file")
+@private
 lock_group_word := [?]u8{'L', 'o', 'c', 'k', 'G', 'r', 'o', 'u', 'p'}
-@(private = "file")
+@private
 latch_group_word := [?]u8{'L', 'a', 't', 'c', 'h', 'G', 'r', 'o', 'u', 'p'}
-@(private = "file")
+@private
 set_group_word := [?]u8{'S', 'e', 't', 'G', 'r', 'o', 'u', 'p'}
-@(private = "file")
+@private
 lock_controls_word := [?]u8{'L', 'o', 'c', 'k', 'C', 'o', 'n', 't', 'r', 'o', 'l', 's'}
-@(private = "file")
+@private
 latch_controls_word := [?]u8{'L', 'a', 't', 'c', 'h', 'C', 'o', 'n', 't', 'r', 'o', 'l', 's'}
-@(private = "file")
+@private
 set_controls_word := [?]u8{'S', 'e', 't', 'C', 'o', 'n', 't', 'r', 'o', 'l', 's'}
-@(private = "file")
+@private
 set_ptr_dflt_word := [?]u8{'S', 'e', 't', 'P', 't', 'r', 'D', 'f', 'l', 't'}
-@(private = "file")
+@private
 lock_ptr_btn_word := [?]u8{'L', 'o', 'c', 'k', 'P', 't', 'r', 'B', 't', 'n'}
-@(private = "file")
+@private
 ptr_btn_word := [?]u8{'P', 't', 'r', 'B', 't', 'n'}
-@(private = "file")
+@private
 terminate_word := [?]u8{'T', 'e', 'r', 'm', 'i', 'n', 'a', 't', 'e'}
-@(private = "file")
+@private
 move_ptr_word := [?]u8{'M', 'o', 'v', 'e', 'P', 't', 'r'}
-@(private = "file")
+@private
 switch_screen_word := [?]u8{'S', 'w', 'i', 't', 'c', 'h', 'S', 'c', 'r', 'e', 'e', 'n'}
-@(private = "file")
+@private
 private_word := [?]u8{'P', 'r', 'i', 'v', 'a', 't', 'e'}
-@(private = "file")
+@private
 screen_word := [?]u8{'s', 'c', 'r', 'e', 'e', 'n'}
-@(private = "file")
+@private
 same_word := [?]u8{'s', 'a', 'm', 'e'}
-@(private = "file")
+@private
 x_word := [?]u8{'x'}
-@(private = "file")
+@private
 y_word := [?]u8{'y'}
 
-@(private = "file")
+@private
 modifiers_word := [?]u8{'m', 'o', 'd', 'i', 'f', 'i', 'e', 'r', 's'}
-@(private = "file")
+@private
 which_mod_state_word := [?]u8{'w', 'h', 'i', 'c', 'h', 'M', 'o', 'd', 'S', 't', 'a', 't', 'e'}
-@(private = "file")
+@private
 groups_word := [?]u8{'g', 'r', 'o', 'u', 'p', 's'}
-@(private = "file")
+@private
 group_word := [?]u8{'g', 'r', 'o', 'u', 'p'}
-@(private = "file")
+@private
 controls_word := [?]u8{'c', 'o', 'n', 't', 'r', 'o', 'l', 's'}
-@(private = "file")
+@private
 button_word := [?]u8{'b', 'u', 't', 't', 'o', 'n'}
-@(private = "file")
+@private
 affect_word := [?]u8{'a', 'f', 'f', 'e', 'c', 't'}
-@(private = "file")
+@private
 count_word := [?]u8{'c', 'o', 'u', 'n', 't'}
-@(private = "file")
+@private
 preserve_word := [?]u8{'p', 'r', 'e', 's', 'e', 'r', 'v', 'e'}
-@(private = "file")
+@private
 map_word := [?]u8{'m', 'a', 'p'}
-@(private = "file")
+@private
 level_name_word := [?]u8{'l', 'e', 'v', 'e', 'l', '_', 'n', 'a', 'm', 'e'}
 
-@(private = "file")
+@private
 minimum_word := [?]u8{'m', 'i', 'n', 'i', 'm', 'u', 'm'}
-@(private = "file")
+@private
 maximum_word := [?]u8{'m', 'a', 'x', 'i', 'm', 'u', 'm'}
-@(private = "file")
+@private
 any_of_word := [?]u8{'a', 'n', 'y', 'O', 'f'}
-@(private = "file")
+@private
 any_of_or_none_word := [?]u8{'a', 'n', 'y', 'O', 'f', 'O', 'r', 'N', 'o', 'n', 'e'}
-@(private = "file")
+@private
 exactly_word := [?]u8{'E', 'x', 'a', 'c', 't', 'l', 'y'}
-@(private = "file")
+@private
 interpret := [?]u8{'i', 'n', 't', 'e', 'r', 'p', 'r', 'e', 't'}
-@(private = "file")
+@private
 alias := [?]u8{'a', 'l', 'i', 'a', 's'}
-@(private = "file")
+@private
 indicator := [?]u8{'i', 'n', 'd', 'i', 'c', 'a', 't', 'o', 'r'}
-@(private = "file")
+@private
 action_word := [?]u8{'a', 'c', 't', 'i', 'o', 'n'}
-@(private = "file")
+@private
 true_word := [?]u8{'T', 'r', 'u', 'e'}
-@(private = "file")
+@private
 use_mod_map_mods_word := [?]u8{'u', 's', 'e', 'M', 'o', 'd', 'M', 'a', 'p', 'M', 'o', 'd', 's'}
-@(private = "file")
+@private
 virtual_modifier_word := [?]u8 {
   'v',
   'i',
@@ -2200,9 +2138,9 @@ virtual_modifier_word := [?]u8 {
   'e',
   'r',
 }
-@(private = "file")
+@private
 repeat_word := [?]u8{'r', 'e', 'p', 'e', 'a', 't'}
-@(private = "file")
+@private
 virtual_modifiers_word := [?]u8 {
   'v',
   'i',
@@ -2222,15 +2160,15 @@ virtual_modifiers_word := [?]u8 {
   'r',
   's',
 }
-@(private = "file")
+@private
 xkb_keymap := [?]u8{'x', 'k', 'b', '_', 'k', 'e', 'y', 'm', 'a', 'p'}
-@(private = "file")
+@private
 xkb_keycodes := [?]u8{'x', 'k', 'b', '_', 'k', 'e', 'y', 'c', 'o', 'd', 'e', 's'}
-@(private = "file")
+@private
 xkb_types := [?]u8{'x', 'k', 'b', '_', 't', 'y', 'p', 'e', 's'}
-@(private = "file")
+@private
 xkb_symbols := [?]u8{'x', 'k', 'b', '_', 's', 'y', 'm', 'b', 'o', 'l', 's'}
-@(private = "file")
+@private
 xkb_compatibility := [?]u8 {
   'x',
   'k',
@@ -2410,18 +2348,4 @@ types_parse_test :: proc(t: ^testing.T) {
   _, err = parse_keymap(transmute([]u8)(content), context.allocator)
 
   testing.expect(t, err == nil, "AN ERROR OCCOURED")
-}
-
-@(test)
-entire_file_test :: proc(t: ^testing.T) {
-  ok: bool
-  bytes: []u8
-  keymap: Keymap_Context
-  err: error.Error
-  id: u32
-
-  bytes, ok = os.read_entire_file("output.txt")
-  keymap, err = keymap_from_bytes(bytes, context.allocator, context.temp_allocator)
-
-  testing.expect(t, err == nil, "KEYMAP CREATION FAILED")
 }

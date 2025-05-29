@@ -1,6 +1,6 @@
 package wayland
 
-import vk "lib:vulkan"
+import "lib:vulkan"
 import "lib:error"
 
 Buffer :: struct {
@@ -11,7 +11,7 @@ Buffer :: struct {
   height:   u32,
   released: bool,
   bound:    bool,
-  frame:    ^vk.Frame,
+  frame:    ^vulkan.Frame,
   next:     ^Buffer,
 }
 
@@ -26,11 +26,11 @@ buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, he
   if buffer.width != width || buffer.height != height {
     if buffer.bound do write(ctx, {}, buffer.id, ctx.destroy_buffer_opcode)
 
-    vk.frame_resize(ctx.vk, buffer.frame, width, height) or_return
+    vulkan.frame_resize(ctx.vk, buffer.frame, width, height) or_return
     buffer_create(ctx, buffer, width, height)
   }
 
-  vk.frame_draw(ctx.vk, buffer.frame, width, height) or_return
+  vulkan.frame_draw(ctx.vk, buffer.frame, width, height) or_return
 
   write(ctx, {Object(buffer.id), Int(0), Int(0)}, ctx.surface_id, ctx.surface_attach_opcode)
   write(ctx, {Int(0), Int(0), Int(width), Int(height)}, ctx.surface_id, ctx.surface_damage_opcode)
@@ -50,7 +50,7 @@ buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
 
     if i != 0 do buffer.id = copy_id(ctx, ctx.buffer.id) or_return
 
-    buffer.frame = vk.get_frame(ctx.vk, buffer.id - ctx.buffer_base_id)
+    buffer.frame = vulkan.get_frame(ctx.vk, buffer.id - ctx.buffer_base_id)
     buffer.released = true
     buffer.bound = false
     buffer.width = 0
@@ -77,7 +77,7 @@ buffer_create :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, height
   buffer.width = width
   buffer.height = height
 
-  format := vk.drm_format(ctx.vk.format)
+  format := vulkan.drm_format(ctx.vk.format)
 
   write(ctx, {BoundNewId(buffer.id), Int(width), Int(height), Uint(format), Uint(0)}, ctx.dma_params_id, ctx.dma_params_create_immed_opcode) or_return
   write(ctx, {}, ctx.dma_params_id, ctx.dma_params_destroy_opcode) or_return

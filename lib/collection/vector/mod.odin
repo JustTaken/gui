@@ -30,15 +30,25 @@ new :: proc($T: typeid, cap: u32, allocator: runtime.Allocator) -> (vec: Vector(
   return vec, nil
 }
 
-append :: proc(vec: ^Vector($T), item: T) -> error.Error {
+append :: proc(vec: ^Vector($T), item: T, loc := #caller_location) -> error.Error {
   if vec.len >= vec.cap {
-    log.error("Failed to append element into vector of type", typeid_of(T))
+    log.error("Failed to append element into vector of type", typeid_of(T), "len:", vec.len, "cap:", vec.cap, loc)
     return .OutOfBounds
   }
 
   vec.data[vec.len] = item
   vec.len += 1
 
+  return nil
+}
+
+remove :: proc(vec: ^Vector($T), index: u32) -> error.Error {
+  if index >= vec.len {
+    return .OutOfBounds
+  }
+
+  vec.data[index] = vec.data[vec.len - 1]
+  vec.len -= 1
   return nil
 }
 
@@ -80,4 +90,12 @@ one :: proc(vec: ^Vector($T)) -> (^T, error.Error) {
 
 data :: proc(vec: ^Vector($T)) -> []T {
   return vec.data[0:vec.len]
+}
+
+offset :: proc(vec: ^Vector($T), o: u32) -> ([]T, error.Error) {
+  if o > vec.len {
+    return nil, .OutOfBounds
+  }
+
+  return vec.data[o:vec.len], nil
 }

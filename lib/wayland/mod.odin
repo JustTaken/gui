@@ -12,8 +12,9 @@ import "core:log"
 import "core:fmt"
 import "core:time"
 
-import vk "lib:vulkan"
+import "lib:vulkan"
 import "lib:collection/vector"
+import "lib:xkb"
 import "lib:error"
 
 @private
@@ -37,7 +38,7 @@ Modifier :: struct {
 }
 
 @private
-Listen :: proc(ptr: rawptr, keymap: ^Keymap_Context, time: i64) -> error.Error
+Listen :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Error
 
 @private
 KeyListener :: struct {
@@ -100,15 +101,15 @@ Wayland_Context :: struct {
   width: u32,
   height: u32,
   running: bool,
-  keymap: Keymap_Context,
-  vk: ^vk.Vulkan_Context,
+  keymap: xkb.Keymap_Context,
+  vk: ^vulkan.Vulkan_Context,
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
   tmp_arena: ^mem.Arena,
   tmp_allocator: runtime.Allocator,
 }
 
-wayland_init :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
+wayland_init :: proc(ctx: ^Wayland_Context, v: ^vulkan.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
   log.info("Initializing Wayland")
 
   mark := mem.begin_arena_temp_memory(tmp_arena)
@@ -263,7 +264,7 @@ resize :: proc(ctx: ^Wayland_Context, width: u32, height: u32) -> error.Error {
 
   projection := scale * translate
 
-  vk.update_projection(ctx.vk, projection) or_return
+  vulkan.update_projection(ctx.vk, projection) or_return
 
   return nil
 }
@@ -698,7 +699,7 @@ keyboard_keymap_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Ar
   }
 
   mark := mem.begin_arena_temp_memory(ctx.tmp_arena)
-  ctx.keymap = keymap_from_bytes(data, ctx.allocator, ctx.tmp_allocator) or_return
+  ctx.keymap = xkb.keymap_from_bytes(data, ctx.allocator, ctx.tmp_allocator) or_return
   mem.end_arena_temp_memory(mark)
 
   return nil
@@ -716,13 +717,13 @@ keyboard_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Arg
 }
 @private
 keyboard_key_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  register_code(&ctx.keymap, u32(arguments[2].(Uint)), u32(arguments[3].(Uint)))
+  xkb.register_code(&ctx.keymap, u32(arguments[2].(Uint)), u32(arguments[3].(Uint)))
 
   return nil
 }
 @private
 keyboard_modifiers_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []Argument) -> error.Error {
-  set_modifiers(&ctx.keymap, u32(arguments[1].(Uint)))
+  xkb.set_modifiers(&ctx.keymap, u32(arguments[1].(Uint)))
 
   return nil
 }
