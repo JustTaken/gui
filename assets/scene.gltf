@@ -9,13 +9,14 @@
 			"name":"Ambient",
 			"nodes":[
 				0,
-				1
+				1,
+				2
 			]
 		},
 		{
-			"name":"Player",
+			"name":"Arrows",
 			"nodes":[
-				2
+				3
 			]
 		}
 	],
@@ -45,7 +46,21 @@
 		},
 		{
 			"mesh":2,
-			"name":"Cube.001"
+			"name":"Cube.002",
+			"translation":[
+				2.126666307449341,
+				1.2305456399917603,
+				9.816322326660156
+			]
+		},
+		{
+			"mesh":3,
+			"name":"Sphere",
+			"scale":[
+				0.14848697185516357,
+				0.14848697185516357,
+				0.14848697185516357
+			]
 		}
 	],
 	"meshes":[
@@ -76,7 +91,7 @@
 			]
 		},
 		{
-			"name":"Cube.002",
+			"name":"Cube.003",
 			"primitives":[
 				{
 					"attributes":{
@@ -85,6 +100,19 @@
 						"TEXCOORD_0":10
 					},
 					"indices":11
+				}
+			]
+		},
+		{
+			"name":"Sphere.001",
+			"primitives":[
+				{
+					"attributes":{
+						"POSITION":12,
+						"NORMAL":13,
+						"TEXCOORD_0":14
+					},
+					"indices":15
 				}
 			]
 		}
@@ -191,6 +219,40 @@
 			"componentType":5123,
 			"count":36,
 			"type":"SCALAR"
+		},
+		{
+			"bufferView":12,
+			"componentType":5126,
+			"count":3520,
+			"max":[
+				13.194172859191895,
+				13.194172859191895,
+				13.194172859191895
+			],
+			"min":[
+				-0.9999990463256836,
+				-1,
+				-1
+			],
+			"type":"VEC3"
+		},
+		{
+			"bufferView":13,
+			"componentType":5126,
+			"count":3520,
+			"type":"VEC3"
+		},
+		{
+			"bufferView":14,
+			"componentType":5126,
+			"count":3520,
+			"type":"VEC2"
+		},
+		{
+			"bufferView":15,
+			"componentType":5123,
+			"count":5166,
+			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
@@ -265,11 +327,35 @@
 			"byteLength":72,
 			"byteOffset":4268,
 			"target":34963
+		},
+		{
+			"buffer":0,
+			"byteLength":42240,
+			"byteOffset":4340,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":42240,
+			"byteOffset":46580,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":28160,
+			"byteOffset":88820,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":10332,
+			"byteOffset":116980,
+			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":4340,
+			"byteLength":127312,
 			"uri":"scene.bin"
 		}
 	]

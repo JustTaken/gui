@@ -117,7 +117,6 @@ tick_scene_animation :: proc(ctx: ^Context, instance: ^Scene_Instance, time: i64
 
   if finish {
     log.info("Finishing animation")
-    // instance.on_going = nil
     on_going.last_frame = 0
     on_going.start = time
   }
@@ -178,13 +177,13 @@ load_animations :: proc(ctx: ^Context, glt: ^gltf.Gltf) -> (animations: map[stri
   return animations, nil
 } 
 
-scene_instance_create :: proc(ctx: ^Context, scenes: ^Scenes, name: string, transform: Matrix) -> (instance: Scene_Instance, err: error.Error) {
+scene_instance_create :: proc(ctx: ^Context, scenes: ^Scenes, name: string, transform: Matrix, method: vulkan.Instance_Draw_Method) -> (instance: Scene_Instance, err: error.Error) {
   if scene, ok := scenes.childs[name]; ok {
     instance.scene = &scene
     instance.models = vector.new(Model_Instance, scene.models.len, ctx.allocator) or_return
 
     for i in 0..<scene.models.len {
-      vector.append(&instance.models, model_instance_create(ctx, scene.models.data[i], transform) or_return) or_return
+      vector.append(&instance.models, model_instance_create(ctx, scene.models.data[i], transform, method) or_return) or_return
     }
 
     return instance, nil
@@ -193,7 +192,17 @@ scene_instance_create :: proc(ctx: ^Context, scenes: ^Scenes, name: string, tran
   return instance, .InvalidScene
 }
 
-model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix) -> (instance: Model_Instance, err: error.Error) {
+scene_instance_update :: proc(ctx: ^Context, instance: ^Scene_Instance, transform: Matrix) -> error.Error {
+  for i in 0..<instance.models.len {
+    for j in 0..<instance.models.data[i].instances.len {
+      vulkan.instance_update(&ctx.vk, instance.models.data[i].instances.data[j], transform) or_return
+    }
+  }
+
+  return nil
+}
+
+model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix, method: vulkan.Instance_Draw_Method) -> (instance: Model_Instance, err: error.Error) {
   instance.model = model
 
   instance.bones = vector.new(Scene_Instance, model.bones.len, ctx.allocator) or_return
@@ -203,12 +212,12 @@ model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix) -
 
   instance.children = vector.new(Model_Instance, model.children.len, ctx.allocator) or_return
   for i in 0..<model.children.len {
-    vector.append(&instance.children, model_instance_create(ctx, model.children.data[i], transform) or_return) or_return
+    vector.append(&instance.children, model_instance_create(ctx, model.children.data[i], transform, method) or_return) or_return
   }
 
   instance.instances = vector.new(^vulkan.Instance, model.geometries.len, ctx.allocator) or_return
   for i in 0..<model.geometries.len {
-      vector.append(&instance.instances, vulkan.geometry_instance_add(&ctx.vk, model.geometries.data[i], transform) or_return) or_return
+      vector.append(&instance.instances, vulkan.geometry_instance_add(&ctx.vk, model.geometries.data[i], transform, method) or_return) or_return
   }
 
   return instance, nil
@@ -266,7 +275,7 @@ load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -
     }
 
     ind := (cast([^]u16)raw_data(indices.bytes))[0:indices.count]
-    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, max, transform, false) or_return
+    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, transform, .Unboned) or_return
     vector.append(&geometries, geometry) or_return
   }
 
@@ -325,7 +334,7 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> 
     }
 
     ind := (cast([^]u16)raw_data(indices.bytes))[0:indices.count]
-    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, max, transform, true) or_return
+    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, transform, .Boned) or_return
     vector.append(&geometries, geometry) or_return
   }
 

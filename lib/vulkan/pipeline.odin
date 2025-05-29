@@ -3,11 +3,19 @@ package vulk
 import "base:runtime"
 import "core:os"
 import "core:log"
+import "core:math/linalg"
 
 import vk "vendor:vulkan"
 
 import "lib:collection/vector"
 import "lib:error"
+
+@private
+Pipeline_Instance_Group :: struct {
+  geometry: ^Geometry,
+  instances: vector.Vector(Instance),
+  offset: u32,
+}
 
 @private
 Pipeline_Layout :: struct {
@@ -19,7 +27,7 @@ Pipeline_Layout :: struct {
 Pipeline :: struct {
   handle: vk.Pipeline,
   layout: ^Pipeline_Layout,
-  geometries: ^Geometry_Group,
+  groups: vector.Vector(Pipeline_Instance_Group),
 }
 
 @private
@@ -75,9 +83,9 @@ get_attribute_format :: proc(attribute: Vertex_Attribute) -> (format: vk.Format,
 }
 
 @private
-pipeline_create :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, geometries: ^Geometry_Group, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> error.Error {
+pipeline_create :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> error.Error {
+  pipeline.groups = vector.new(Pipeline_Instance_Group, 10, ctx.allocator) or_return
   pipeline.layout = layout
-  pipeline.geometries = geometries
 
   vert_module := shader_module_create(ctx, vert) or_return
   defer vk.DestroyShaderModule(ctx.device.handle, vert_module, nil)
@@ -315,10 +323,41 @@ shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.
   return module, nil
 }
 
-pipeline_deinit :: proc(ctx: ^Vulkan_Context, pipeline: Pipeline) {
-  for i in 0 ..< pipeline.geometries.childs.len {
-  	destroy_geometry(ctx, &pipeline.geometries.childs.data[i])
+@private
+pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometry: ^Geometry, model: Maybe(Instance_Model)) -> (instance: ^Instance, err: error.Error) {
+  group: ^Pipeline_Instance_Group = nil
+
+  for i in 0..<pipeline.groups.len {
+    if geometry == pipeline.groups.data[i].geometry {
+      group = &pipeline.groups.data[i]
+    }
   }
 
+  if group == nil {
+    group = vector.one(&pipeline.groups) or_return
+    group.geometry = geometry
+    group.offset = ctx.instances
+    ctx.instances += 10
+
+    group.instances = vector.new(Instance, 10, ctx.allocator) or_return
+  }
+
+  offset := group.offset + group.instances.len
+
+  instance = vector.one(&group.instances) or_return
+  instance.offset = offset
+  instance.transform = geometry.transform
+
+  m := model.? or_else linalg.MATRIX4F32_IDENTITY
+
+  transform_offset := [?]u32{ctx.transforms}
+  copy_data(u32, ctx, transform_offset[:], ctx.dynamic_set.descriptors[OFFSETS].buffer.handle, instance.offset) or_return
+
+  instance_update(ctx, instance, m) or_return
+
+  return instance, nil
+}
+
+pipeline_deinit :: proc(ctx: ^Vulkan_Context, pipeline: Pipeline) {
   vk.DestroyPipeline(ctx.device.handle, pipeline.handle, nil)
 }

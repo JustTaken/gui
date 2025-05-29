@@ -29,10 +29,7 @@ Vulkan_Context :: struct {
   physical_device: vk.PhysicalDevice,
 
   set_layouts: vector.Vector(Descriptor_Set_Layout),
-  geometry_groups: vector.Vector(Geometry_Group),
-
-  default_group: ^Geometry_Group,
-  boned_group: ^Geometry_Group,
+  geometries: vector.Vector(Geometry),
 
   render_pass: Render_Pass,
 
@@ -40,6 +37,7 @@ Vulkan_Context :: struct {
   dynamic_set: ^Descriptor_Set,
 
   default_pipeline: ^Pipeline,
+  plain_pipeline: ^Pipeline,
   boned_pipeline: ^Pipeline,
 
   descriptor_pool: Descriptor_Pool,
@@ -97,7 +95,7 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
   ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 1000, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
 
   ctx.set_layouts = vector.new(Descriptor_Set_Layout, 20, ctx.allocator) or_return
-  ctx.geometry_groups = vector.new(Geometry_Group, 20, ctx.allocator) or_return
+  ctx.geometries = vector.new(Geometry, 20, ctx.allocator) or_return
   ctx.descriptor_pool = descriptor_pool_create(ctx, {{type = .UNIFORM_BUFFER, descriptorCount = 10}, {type = .STORAGE_BUFFER, descriptorCount = 10}}, 20) or_return
 
   ctx.render_pass = render_pass_create(ctx) or_return
@@ -110,11 +108,9 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 
   layout := render_pass_append_layout(&ctx.render_pass, layout_create(ctx, {fixed_set_layout, dynamic_set_layout}) or_return) or_return
 
-  ctx.default_group = geometry_group_create(ctx, ctx.dynamic_set, 10) or_return
-  ctx.default_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.default_group, "assets/output/unboned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
-
-  ctx.boned_group = geometry_group_create(ctx, ctx.dynamic_set, 10) or_return
-  ctx.boned_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.boned_group, "assets/output/boned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}, {.Sfloat, 4}, {.Uint, 4}}}) or_return
+  ctx.default_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, "assets/output/unboned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
+  ctx.plain_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, "assets/output/plain.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
+  ctx.boned_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, "assets/output/boned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}, {.Sfloat, 4}, {.Uint, 4}}}) or_return
 
   ctx.frames = frames_create(ctx, &ctx.render_pass, frame_count, width, height) or_return
 
@@ -137,6 +133,10 @@ vulkan_deinit :: proc(ctx: ^Vulkan_Context) {
 
   for i in 0..<ctx.set_layouts.len {
     vk.DestroyDescriptorSetLayout(ctx.device.handle, ctx.set_layouts.data[i].handle, nil)
+  }
+
+  for i in 0..<ctx.geometries.len {
+    destroy_geometry(ctx, &ctx.geometries.data[i])
   }
 
   descriptor_pool_deinit(ctx, ctx.descriptor_pool)

@@ -6,9 +6,9 @@ import "lib:collection/vector"
 import "lib:error"
 
 Render_Pass :: struct {
-	handle: vk.RenderPass,
-	pipelines: vector.Vector(Pipeline),
-	layouts: vector.Vector(Pipeline_Layout),
+  handle: vk.RenderPass,
+  pipelines: vector.Vector(Pipeline),
+  layouts: vector.Vector(Pipeline_Layout),
 }
 
 @private
@@ -85,29 +85,29 @@ render_pass_create :: proc(ctx: ^Vulkan_Context) -> (render_pass: Render_Pass, e
 
 @private
 render_pass_append_layout :: proc(render_pass: ^Render_Pass, p_layout: Pipeline_Layout) -> (layout: ^Pipeline_Layout, err: error.Error) {
-	layout = vector.one(&render_pass.layouts) or_return
-	layout^ = p_layout
+  layout = vector.one(&render_pass.layouts) or_return
+  layout^ = p_layout
 
-	return layout, nil
+  return layout, nil
 }
 
 @private
-render_pass_append_pipeline :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, geometries: ^Geometry_Group, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> (pipeline: ^Pipeline, err: error.Error) {
-	pipeline = vector.one(&render_pass.pipelines) or_return
-	pipeline_create(pipeline, ctx, render_pass, layout, geometries, vert, frag, vertex_attribute_bindings) or_return
+render_pass_append_pipeline :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> (pipeline: ^Pipeline, err: error.Error) {
+  pipeline = vector.one(&render_pass.pipelines) or_return
+  pipeline_create(pipeline, ctx, render_pass, layout, vert, frag, vertex_attribute_bindings) or_return
 
-	return pipeline, nil
+  return pipeline, nil
 }
 
 @private
 render_pass_deinit :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass) {
-	for i in 0..<render_pass.pipelines.len {
-		pipeline_deinit(ctx, render_pass.pipelines.data[i])
-	}
+  for i in 0..<render_pass.pipelines.len {
+    pipeline_deinit(ctx, render_pass.pipelines.data[i])
+  }
 
-	for i in 0..<render_pass.layouts.len {
-		vk.DestroyPipelineLayout(ctx.device.handle, render_pass.layouts.data[i].handle, nil)
-	}
+  for i in 0..<render_pass.layouts.len {
+    vk.DestroyPipelineLayout(ctx.device.handle, render_pass.layouts.data[i].handle, nil)
+  }
 
-	vk.DestroyRenderPass(ctx.device.handle, render_pass.handle, nil)
+  vk.DestroyRenderPass(ctx.device.handle, render_pass.handle, nil)
 }

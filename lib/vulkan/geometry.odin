@@ -12,56 +12,34 @@ Instance_Model :: matrix[4, 4]f32
 Light :: [3]f32
 Matrix :: matrix[4, 4]f32
 
-Instance :: struct {
-  geometry: ^Geometry,
-  offset: u32,
+Geometry_Kind :: enum {
+  Boned,
+  Unboned,
 }
 
-Geometry :: struct {
-  parent: ^Geometry_Group,
-  vertex:    Buffer,
-  indice:    Buffer,
-  count: u32,
-  instance_offset: u32,
-  instances: vector.Vector(Instance),
+Instance_Draw_Method :: enum {
+  WithView,
+  WithoutView,
+}
+
+Instance :: struct {
+  offset: u32,
   transform: Matrix,
 }
 
-@private
-Geometry_Group :: struct {
-  childs: vector.Vector(Geometry),
+Geometry :: struct {
+  vertex: Buffer,
+  indice: Buffer,
+  count: u32,
+  transform: Matrix,
+  kind: Geometry_Kind,
 }
 
-@private
-geometry_group_create :: proc(ctx: ^Vulkan_Context, set: ^Descriptor_Set, count: u32) -> (group: ^Geometry_Group, err: error.Error) {
-  group = vector.one(&ctx.geometry_groups) or_return
-
-  group.childs = vector.new(Geometry, count, ctx.allocator) or_return
-
-  return group, nil
-}
-
-@private
-geometry_group_append :: proc(group: ^Geometry_Group) -> (geometry: ^Geometry, err: error.Error) {
-  geometry = vector.one(&group.childs) or_return
-  geometry.parent = group
-
-  return geometry, nil
-}
-
-geometry_create :: proc($T: typeid, ctx: ^Vulkan_Context, vertices: []T, indices: []u16, max_instances: u32, transform: Matrix, bonned_pipeline: bool) -> (geometry: ^Geometry, err: error.Error) {
-  if bonned_pipeline {
-    geometry = geometry_group_append(ctx.boned_group) or_return
-  } else {
-    geometry = geometry_group_append(ctx.default_group) or_return
-  }
-
-  geometry.instance_offset = ctx.instances
+geometry_create :: proc($T: typeid, ctx: ^Vulkan_Context, vertices: []T, indices: []u16, transform: Matrix, kind: Geometry_Kind) -> (geometry: ^Geometry, err: error.Error) {
+  geometry = vector.one(&ctx.geometries) or_return
+  geometry.kind = kind
   geometry.transform = transform
   geometry.count = u32(len(indices))
-  ctx.instances += max_instances
-
-  geometry.instances = vector.new(Instance, max_instances, ctx.allocator) or_return
 
   geometry.vertex = buffer_create(ctx, u32(len(vertices) * size_of(T)), {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
   copy_data(T, ctx, vertices, geometry.vertex.handle, 0) or_return
@@ -72,26 +50,34 @@ geometry_create :: proc($T: typeid, ctx: ^Vulkan_Context, vertices: []T, indices
   return geometry, nil
 }
 
-geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry: ^Geometry, model: Maybe(Instance_Model)) -> (instance: ^Instance, ok: error.Error) {
-  offset := geometry.instance_offset + geometry.instances.len
+geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry: ^Geometry, model: Maybe(Instance_Model), method: Instance_Draw_Method) -> (instance: ^Instance, ok: error.Error) {
+  pipeline: ^Pipeline
 
-  instance = vector.one(&geometry.instances) or_return
-  instance.geometry = geometry
-  instance.offset = offset
+  switch method {
+    case .WithView:
+      switch geometry.kind {
+        case .Unboned:
+          pipeline = ctx.default_pipeline
+        case .Boned:
+          pipeline = ctx.boned_pipeline
+      }
+    case .WithoutView:
+      switch geometry.kind {
+        case .Unboned:
+          pipeline = ctx.plain_pipeline
+        case .Boned:
+          panic("TODO")
+      }
+  }
 
-  m := model.? or_else linalg.MATRIX4F32_IDENTITY
-
-  offsets := [?]u32{ctx.transforms}
-  copy_data(u32, ctx, offsets[:], ctx.dynamic_set.descriptors[OFFSETS].buffer.handle, instance.offset) or_return
-
-  instance_update(ctx, instance, m * geometry.transform) or_return
+  instance = pipeline_add_instance(ctx, pipeline, geometry, model) or_return
 
   return instance, nil
 }
 
 instance_update :: proc(ctx: ^Vulkan_Context, instance: ^Instance, model: Maybe(Instance_Model)) -> error.Error {
   if model != nil {
-    models := [?]Instance_Model{model.?}
+    models := [?]Instance_Model{model.? * instance.transform}
     copy_data(Instance_Model, ctx, models[:], ctx.dynamic_set.descriptors[MODELS].buffer.handle, instance.offset) or_return
   }
 

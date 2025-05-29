@@ -3,6 +3,7 @@ package vulk
 import "core:fmt"
 import "core:sys/posix"
 import vk "vendor:vulkan"
+import "core:log"
 
 import "lib:error"
 import "lib:collection/vector"
@@ -297,15 +298,15 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame_index: u32, width: u32, height: u
 
     vk.CmdBindDescriptorSets(cmd, .GRAPHICS, pipeline.layout.handle, 0, len(sets), &sets[0], 0, nil)
 
-    for i in 0 ..<pipeline.geometries.childs.len {
-      geometry := &pipeline.geometries.childs.data[i]
+    for i in 0 ..<pipeline.groups.len {
+      group := &pipeline.groups.data[i]
 
-      if geometry.instances.len == 0 do continue
+      if group.instances.len == 0 do continue
 
       offset := vk.DeviceSize(0)
-      vk.CmdBindVertexBuffers(cmd, 0, 1, &geometry.vertex.handle, &offset)
-      vk.CmdBindIndexBuffer(cmd, geometry.indice.handle, 0, .UINT16)
-      vk.CmdDrawIndexed(cmd, geometry.count, geometry.instances.len, 0, 0, geometry.instance_offset)
+      vk.CmdBindVertexBuffers(cmd, 0, 1, &group.geometry.vertex.handle, &offset)
+      vk.CmdBindIndexBuffer(cmd, group.geometry.indice.handle, 0, .UINT16)
+      vk.CmdDrawIndexed(cmd, group.geometry.count, group.instances.len, 0, 0, group.offset)
     }
   }
 
