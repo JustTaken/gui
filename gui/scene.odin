@@ -1,10 +1,10 @@
 package main
 
-import "collection/gltf"
-import vk "vulkan"
-import "error"
+import "lib:collection/gltf"
+import "lib:collection/vector"
+import "lib:error"
+import "lib:vulkan"
 import "core:mem"
-import "collection"
 import "core:log"
 import "core:math/linalg"
 import "core:strings"
@@ -13,8 +13,8 @@ import "core:testing"
 Matrix :: matrix[4, 4]f32
 
 Scene_Animation :: struct {
-  time_stamp: []f32,
-  transforms: [][]Matrix,
+  time_stamp: vector.Vector(f32),
+  transforms: vector.Vector(vector.Vector(Matrix)),
 }
 
 On_Going_Animation :: struct {
@@ -25,68 +25,67 @@ On_Going_Animation :: struct {
 
 Model_Instance :: struct {
   model: ^Model,
-  instances: collection.Vector(^vk.Instance),
-  bones: collection.Vector(Scene_Instance),
-  children: collection.Vector(Model_Instance),
+  instances: vector.Vector(^vulkan.Instance),
+  bones: vector.Vector(Scene_Instance),
+  children: vector.Vector(Model_Instance),
 }
 
 Scene_Instance :: struct {
   scene: ^Scene,
-  models: collection.Vector(Model_Instance),
+  models: vector.Vector(Model_Instance),
   on_going: Maybe(On_Going_Animation),
 }
 
 Scene :: struct {
-  all_models: collection.Vector(Model),
-  models: collection.Vector(^Model),
-  bind_pose: []Matrix,
+  all_models: vector.Vector(Model),
+  models: vector.Vector(^Model),
   animations: map[string]Scene_Animation,
   transforms_offset: u32,
 }
 
 Model :: struct {
-  geometries: collection.Vector(^vk.Geometry),
-  children: collection.Vector(^Model),
-  bones: collection.Vector(Matrix),
+  geometries: vector.Vector(^vulkan.Geometry),
+  children: vector.Vector(^Model),
+  bones: vector.Vector(Matrix),
 }
 
-next_scene_animation_frame :: proc(ctx: ^Context, instance: ^Scene_Instance, name: string) -> error.Error {
-  if instance.on_going == nil {
-    play_scene_animation(instance, name, 0)
-    return nil
-  }
+// next_scene_animation_frame :: proc(ctx: ^Context, instance: ^Scene_Instance, name: string) -> error.Error {
+//   if instance.on_going == nil {
+//     play_scene_animation(instance, name, 0)
+//     return nil
+//   }
 
-  on_going := &instance.on_going.?
+//   on_going := &instance.on_going.?
 
-  if on_going.last_frame >= u32(len(on_going.ref.time_stamp)) {
-    instance.on_going = nil
-    return nil
-  }
+//   if on_going.last_frame >= on_going.ref.time_stamp.len {
+//     instance.on_going = nil
+//     return nil
+//   }
 
-  vk.update_transforms(&ctx.vk, on_going.ref.transforms[on_going.last_frame], instance.scene.transforms_offset) or_return
-  on_going.last_frame += 1;
+//   vulkan.update_transforms(&ctx.vulkan, on_going.ref.transforms[on_going.last_frame], instance.scene.transforms_offset) or_return
+//   on_going.last_frame += 1;
 
-  return nil
-}
+//   return nil
+// }
 
-prev_scene_animation_frame :: proc(ctx: ^Context, instance: ^Scene_Instance, name: string) -> error.Error {
-  if instance.on_going == nil {
-    play_scene_animation(instance, name, 0)
-    return nil
-  }
+// prev_scene_animation_frame :: proc(ctx: ^Context, instance: ^Scene_Instance, name: string) -> error.Error {
+//   if instance.on_going == nil {
+//     play_scene_animation(instance, name, 0)
+//     return nil
+//   }
 
-  on_going := &instance.on_going.?
+//   on_going := &instance.on_going.?
 
-  if on_going.last_frame == 0 {
-    instance.on_going = nil
-    return nil
-  }
+//   if on_going.last_frame == 0 {
+//     instance.on_going = nil
+//     return nil
+//   }
 
-  on_going.last_frame -= 1;
-  vk.update_transforms(&ctx.vk, on_going.ref.transforms[on_going.last_frame], instance.scene.transforms_offset) or_return
+//   on_going.last_frame -= 1;
+//   vulkan.update_transforms(&ctx.vulkan, on_going.ref.transforms[on_going.last_frame].data, instance.scene.transforms_offset) or_return
 
-  return nil
-}
+//   return nil
+// }
 
 tick_scene_animation :: proc(ctx: ^Context, instance: ^Scene_Instance, time: i64) -> error.Error {
   if instance.on_going == nil do return nil
@@ -98,10 +97,10 @@ tick_scene_animation :: proc(ctx: ^Context, instance: ^Scene_Instance, time: i64
   previous_last := on_going.last_frame
   finish := false
 
-  for tick > on_going.ref.time_stamp[on_going.last_frame] {
+  for tick > on_going.ref.time_stamp.data[on_going.last_frame] {
     on_going.last_frame += 1
 
-    if on_going.last_frame + 1 >= u32(len(on_going.ref.time_stamp)) {
+    if on_going.last_frame + 1 >= on_going.ref.time_stamp.len {
       finish = true
       break
     }
@@ -109,7 +108,7 @@ tick_scene_animation :: proc(ctx: ^Context, instance: ^Scene_Instance, time: i64
 
   if previous_last == on_going.last_frame do return nil
 
-  vk.update_transforms(&ctx.vk, on_going.ref.transforms[on_going.last_frame], instance.scene.transforms_offset) or_return
+  vulkan.update_transforms(&ctx.vk, vector.data(&on_going.ref.transforms.data[on_going.last_frame]), instance.scene.transforms_offset) or_return
 
   if finish {
     log.info("Finishing animation")
@@ -145,37 +144,43 @@ play_scene_animation :: proc(instance: ^Scene_Instance, name: string, time: i64)
   return nil
 }
 
-load_animations :: proc(ctx: ^Context, glt: ^gltf.Gltf, scene: ^Scene) {
-  scene.animations = make(map[string]Scene_Animation, len(glt.animations) * 2, ctx.allocator)
+load_animations :: proc(ctx: ^Context, glt: ^gltf.Gltf, scene: ^Scene) -> error.Error {
+  scene.animations = make(map[string]Scene_Animation, glt.animations.len * 2, ctx.allocator)
 
-  for i in 0..<len(glt.animations) {
+  for i in 0..<glt.animations.len {
     animation: Scene_Animation
 
-    ref := &glt.animations[i]
+    ref := &glt.animations.data[i]
     log.info("Loading  Animation:", ref.name)
 
-    animation.time_stamp = make([]f32, len(ref.frames), ctx.allocator)
-    animation.transforms = make([][]Matrix, len(ref.frames), ctx.allocator)
+    animation.time_stamp = vector.new(f32, ref.frames.len, ctx.allocator) or_return
+    animation.transforms = vector.new(vector.Vector(Matrix), ref.frames.len, ctx.allocator) or_return
 
-    for i in 0..<len(ref.frames) {
-      animation.time_stamp[i] = ref.frames[i].time
-      animation.transforms[i] = make([]Matrix, len(ref.frames[i].transforms), ctx.allocator)
+    for i in 0..<ref.frames.len {
+      vector.append(&animation.time_stamp, ref.frames.data[i].time) or_return
+      transforms := vector.new(Matrix, ref.frames.data[i].transforms.len, ctx.allocator) or_return
 
-      for k in 0..<len(ref.frames[i].transforms) {
-        animation.transforms[i][k] = ref.frames[i].transforms[k].compose
+      // animation.transforms[i] = make([]Matrix, len(ref.frames[i].transforms), ctx.allocator)
+
+      for k in 0..<ref.frames.data[i].transforms.len {
+        vector.append(&transforms, ref.frames.data[i].transforms.data[k].compose) or_return
       }
+
+      vector.append(&animation.transforms, transforms) or_return
     }
 
     scene.animations[strings.clone(ref.name, ctx.allocator)] = animation
   }
+
+  return nil
 } 
 
 scene_instance_create :: proc(ctx: ^Context, scene: ^Scene, transform: Matrix) -> (instance: Scene_Instance, err: error.Error) {
   instance.scene = scene
-  instance.models = collection.new_vec(Model_Instance, scene.models.len, ctx.allocator) or_return
+  instance.models = vector.new(Model_Instance, scene.models.len, ctx.allocator) or_return
 
   for i in 0..<scene.models.len {
-    collection.vec_append(&instance.models, model_instance_create(ctx, scene.models.data[i], transform) or_return) or_return
+    vector.append(&instance.models, model_instance_create(ctx, scene.models.data[i], transform) or_return) or_return
   }
 
   return instance, nil
@@ -184,26 +189,26 @@ scene_instance_create :: proc(ctx: ^Context, scene: ^Scene, transform: Matrix) -
 model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix) -> (instance: Model_Instance, err: error.Error) {
   instance.model = model
 
-  instance.bones = collection.new_vec(Scene_Instance, model.bones.len, ctx.allocator) or_return
+  instance.bones = vector.new(Scene_Instance, model.bones.len, ctx.allocator) or_return
   //for i in 0..<model.bones.len {
-    //collection.vec_append(&instance.bones, scene_instance_create(ctx, ctx.bone, transform * model.bones.data[i]) or_return) or_return
+    //collection.append(&instance.bones, scene_instance_create(ctx, ctx.bone, transform * model.bones.data[i]) or_return) or_return
   //}
 
-  instance.children = collection.new_vec(Model_Instance, model.children.len, ctx.allocator) or_return
+  instance.children = vector.new(Model_Instance, model.children.len, ctx.allocator) or_return
   for i in 0..<model.children.len {
-    collection.vec_append(&instance.children, model_instance_create(ctx, model.children.data[i], transform) or_return) or_return
+    vector.append(&instance.children, model_instance_create(ctx, model.children.data[i], transform) or_return) or_return
   }
 
-  instance.instances = collection.new_vec(^vk.Instance, model.geometries.len, ctx.allocator) or_return
+  instance.instances = vector.new(^vulkan.Instance, model.geometries.len, ctx.allocator) or_return
   for i in 0..<model.geometries.len {
-      collection.vec_append(&instance.instances, vk.geometry_instance_add(&ctx.vk, model.geometries.data[i], transform) or_return) or_return
+      vector.append(&instance.instances, vulkan.geometry_instance_add(&ctx.vk, model.geometries.data[i], transform) or_return) or_return
   }
 
   return instance, nil
 }
 
-load_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: collection.Vector(^vk.Geometry), err: error.Error) {
-  if glt.nodes[node].skin != nil {
+load_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: vector.Vector(^vulkan.Geometry), err: error.Error) {
+  if glt.nodes.data[node].skin != nil {
     geometries = load_boned_mesh(ctx, glt, node, max) or_return
   } else {
     geometries = load_unboned_mesh(ctx, glt, node, max) or_return
@@ -212,22 +217,23 @@ load_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geome
   return geometries, nil
 }
 
-load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: collection.Vector(^vk.Geometry), err: error.Error) {
+load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: vector.Vector(^vulkan.Geometry), err: error.Error) {
   Vertex :: struct {
     position: [3]f32,
     normal: [3]f32,
     texture: [2]f32,
   }
 
-  mesh := &glt.meshes[glt.nodes[node].mesh.?]
-  transform := glt.nodes[node].transform.compose
+  mesh := &glt.meshes.data[glt.nodes.data[node].mesh.?]
+  transform := glt.nodes.data[node].transform.compose
 
-  geometries = collection.new_vec(^vk.Geometry, u32(len(mesh.primitives)), ctx.allocator) or_return
+  geometries = vector.new(^vulkan.Geometry, mesh.primitives.len, ctx.allocator) or_return
 
-  for primitive in mesh.primitives {
-    positions := primitive.accessors[.Position]
-    normals := primitive.accessors[.Normal]
-    textures := primitive.accessors[.Texture0]
+  for p in 0..<mesh.primitives.len {
+    positions := mesh.primitives.data[p].accessors[.Position]
+    normals := mesh.primitives.data[p].accessors[.Normal]
+    textures := mesh.primitives.data[p].accessors[.Texture0]
+    indices := mesh.primitives.data[p].indices
 
     assert(positions.component_kind == .F32 && positions.component_count == 3)
     assert(normals.component_kind == .F32 && normals.component_count == 3)
@@ -237,7 +243,6 @@ load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -
 
     count := positions.count
 
-    indices := primitive.indices
     bytes := make([]u8, size_of(Vertex) * count, ctx.tmp_allocator)
 
     pos := cast([^][3]f32)raw_data(positions.bytes)
@@ -252,13 +257,13 @@ load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -
       vertices[i].texture = texts[i]
     }
 
-    collection.vec_append(&geometries, vk.geometry_create(&ctx.vk, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, max, transform, false) or_return) or_return
+    vector.append(&geometries, vulkan.geometry_create(&ctx.vk, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, max, transform, false) or_return) or_return
   }
 
   return geometries, nil
 }
 
-load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: collection.Vector(^vk.Geometry), err: error.Error) {
+load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: vector.Vector(^vulkan.Geometry), err: error.Error) {
   Vertex :: struct {
     position: [3]f32,
     normal: [3]f32,
@@ -267,17 +272,18 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> 
     joint: [4]u32,
   }
 
-  mesh := &glt.meshes[glt.nodes[node].mesh.?]
-  transform := glt.nodes[node].transform.compose
+  mesh := &glt.meshes.data[glt.nodes.data[node].mesh.?]
+  transform := glt.nodes.data[node].transform.compose
 
-  geometries = collection.new_vec(^vk.Geometry, u32(len(mesh.primitives)), ctx.allocator) or_return
+  geometries = vector.new(^vulkan.Geometry, mesh.primitives.len, ctx.allocator) or_return
 
-  for primitive in mesh.primitives {
-    positions := primitive.accessors[.Position]
-    normals := primitive.accessors[.Normal]
-    textures := primitive.accessors[.Texture0]
-    weights := primitive.accessors[.Weight0]
-    joints := primitive.accessors[.Joint0]
+  for p in 0..<mesh.primitives.len {
+    positions := mesh.primitives.data[p].accessors[.Position]
+    normals := mesh.primitives.data[p].accessors[.Normal]
+    textures := mesh.primitives.data[p].accessors[.Texture0]
+    weights := mesh.primitives.data[p].accessors[.Weight0]
+    joints := mesh.primitives.data[p].accessors[.Joint0]
+    indices := mesh.primitives.data[p].indices
 
     assert(positions.component_kind == .F32 && positions.component_count == 3)
     assert(normals.component_kind == .F32 && normals.component_count == 3)
@@ -289,7 +295,6 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> 
 
     count := positions.count
 
-    indices := primitive.indices
     bytes := make([]u8, size_of(Vertex) * count, ctx.tmp_allocator)
 
     pos := cast([^][3]f32)raw_data(positions.bytes)
@@ -308,30 +313,30 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> 
       vertices[i].joint = {u32(joint[i][0]), u32(joint[i][1]), u32(joint[i][2]), u32(joint[i][3])}
     }
 
-    collection.vec_append(&geometries, vk.geometry_create(&ctx.vk, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, max, transform, true) or_return) or_return
+    vector.append(&geometries, vulkan.geometry_create(&ctx.vk, bytes, size_of(Vertex), count, indices.bytes, gltf.get_accessor_size(indices), indices.count, max, transform, true) or_return) or_return
   }
 
   return geometries, nil
 }
 
 load_node :: proc(ctx: ^Context, glt: ^gltf.Gltf, scene: ^Scene, node: u32, max: u32) -> error.Error {
-  model := collection.vec_one(&scene.all_models) or_return
-  model.children = collection.new_vec(^Model, u32(len(glt.nodes[node].children)), ctx.allocator) or_return
+  model := vector.one(&scene.all_models) or_return
+  model.children = vector.new(^Model, glt.nodes.data[node].children.len, ctx.allocator) or_return
 
-  if glt.nodes[node].skin != nil {
-    skin := &glt.skins[glt.nodes[node].skin.?]
-    model.bones = collection.new_vec(Matrix, u32(len(skin.joints)), ctx.allocator) or_return
+  if glt.nodes.data[node].skin != nil {
+    skin := &glt.skins.data[glt.nodes.data[node].skin.?]
+    model.bones = vector.new(Matrix, skin.joints.len, ctx.allocator) or_return
 
-    for joint in skin.joints {
-      collection.vec_append(&model.bones, glt.nodes[joint].transform.compose) or_return
+    for i in 0..<skin.joints.len {
+      vector.append(&model.bones, glt.nodes.data[skin.joints.data[i]].transform.compose) or_return
     }
   }
 
-  for child in glt.nodes[node].children {
-    collection.vec_append(&model.children, &scene.all_models.data[child]) or_return
+  for i in 0..<glt.nodes.data[node].children.len {
+    vector.append(&model.children, &scene.all_models.data[glt.nodes.data[node].children.data[i]]) or_return
   }
 
-  if glt.nodes[node].mesh != nil {
+  if glt.nodes.data[node].mesh != nil {
     model.geometries = load_mesh(ctx, glt, node, max) or_return
   }
 
@@ -339,7 +344,7 @@ load_node :: proc(ctx: ^Context, glt: ^gltf.Gltf, scene: ^Scene, node: u32, max:
 }
 
 load_gltf_scene :: proc(ctx: ^Context, path: string, max: u32) -> (scene: ^Scene, err: error.Error) {
-  scene = collection.vec_one(&ctx.scenes) or_return
+  scene = vector.one(&ctx.scenes) or_return
 
   mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
   defer mem.end_arena_temp_memory(mark)
@@ -348,26 +353,26 @@ load_gltf_scene :: proc(ctx: ^Context, path: string, max: u32) -> (scene: ^Scene
   gltf_scene := &glt.scenes["Scene"]
 
 
-  scene.all_models = collection.new_vec(Model, u32(len(glt.nodes)), ctx.allocator) or_return
-  scene.models = collection.new_vec(^Model, u32(len(gltf_scene.nodes)), ctx.allocator) or_return
+  scene.all_models = vector.new(Model, glt.nodes.len, ctx.allocator) or_return
+  scene.models = vector.new(^Model, gltf_scene.nodes.len, ctx.allocator) or_return
 
-  for j in 0..<len(glt.nodes) {
-    load_node(ctx, &glt, scene, u32(j), max) or_return
+  for j in 0..<glt.nodes.len {
+    load_node(ctx, &glt, scene, j, max) or_return
   }
 
-  for j in 0..<len(gltf_scene.nodes) {
-    collection.vec_append(&scene.models, &scene.all_models.data[gltf_scene.nodes[j]]) or_return
+  for j in 0..<gltf_scene.nodes.len {
+    vector.append(&scene.models, &scene.all_models.data[gltf_scene.nodes.data[j]]) or_return
   }
 
   load_animations(ctx, &glt, scene)
 
-  bones := make([]Matrix, len(glt.nodes), ctx.tmp_allocator)
+  bones := vector.new(Matrix, glt.nodes.len, ctx.tmp_allocator) or_return
 
-  for n in 0..<len(glt.nodes) {
-    bones[n] = linalg.MATRIX4F32_IDENTITY
+  for n in 0..<glt.nodes.len {
+    vector.append(&bones, linalg.MATRIX4F32_IDENTITY) or_return
   }
 
-  scene.transforms_offset = vk.add_transforms(&ctx.vk, bones) or_return
+  scene.transforms_offset = vulkan.add_transforms(&ctx.vk, vector.data(&bones)) or_return
 
   return scene, nil
 }

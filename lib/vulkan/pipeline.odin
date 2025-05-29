@@ -2,15 +2,17 @@ package vulk
 
 import "base:runtime"
 import "core:os"
-import vk "vendor:vulkan"
-import "./../collection"
+import "core:log"
 
-import "./../error"
+import vk "vendor:vulkan"
+
+import "lib:collection/vector"
+import "lib:error"
 
 @private
 Pipeline_Layout :: struct {
   handle: vk.PipelineLayout,
-  sets: collection.Vector(^Descriptor_Set_Layout),
+  sets: vector.Vector(^Descriptor_Set_Layout),
 }
 
 @private
@@ -20,11 +22,13 @@ Pipeline :: struct {
   geometries: ^Geometry_Group,
 }
 
+@private
 Vertex_Attribute_Kind :: enum{
   Sfloat,
   Uint,
 }
 
+@private
 Vertex_Attribute :: struct {
   kind: Vertex_Attribute_Kind,
   count: u32,
@@ -71,7 +75,7 @@ get_attribute_format :: proc(attribute: Vertex_Attribute) -> (format: vk.Format,
 }
 
 @private
-pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, geometries: ^Geometry_Group, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> (pipeline: Pipeline, err: error.Error) {
+pipeline_create :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, geometries: ^Geometry_Group, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> error.Error {
   pipeline.layout = layout
   pipeline.geometries = geometries
 
@@ -96,22 +100,32 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout:
     },
   }
 
-  vertex_binding_descriptions := collection.new_vec(vk.VertexInputBindingDescription, u32(len(vertex_attribute_bindings)), ctx.tmp_allocator) or_return
-  vertex_attribute_descriptions := collection.new_vec(vk.VertexInputAttributeDescription, 100, ctx.tmp_allocator) or_return
+  attribute_count: u32 = 0
+  for i in 0..<len(vertex_attribute_bindings) {
+    for j in 0..<len(vertex_attribute_bindings[i]) {
+      attribute_count += 1
+    }
+  }
+
+  vertex_binding_descriptions := vector.new(vk.VertexInputBindingDescription, u32(len(vertex_attribute_bindings)), ctx.tmp_allocator) or_return
+  vertex_attribute_descriptions := vector.new(vk.VertexInputAttributeDescription, attribute_count, ctx.tmp_allocator) or_return
 
   for i in 0..<len(vertex_attribute_bindings) {
     offset: u32 = 0
+
     for j in 0..<len(vertex_attribute_bindings[i]) {
       format, size := get_attribute_format(vertex_attribute_bindings[i][j]) or_return
-      description := collection.vec_one(&vertex_attribute_descriptions) or_return
+
+      description := vector.one(&vertex_attribute_descriptions) or_return
       description.binding = u32(i)
       description.location = u32(j)
       description.offset = offset
       description.format = format
+
       offset += size
     }
 
-    binding := collection.vec_one(&vertex_binding_descriptions) or_return
+    binding := vector.one(&vertex_binding_descriptions) or_return
     binding.binding = u32(i)
     binding.stride = offset
     binding.inputRate = .VERTEX
@@ -228,18 +242,20 @@ pipeline_create :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout:
     layout        = pipeline.layout.handle,
   }
 
-  if vk.CreateGraphicsPipelines(ctx.device.handle, 0, 1, &info, nil, &pipeline.handle) != .SUCCESS do return pipeline, .CreatePipelineFailed
+  if vk.CreateGraphicsPipelines(ctx.device.handle, 0, 1, &info, nil, &pipeline.handle) != .SUCCESS {
+    return .CreatePipelineFailed
+  }
 
-  return pipeline, nil
+  return nil
 }
 
 @private
 layout_create :: proc(ctx: ^Vulkan_Context, set_layouts: []^Descriptor_Set_Layout) -> (layout: Pipeline_Layout, err: error.Error) {
   layouts := make([]vk.DescriptorSetLayout, len(set_layouts), ctx.tmp_allocator)
-  layout.sets = collection.new_vec(^Descriptor_Set_Layout, u32(len(set_layouts)), ctx.allocator) or_return
+  layout.sets = vector.new(^Descriptor_Set_Layout, u32(len(set_layouts)), ctx.allocator) or_return
 
   for i in 0..<len(set_layouts) {
-    collection.vec_append(&layout.sets, set_layouts[i]) or_return
+    vector.append(&layout.sets, set_layouts[i]) or_return
     layouts[i] = set_layouts[i].handle
   }
 
@@ -262,15 +278,26 @@ shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.
   file: os.Handle
   size: i64
 
-  if file, er = os.open(path); er != nil do return module, .FileNotFound
+  if file, er = os.open(path); er != nil {
+    log.error("File", path, "does not exist")
+    return module, .FileNotFound
+  }
+
   defer os.close(file)
 
-  if size, er = os.file_size(file); er != nil do return module, .FileNotFound
+  if size, er = os.file_size(file); er != nil {
+    log.error("Failed to tell file", path, "size")
+    return module, .FileNotFound
+  }
 
   buf := make([]u8, u32(size), ctx.tmp_allocator)
 
   l: int
-  if l, er = os.read(file, buf); er != nil do return module, .ReadFileFailed
+  if l, er = os.read(file, buf); er != nil {
+    log.error("Failed to read file", path)
+    return module, .ReadFileFailed
+  }
+
   if int(size) != l do return module, .SizeNotMatch
 
   info := vk.ShaderModuleCreateInfo {
@@ -280,7 +307,10 @@ shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.
   }
 
   frag_module: vk.ShaderModule
-  if vk.CreateShaderModule(ctx.device.handle, &info, nil, &module) != .SUCCESS do return module, .CreateShaderModuleFailed
+  if vk.CreateShaderModule(ctx.device.handle, &info, nil, &module) != .SUCCESS {
+    log.error("Failed to create shader", path, "module")
+    return module, .CreateShaderModuleFailed
+  }
 
   return module, nil
 }

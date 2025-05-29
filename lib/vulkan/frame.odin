@@ -4,7 +4,7 @@ import "core:fmt"
 import "core:sys/posix"
 import vk "vendor:vulkan"
 
-import "./../error"
+import "lib:error"
 
 Frame :: struct {
   fd:     i32,

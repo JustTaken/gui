@@ -1,7 +1,7 @@
 package vulk
 
 import vk "vendor:vulkan"
-import "./../error"
+import "lib:error"
 
 @private
 fence_create :: proc(ctx: ^Vulkan_Context) -> (vk.Fence, error.Error) {

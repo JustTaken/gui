@@ -7,17 +7,17 @@ import "core:math/linalg"
 import "core:log"
 import "core:time"
 
-import "collection"
-import "collection/gltf"
-import vk "vulkan"
-import wl "wayland"
-import "error"
+import "lib:collection/vector"
+import "lib:collection/gltf"
+import "lib:vulkan"
+import "lib:wayland"
+import "lib:error"
 
 Context :: struct {
   bytes: []u8,
 
-  wl: wl.Wayland_Context,
-  vk: vk.Vulkan_Context,
+  wl: wayland.Wayland_Context,
+  vk: vulkan.Vulkan_Context,
   view: matrix[4, 4]f32,
   rotate_up: matrix[4, 4]f32,
   rotate_down: matrix[4, 4]f32,
@@ -29,7 +29,7 @@ Context :: struct {
   translate_up: matrix[4, 4]f32,
   translate_back: matrix[4, 4]f32,
   translate_for: matrix[4, 4]f32,
-  scenes: collection.Vector(Scene),
+  scenes: vector.Vector(Scene),
 
 
   view_update: bool,
@@ -55,7 +55,7 @@ main :: proc() {
   context.logger.procedure = log_proc
 
   if err := run(1920, 1080, 2); err != nil {
-    log.error("Failed to run appliation", err)
+    log.error("Failed to run application", err)
   }
 }
 
@@ -64,7 +64,18 @@ run :: proc(width: u32, height: u32, frames: u32) -> error.Error {
 
   init_memory(&ctx, 1024 * 1024 * 2, 2) or_return
   init_scene(&ctx, width, height, frames) or_return
-  loop(&ctx) or_return
+
+  for ctx.wl.running {
+    mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
+    defer mem.end_arena_temp_memory(mark)
+
+    tick_scene_animation(&ctx, &ctx.cube_instance, time.now()._nsec) or_return
+
+    if wayland.render(&ctx.wl) != nil {
+      log.error("Failed to render frame")
+    }
+  }
+
   deinit(&ctx)
 
   return nil
@@ -88,8 +99,8 @@ init_memory :: proc(ctx: ^Context, bytes: u32, divisor: u32) -> error.Error {
 }
 
 init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  error.Error {
-  vk.vulkan_init(&ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
-  wl.wayland_init(&ctx.wl, &ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
+  vulkan.vulkan_init(&ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
+  wayland.wayland_init(&ctx.wl, &ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
 
   angle_velocity: f32 = 3.14 / 64.0
   translation_velocity: f32 = 2.0 / 4.0
@@ -106,21 +117,21 @@ init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  erro
   ctx.translate_for = linalg.matrix4_translate_f32({0, 0, translation_velocity})
 
   ctx.view = linalg.matrix4_translate_f32({0, 0, -10})
-  ctx.scenes = collection.new_vec(Scene, 20, ctx.allocator) or_return
+  ctx.scenes = vector.new(Scene, 20, ctx.allocator) or_return
 
   ctx.cube = load_gltf_scene(ctx, "assets/rotation.gltf", 1) or_return
   ctx.cube_instance = scene_instance_create(ctx, ctx.cube, linalg.MATRIX4F32_IDENTITY) or_return
 
-  wl.add_listener(&ctx.wl, ctx, frame) or_return
-  vk.update_view(&ctx.vk, ctx.view) or_return
-  vk.update_light(&ctx.vk, {0, 0, 0}) or_return
+  wayland.add_listener(&ctx.wl, ctx, frame) or_return
+  vulkan.update_view(&ctx.vk, ctx.view) or_return
+  vulkan.update_light(&ctx.vk, {0, 0, 0}) or_return
 
   return nil
 }
 
 deinit :: proc(ctx: ^Context) {
-  wl.wayland_deinit(&ctx.wl)
-  vk.vulkan_deinit(&ctx.vk)
+  wayland.wayland_deinit(&ctx.wl)
+  vulkan.vulkan_deinit(&ctx.vk)
 
   log.info("TMP", ctx.tmp_arena.offset, ctx.tmp_arena.peak_used)
   log.info("MAIN", ctx.arena.offset - len(ctx.tmp_arena.data), ctx.arena.peak_used - len(ctx.tmp_arena.data))
@@ -128,46 +139,31 @@ deinit :: proc(ctx: ^Context) {
   delete(ctx.bytes)
 }
 
-loop :: proc(ctx: ^Context) -> error.Error {
-  for ctx.wl.running {
-    mark := mem.begin_arena_temp_memory(&ctx.tmp_arena)
-    defer mem.end_arena_temp_memory(mark)
-
-    tick_scene_animation(ctx, &ctx.cube_instance, time.now()._nsec)
-
-    if wl.render(&ctx.wl) != nil {
-      log.error("Failed to render frame")
-    }
-  }
-
-  return nil
-}
-
 new_view :: proc(ctx: ^Context, view: matrix[4, 4]f32) {
   ctx.view = view
   ctx.view_update = true
 }
 
-frame :: proc(ptr: rawptr, keymap: ^wl.Keymap_Context, time: i64) -> error.Error {
+frame :: proc(ptr: rawptr, keymap: ^wayland.Keymap_Context, time: i64) -> error.Error {
   ctx := cast(^Context)(ptr)
   ctx.view_update = false
 
-  if wl.is_key_pressed(keymap, .d) do new_view(ctx, ctx.translate_left * ctx.view)
-  if wl.is_key_pressed(keymap, .a) do new_view(ctx, ctx.translate_right * ctx.view)
-  if wl.is_key_pressed(keymap, .s) do new_view(ctx, ctx.translate_back * ctx.view)
-  if wl.is_key_pressed(keymap, .w) do new_view(ctx, ctx.translate_for * ctx.view)
-  if wl.is_key_pressed(keymap, .k) do new_view(ctx, ctx.translate_up * ctx.view)
-  if wl.is_key_pressed(keymap, .j) do new_view(ctx, ctx.translate_down * ctx.view)
-  if wl.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.rotate_up * ctx.view)
-  if wl.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
-  if wl.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
-  if wl.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
+  if wayland.is_key_pressed(keymap, .d) do new_view(ctx, ctx.translate_left * ctx.view)
+  if wayland.is_key_pressed(keymap, .a) do new_view(ctx, ctx.translate_right * ctx.view)
+  if wayland.is_key_pressed(keymap, .s) do new_view(ctx, ctx.translate_back * ctx.view)
+  if wayland.is_key_pressed(keymap, .w) do new_view(ctx, ctx.translate_for * ctx.view)
+  if wayland.is_key_pressed(keymap, .k) do new_view(ctx, ctx.translate_up * ctx.view)
+  if wayland.is_key_pressed(keymap, .j) do new_view(ctx, ctx.translate_down * ctx.view)
+  if wayland.is_key_pressed(keymap, .ArrowUp) do new_view(ctx, ctx.rotate_up * ctx.view)
+  if wayland.is_key_pressed(keymap, .ArrowDown) do new_view(ctx, ctx.rotate_down * ctx.view)
+  if wayland.is_key_pressed(keymap, .ArrowLeft) do new_view(ctx, ctx.rotate_left * ctx.view)
+  if wayland.is_key_pressed(keymap, .ArrowRight) do new_view(ctx, ctx.rotate_right * ctx.view)
 
-  if wl.is_key_pressed(keymap, .Space) {
+  if wayland.is_key_pressed(keymap, .Space) {
     play_scene_animation(&ctx.cube_instance, "FAnime", time) or_return
   }
 
-  if ctx.view_update do vk.update_view(ctx.wl.vk, ctx.view) or_return
+  if ctx.view_update do vulkan.update_view(ctx.wl.vk, ctx.view) or_return
 
   return nil
 }

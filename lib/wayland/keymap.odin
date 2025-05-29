@@ -7,7 +7,7 @@ import "core:reflect"
 import "core:testing"
 import "core:unicode"
 
-import "./../error"
+import "lib:error"
 
 @(private = "file")
 Identifier :: distinct []u8

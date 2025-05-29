@@ -1,7 +1,7 @@
 package wayland
 
-import vk "./../vulkan"
-import "./../error"
+import vk "lib:vulkan"
+import "lib:error"
 
 Buffer :: struct {
   data:     []u8,
@@ -33,12 +33,7 @@ buffer_write_swap :: proc(ctx: ^Wayland_Context, buffer: ^Buffer, width: u32, he
   vk.frame_draw(ctx.vk, buffer.frame, width, height) or_return
 
   write(ctx, {Object(buffer.id), Int(0), Int(0)}, ctx.surface_id, ctx.surface_attach_opcode)
-  write(
-    ctx,
-    {Int(0), Int(0), Int(width), Int(height)},
-    ctx.surface_id,
-    ctx.surface_damage_opcode,
-  )
+  write(ctx, {Int(0), Int(0), Int(width), Int(height)}, ctx.surface_id, ctx.surface_damage_opcode)
   write(ctx, {}, ctx.surface_id, ctx.surface_commit_opcode)
 
   ctx.buffer = buffer.next

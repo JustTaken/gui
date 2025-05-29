@@ -6,21 +6,21 @@
 
 ## Generate wayland interfaces
 ```bash
-odin run scan -- "<types-output-path.odin>" "<odin-output-package-name>"
-odin run scan -- "<path-to-wayland.xml>" "<wayland-interfaces-output-path.odin>" "<wayland-interface-array-name>" "<odin-output-package-name>"
-odin run scan -- "<path-to-xdg-shell.xml>" "<xdg-interfaces-output-path.odin>" "<xdg-interface-array-name>" "<odin-output-package-name>"
-odin run scan -- "<path-to-dma-buf.xml>" "<dma-interfaces-output-path.odin>" "<dma-interface-array-name>" "<odin-output-package-name>"
+odin run lib/scan -- "<types-output-path.odin>" "<odin-output-package-name>"
+odin run lib/scan -- "<path-to-wayland.xml>" "<wayland-interfaces-output-path.odin>" "<wayland-interface-array-name>" "<odin-output-package-name>"
+odin run lib/scan -- "<path-to-xdg-shell.xml>" "<xdg-interfaces-output-path.odin>" "<xdg-interface-array-name>" "<odin-output-package-name>"
+odin run lib/scan -- "<path-to-dma-buf.xml>" "<dma-interfaces-output-path.odin>" "<dma-interface-array-name>" "<odin-output-package-name>"
 ```
 
 ### Examples
 This is the command used to generate `window/wayland/interface_wayland.odin`
 ```bash
-odin run scan -- assets/xml/wayland.xml gui/wayland/interface_wayland.odin WAYLAND_INTERFACES protocol
+odin run lib/scan -- assets/xml/wayland.xml gui/wayland/interface_wayland.odin WAYLAND_INTERFACES protocol
 ```
 
 This is the command used to generate `gui/wayland/interface.odin`
 ```bash
-odin run scan -- gui/wayland/interface.odin protocol
+odin run lib/scan -- gui/wayland/interface.odin protocol
 ```
 
 ## Compile Shaders
@@ -35,5 +35,5 @@ glslc assets/shader/shader.frag -o assets/output/frag.spv
 First compile the [shaders](#compile-shaders) then:
 
 ```bash
-odin run gui
+odin run gui -collection:lib=lib
 ```

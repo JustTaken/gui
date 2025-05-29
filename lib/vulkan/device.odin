@@ -1,7 +1,7 @@
 package vulk
 
 import vk "vendor:vulkan"
-import "./../error"
+import "lib:error"
 
 Queue :: struct {
   handle: vk.Queue,

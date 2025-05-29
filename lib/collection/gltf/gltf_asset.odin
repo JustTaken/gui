@@ -2,7 +2,9 @@ package gltf
 
 import "core:encoding/json"
 import "core:math/linalg"
-import "./../../error"
+
+import "lib:error"
+import "lib:collection/vector"
 
 Asset :: struct {
   generator: string,
@@ -17,37 +19,37 @@ parse_asset :: proc(ctx: ^Context) -> error.Error {
   ctx.asset.version = raw["version"].(string)
 
   ctx.raw_meshes = ctx.obj["meshes"].(json.Array)
-  ctx.meshes = make([]Mesh, len(ctx.raw_meshes), ctx.allocator)
+  ctx.meshes = vector.new(Mesh, u32(len(ctx.raw_meshes)), ctx.allocator) or_return
 
   ctx.raw_accessors = ctx.obj["accessors"].(json.Array)
-  ctx.accessors = make([]Accessor, len(ctx.raw_accessors), ctx.allocator)
+  ctx.accessors = vector.new(Accessor, u32(len(ctx.raw_accessors)), ctx.allocator) or_return
 
   ctx.raw_nodes = ctx.obj["nodes"].(json.Array)
-  ctx.nodes = make([]Node, len(ctx.raw_nodes), ctx.allocator)
-  // ctx.bind_pose= make([]Matrix, len(ctx.raw_nodes), ctx.allocator)
+  ctx.nodes = vector.new(Node, u32(len(ctx.raw_nodes)), ctx.allocator) or_return
+  vector.reserve_n(&ctx.nodes, u32(len(ctx.raw_nodes))) or_return
 
   ctx.raw_buffer_views = ctx.obj["bufferViews"].(json.Array)
-  ctx.buffer_views = make([]Buffer_View, len(ctx.raw_buffer_views), ctx.allocator)
+  ctx.buffer_views = vector.new(Buffer_View, u32(len(ctx.raw_buffer_views)), ctx.allocator) or_return
 
   ctx.raw_buffers = ctx.obj["buffers"].(json.Array)
-  ctx.buffers = make([]Buffer, len(ctx.raw_buffers), ctx.allocator)
+  ctx.buffers = vector.new(Buffer, u32(len(ctx.raw_buffers)), ctx.allocator) or_return
 
   ctx.raw_scenes = ctx.obj["scenes"].(json.Array)
   ctx.scenes = make(map[string]Scene, len(raw) * 2, ctx.allocator)
 
   if raw_animations, ok := ctx.obj["animations"]; ok {
     ctx.raw_animations = raw_animations.(json.Array)
-    ctx.animations = make([]Animation, len(ctx.raw_animations), ctx.allocator)
+    ctx.animations = vector.new(Animation, u32(len(ctx.raw_animations)), ctx.allocator) or_return
   }
 
   if raw_skins, ok := ctx.obj["skins"]; ok {
     ctx.raw_skins = raw_skins.(json.Array)
-    ctx.skins = make([]Skin, len(ctx.raw_skins), ctx.allocator)
+    ctx.skins = vector.new(Skin, u32(len(ctx.raw_skins)), ctx.allocator) or_return
   }
 
   if materials, ok := ctx.obj["materials"]; ok {
     ctx.raw_materials = materials.(json.Array)
-    ctx.materials = make([]Material, len(ctx.raw_materials), ctx.allocator)
+    ctx.materials = vector.new(Material, u32(len(ctx.raw_materials)), ctx.allocator) or_return
   }
 
   return nil

@@ -6,7 +6,8 @@ import "core:fmt"
 
 import "core:log"
 
-import "./../../error"
+import "lib:error"
+import "lib:collection/vector"
 
 Accessor_Kind :: enum {
   Position,
@@ -34,7 +35,7 @@ Accessor :: struct {
 
 @private
 parse_accessor :: proc(ctx: ^Context, raw: json.Object) -> (accessor: Accessor, err: error.Error) {
-  view  := &ctx.buffer_views[u32(raw["bufferView"].(f64))]
+  view  := &ctx.buffer_views.data[u32(raw["bufferView"].(f64))]
 
   accessor.bytes = view.buffer.bytes[view.offset:view.offset + view.length]
   accessor.count = u32(raw["count"].(f64))
@@ -69,8 +70,7 @@ parse_accessor :: proc(ctx: ^Context, raw: json.Object) -> (accessor: Accessor, 
 @private
 parse_accessors :: proc(ctx: ^Context) -> error.Error {
   for i in 0..<len(ctx.raw_accessors) {
-    ctx.accessors[i] = parse_accessor(ctx, ctx.raw_accessors[i].(json.Object)) or_return
-    // log.info("ACCESSOR:", i, ctx.accessors[i].count)
+    vector.append(&ctx.accessors, parse_accessor(ctx, ctx.raw_accessors[i].(json.Object)) or_return) or_return
   }
 
   return nil

@@ -1,7 +1,7 @@
 package vulk
 
 import vk "vendor:vulkan"
-import "./../error"
+import "lib:error"
 
 @private
 command_pool_create :: proc(ctx: ^Vulkan_Context, queue: Queue) -> (vk.CommandPool, error.Error) {

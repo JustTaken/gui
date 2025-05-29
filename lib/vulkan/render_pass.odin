@@ -1,14 +1,14 @@
 package vulk
 
 import vk "vendor:vulkan"
-import "./../collection"
 
-import "./../error"
+import "lib:collection/vector"
+import "lib:error"
 
 Render_Pass :: struct {
 	handle: vk.RenderPass,
-	pipelines: collection.Vector(Pipeline),
-	layouts: collection.Vector(Pipeline_Layout),
+	pipelines: vector.Vector(Pipeline),
+	layouts: vector.Vector(Pipeline_Layout),
 }
 
 @private
@@ -77,15 +77,15 @@ render_pass_create :: proc(ctx: ^Vulkan_Context) -> (render_pass: Render_Pass, e
 
   if vk.CreateRenderPass(ctx.device.handle, &render_pass_info, nil, &render_pass.handle) != .SUCCESS do return render_pass, .CreateRenderPassFailed
 
-  render_pass.layouts = collection.new_vec(Pipeline_Layout, 10, ctx.allocator) or_return
-  render_pass.pipelines = collection.new_vec(Pipeline, 10, ctx.allocator) or_return
+  render_pass.layouts = vector.new(Pipeline_Layout, 10, ctx.allocator) or_return
+  render_pass.pipelines = vector.new(Pipeline, 10, ctx.allocator) or_return
 
   return render_pass, nil
 }
 
 @private
 render_pass_append_layout :: proc(render_pass: ^Render_Pass, p_layout: Pipeline_Layout) -> (layout: ^Pipeline_Layout, err: error.Error) {
-	layout = collection.vec_one(&render_pass.layouts) or_return
+	layout = vector.one(&render_pass.layouts) or_return
 	layout^ = p_layout
 
 	return layout, nil
@@ -93,8 +93,8 @@ render_pass_append_layout :: proc(render_pass: ^Render_Pass, p_layout: Pipeline_
 
 @private
 render_pass_append_pipeline :: proc(ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, geometries: ^Geometry_Group, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> (pipeline: ^Pipeline, err: error.Error) {
-	pipeline = collection.vec_one(&render_pass.pipelines) or_return
-	pipeline^ = pipeline_create(ctx, render_pass, layout, geometries, vert, frag, vertex_attribute_bindings) or_return
+	pipeline = vector.one(&render_pass.pipelines) or_return
+	pipeline_create(pipeline, ctx, render_pass, layout, geometries, vert, frag, vertex_attribute_bindings) or_return
 
 	return pipeline, nil
 }

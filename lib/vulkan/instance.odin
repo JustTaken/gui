@@ -1,7 +1,7 @@
 package vulk
 
 import vk "vendor:vulkan"
-import "./../error"
+import "lib:error"
 
 @private
 create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: error.Error) {

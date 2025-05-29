@@ -5,8 +5,8 @@ import "core:fmt"
 import "core:math/linalg"
 import "core:log"
 
-import "./../collection"
-import "./../error"
+import "lib:collection/vector"
+import "lib:error"
 
 Instance_Model :: matrix[4, 4]f32
 Light :: [3]f32
@@ -23,27 +23,27 @@ Geometry :: struct {
   indice:    Buffer,
   count: u32,
   instance_offset: u32,
-  instances: collection.Vector(Instance),
+  instances: vector.Vector(Instance),
   transform: Matrix,
 }
 
 @private
 Geometry_Group :: struct {
-  childs: collection.Vector(Geometry),
+  childs: vector.Vector(Geometry),
 }
 
 @private
 geometry_group_create :: proc(ctx: ^Vulkan_Context, set: ^Descriptor_Set, count: u32) -> (group: ^Geometry_Group, err: error.Error) {
-  group = collection.vec_one(&ctx.geometry_groups) or_return
+  group = vector.one(&ctx.geometry_groups) or_return
 
-  group.childs = collection.new_vec(Geometry, count, ctx.allocator) or_return
+  group.childs = vector.new(Geometry, count, ctx.allocator) or_return
 
   return group, nil
 }
 
 @private
 geometry_group_append :: proc(group: ^Geometry_Group) -> (geometry: ^Geometry, err: error.Error) {
-  geometry = collection.vec_one(&group.childs) or_return
+  geometry = vector.one(&group.childs) or_return
   geometry.parent = group
 
   return geometry, nil
@@ -61,7 +61,7 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
   geometry.count = index_count
   ctx.instances += max_instances
 
-  geometry.instances = collection.new_vec(Instance, max_instances, ctx.allocator) or_return
+  geometry.instances = vector.new(Instance, max_instances, ctx.allocator) or_return
 
   geometry.vertex = buffer_create(ctx, vertex_size * vertex_count, {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
   copy_data(u8, ctx, vertices, geometry.vertex.handle, 0) or_return
@@ -75,7 +75,7 @@ geometry_create :: proc(ctx: ^Vulkan_Context, vertices: []u8, vertex_size: u32, 
 geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry: ^Geometry, model: Maybe(Instance_Model)) -> (instance: ^Instance, ok: error.Error) {
   offset := geometry.instance_offset + geometry.instances.len
 
-  instance = collection.vec_one(&geometry.instances) or_return
+  instance = vector.one(&geometry.instances) or_return
   instance.geometry = geometry
   instance.offset = offset
 

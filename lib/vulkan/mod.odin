@@ -8,8 +8,8 @@ import "core:sys/posix"
 import "core:log"
 import vk "vendor:vulkan"
 
-import "./../collection"
-import "./../error"
+import "lib:collection/vector"
+import "lib:error"
 
 library: dynlib.Library
 
@@ -28,8 +28,8 @@ Vulkan_Context :: struct {
   device:    Device,
   physical_device: vk.PhysicalDevice,
 
-  set_layouts: collection.Vector(Descriptor_Set_Layout),
-  geometry_groups: collection.Vector(Geometry_Group),
+  set_layouts: vector.Vector(Descriptor_Set_Layout),
+  geometry_groups: vector.Vector(Geometry_Group),
 
   default_group: ^Geometry_Group,
   boned_group: ^Geometry_Group,
@@ -96,8 +96,8 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 
   ctx.staging.buffer = buffer_create(ctx, size_of(Matrix) * 256 * 1000, {.TRANSFER_SRC}, {.HOST_COHERENT, .HOST_VISIBLE}) or_return
 
-  ctx.set_layouts = collection.new_vec(Descriptor_Set_Layout, 20, ctx.allocator) or_return
-  ctx.geometry_groups = collection.new_vec(Geometry_Group, 20, ctx.allocator) or_return
+  ctx.set_layouts = vector.new(Descriptor_Set_Layout, 20, ctx.allocator) or_return
+  ctx.geometry_groups = vector.new(Geometry_Group, 20, ctx.allocator) or_return
   ctx.descriptor_pool = descriptor_pool_create(ctx, {{type = .UNIFORM_BUFFER, descriptorCount = 10}, {type = .STORAGE_BUFFER, descriptorCount = 10}}, 20) or_return
 
   ctx.render_pass = render_pass_create(ctx) or_return
@@ -111,10 +111,10 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
   layout := render_pass_append_layout(&ctx.render_pass, layout_create(ctx, {fixed_set_layout, dynamic_set_layout}) or_return) or_return
 
   ctx.default_group = geometry_group_create(ctx, ctx.dynamic_set, 10) or_return
-  ctx.default_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.default_group, "assets/output/vert.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
+  ctx.default_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.default_group, "assets/output/unboned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
 
   ctx.boned_group = geometry_group_create(ctx, ctx.dynamic_set, 10) or_return
-  ctx.boned_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.boned_group, "assets/output/animated.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}, {.Sfloat, 4}, {.Uint, 4}}}) or_return
+  ctx.boned_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, ctx.boned_group, "assets/output/boned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}, {.Sfloat, 4}, {.Uint, 4}}}) or_return
 
   ctx.frames = frames_create(ctx, &ctx.render_pass, frame_count, width, height) or_return
 

@@ -2,26 +2,28 @@ package gltf
 
 import "core:encoding/json"
 import "core:log"
-import "./../../error"
+
+import "lib:error"
+import "lib:collection/vector"
 
 Skin :: struct {
-  joints: []u32,
+  joints: vector.Vector(u32),
   skeleton: Maybe(u32),
 }
 
 @private
 parse_skin :: proc(ctx: ^Context, raw: json.Object) -> (skin: Skin, err: error.Error) {
   raw_joints := raw["joints"].(json.Array)
-  raw_matrices := &ctx.accessors[u32(raw["inverseBindMatrices"].(f64))]
+  raw_matrices := &ctx.accessors.data[u32(raw["inverseBindMatrices"].(f64))]
   assert(raw_matrices.count == u32(len(raw_joints)))
 
-  skin.joints = make([]u32, len(raw_joints), ctx.allocator)
+  skin.joints = vector.new(u32, u32(len(raw_joints)), ctx.allocator) or_return
 
   ptr := (cast([^]f32)&raw_matrices.bytes[0])[0:raw_matrices.count * raw_matrices.component_count]
 
   for i in 0..<len(raw_joints) {
     joint := u32(raw_joints[i].(f64))
-    skin.joints[i] = joint
+    vector.append(&skin.joints, joint) or_return
 
     m := ptr[i * 16:]
 
@@ -52,7 +54,7 @@ parse_skin :: proc(ctx: ^Context, raw: json.Object) -> (skin: Skin, err: error.E
 @private
 parse_skins :: proc(ctx: ^Context) -> error.Error {
   for i in 0..<len(ctx.raw_skins) {
-    ctx.skins[i] = parse_skin(ctx, ctx.raw_skins[i].(json.Object)) or_return
+    vector.append(&ctx.skins, parse_skin(ctx, ctx.raw_skins[i].(json.Object)) or_return) or_return
   }
 
   return nil

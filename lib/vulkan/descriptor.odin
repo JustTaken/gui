@@ -2,8 +2,8 @@ package vulk
 
 import vk "vendor:vulkan"
 import "core:log"
-import "./../error"
-import "./../collection"
+import "lib:error"
+import "lib:collection/vector"
 
 TRANSFORMS :: 0
 LIGHTS :: 1
@@ -49,12 +49,12 @@ Descriptor_Set :: struct {
 @private
 Descriptor_Pool :: struct {
   handle: vk.DescriptorPool,
-  sets: collection.Vector(Descriptor_Set),
+  sets: vector.Vector(Descriptor_Set),
 }
 
 @private
 descriptor_set_allocate :: proc(ctx: ^Vulkan_Context, pool: ^Descriptor_Pool, layout: ^Descriptor_Set_Layout, counts: []u32) -> (set: ^Descriptor_Set, err: error.Error) {
-  set = collection.vec_one(&pool.sets) or_return
+  set = vector.one(&pool.sets) or_return
 
   binding_count := len(layout.bindings)
 
@@ -100,7 +100,7 @@ binding_create :: proc(typ: vk.DescriptorType, count: u32, flags: vk.ShaderStage
 
 @private
 set_layout_create :: proc(ctx: ^Vulkan_Context, bindings: []Descriptor_Set_Layout_Binding) -> (set_layout: ^Descriptor_Set_Layout, err: error.Error) {
-  set_layout = collection.vec_one(&ctx.set_layouts) or_return
+  set_layout = vector.one(&ctx.set_layouts) or_return
 
   raw_bindings := make([]vk.DescriptorSetLayoutBinding, len(bindings), ctx.tmp_allocator)
   set_layout.bindings = make([]Descriptor_Set_Layout_Binding, len(bindings), ctx.allocator)
@@ -135,7 +135,7 @@ descriptor_pool_create :: proc(ctx: ^Vulkan_Context, sizes: []vk.DescriptorPoolS
   }
 
   if vk.CreateDescriptorPool(ctx.device.handle, &info, nil, &pool.handle) != nil do return pool, .CreateDescriptorPoolFailed
-  pool.sets = collection.new_vec(Descriptor_Set, max, ctx.allocator) or_return
+  pool.sets = vector.new(Descriptor_Set, max, ctx.allocator) or_return
 
   return pool, nil
 }

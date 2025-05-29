@@ -12,9 +12,9 @@ import "core:log"
 import "core:fmt"
 import "core:time"
 
-import "./../collection"
-import "./../error"
-import vk "./../vulkan"
+import vk "lib:vulkan"
+import "lib:collection/vector"
+import "lib:error"
 
 @private
 Callback :: proc(_: ^Wayland_Context, _: u32, _: []Argument) -> error.Error
@@ -27,7 +27,7 @@ CallbackConfig :: struct {
 @private
 InterfaceObject :: struct {
   interface: ^Interface,
-  callbacks: []Callback,
+  callbacks: vector.Vector(Callback),
 }
 
 @private
@@ -46,66 +46,66 @@ KeyListener :: struct {
 }
 
 Wayland_Context :: struct {
-  socket:       posix.FD,
-  objects:      collection.Vector(InterfaceObject),
-  output_buffer:      collection.Vector(u8),
-  input_buffer:       collection.Vector(u8),
-  values:       collection.Vector(Argument),
-  listeners: collection.Vector(KeyListener),
-  bytes:        []u8,
-  in_fds:       []Fd,
-  in_fds_len:         u32,
-  in_fd_index:        u32,
-  out_fds:      [^]Fd,
-  out_fds_len:        u32,
-  header:       []u8,
-  modifiers:          collection.Vector(Modifier),
-  display_id:         u32,
-  registry_id:        u32,
-  compositor_id:      u32,
-  surface_id:         u32,
-  seat_id:      u32,
-  keyboard_id:        u32,
-  pointer_id:         u32,
-  xdg_wm_base_id:     u32,
-  xdg_surface_id:     u32,
-  xdg_toplevel_id:    u32,
-  dma_id:       u32,
-  dma_feedback_id:    u32,
-  dma_params_id:      u32,
-  buffer_base_id:     u32,
-  get_registry_opcode:      u32,
-  registry_bind_opcode:     u32,
-  create_surface_opcode:    u32,
-  surface_attach_opcode:    u32,
-  surface_commit_opcode:    u32,
-  surface_damage_opcode:    u32,
-  ack_configure_opcode:     u32,
-  get_pointer_opcode:       u32,
-  get_keyboard_opcode:      u32,
-  get_xdg_surface_opcode:   u32,
-  get_toplevel_opcode:      u32,
-  pong_opcode:        u32,
-  destroy_buffer_opcode:    u32,
-  dma_destroy_opcode:       u32,
-  dma_create_param_opcode:  u32,
-  dma_surface_feedback_opcode:    u32,
-  dma_feedback_destroy_opcode:    u32,
+  socket: posix.FD,
+  objects: vector.Vector(InterfaceObject),
+  output: vector.Buffer,
+  input: vector.Buffer,
+  values: vector.Vector(Argument),
+  listeners: vector.Vector(KeyListener),
+  bytes: []u8,
+  in_fds: []Fd,
+  in_fds_len: u32,
+  in_fd_index: u32,
+  out_fds: [^]Fd,
+  out_fds_len: u32,
+  header: []u8,
+  modifiers: vector.Vector(Modifier),
+  display_id: u32,
+  registry_id: u32,
+  compositor_id: u32,
+  surface_id: u32,
+  seat_id: u32,
+  keyboard_id: u32,
+  pointer_id: u32,
+  xdg_wm_base_id: u32,
+  xdg_surface_id: u32,
+  xdg_toplevel_id: u32,
+  dma_id: u32,
+  dma_feedback_id: u32,
+  dma_params_id: u32,
+  buffer_base_id: u32,
+  get_registry_opcode: u32,
+  registry_bind_opcode: u32,
+  create_surface_opcode: u32,
+  surface_attach_opcode: u32,
+  surface_commit_opcode: u32,
+  surface_damage_opcode: u32,
+  ack_configure_opcode:  u32,
+  get_pointer_opcode: u32,
+  get_keyboard_opcode: u32,
+  get_xdg_surface_opcode: u32,
+  get_toplevel_opcode: u32,
+  pong_opcode: u32,
+  destroy_buffer_opcode: u32,
+  dma_destroy_opcode: u32,
+  dma_create_param_opcode: u32,
+  dma_surface_feedback_opcode: u32,
+  dma_feedback_destroy_opcode: u32,
   dma_params_create_immed_opcode: u32,
-  dma_params_add_opcode:    u32,
-  dma_params_destroy_opcode:      u32,
-  dma_main_device:    u64,
-  buffers:      []Buffer,
-  buffer:       ^Buffer,
-  width:        u32,
-  height:       u32,
-  running:      bool,
-  keymap:       Keymap_Context,
-  vk:           ^vk.Vulkan_Context,
-  arena:        ^mem.Arena,
-  allocator:          runtime.Allocator,
-  tmp_arena:          ^mem.Arena,
-  tmp_allocator:      runtime.Allocator,
+  dma_params_add_opcode: u32,
+  dma_params_destroy_opcode: u32,
+  dma_main_device: u64,
+  buffers: []Buffer,
+  buffer: ^Buffer,
+  width: u32,
+  height: u32,
+  running: bool,
+  keymap: Keymap_Context,
+  vk: ^vk.Vulkan_Context,
+  arena: ^mem.Arena,
+  allocator: runtime.Allocator,
+  tmp_arena: ^mem.Arena,
+  tmp_allocator: runtime.Allocator,
 }
 
 wayland_init :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
@@ -149,12 +149,12 @@ wayland_init :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, h
 
   resize(ctx, width, height) or_return
 
-  ctx.values = collection.new_vec(Argument, 40, ctx.allocator) or_return
-  ctx.objects = collection.new_vec(InterfaceObject, 40, ctx.allocator) or_return
-  ctx.output_buffer = collection.new_vec(u8, 4096, ctx.allocator) or_return
-  ctx.input_buffer = collection.new_vec(u8, 4096, ctx.allocator) or_return
-  ctx.modifiers = collection.new_vec(Modifier, 512, ctx.allocator) or_return
-  ctx.listeners = collection.new_vec(KeyListener, 10, ctx.allocator) or_return
+  ctx.values = vector.new(Argument, 40, ctx.allocator) or_return
+  ctx.objects = vector.new(InterfaceObject, 40, ctx.allocator) or_return
+  ctx.output = vector.buffer_new(4096, ctx.allocator) or_return
+  ctx.input = vector.buffer_new(4096, ctx.allocator) or_return
+  ctx.modifiers = vector.new(Modifier, 512, ctx.allocator) or_return
+  ctx.listeners = vector.new(KeyListener, 10, ctx.allocator) or_return
   ctx.bytes = make([]u8, 1024, ctx.allocator)
   ctx.header = make([]u8, 512, ctx.allocator)
   ctx.out_fds = ([^]Fd)(raw_data(ctx.header[mem.align_formula(size_of(posix.cmsghdr), size_of(uint)):]))
@@ -163,7 +163,7 @@ wayland_init :: proc(ctx: ^Wayland_Context, v: ^vk.Vulkan_Context, width: u32, h
   ctx.in_fds_len = 0
   ctx.in_fd_index = 0
 
-  ctx.input_buffer.cap = 0
+  // ctx.input_buffer.cap = 0
   ctx.running = true
   ctx.buffers = make([]Buffer, frame_count, ctx.allocator)
   ctx.buffer = &ctx.buffers[0]
@@ -225,7 +225,7 @@ handle_input :: proc(ctx: ^Wayland_Context) -> error.Error {
 }
 
 add_listener :: proc(ctx: ^Wayland_Context, ptr: rawptr, f: Listen) -> error.Error {
-  collection.vec_append(&ctx.listeners, KeyListener { ptr = ptr, f = f}) or_return
+  vector.append(&ctx.listeners, KeyListener { ptr = ptr, f = f}) or_return
 
   return nil
 }
@@ -325,41 +325,41 @@ dma_params_init :: proc(ctx: ^Wayland_Context) -> error.Error {
 }
 
 @private
-write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opcode: u32) -> error.Error {
+write :: proc(ctx: ^Wayland_Context, arguments: []Argument, object_id: u32, opcode: u32, loc := #caller_location) -> error.Error {
   object := get_object(ctx, object_id) or_return
   request := get_request(object, opcode) or_return
 
-  start := ctx.output_buffer.len
+  start := ctx.output.offset
 
-  collection.vec_append_generic(&ctx.output_buffer, u32, object_id) or_return
-  collection.vec_append_generic(&ctx.output_buffer, u16, u16(opcode)) or_return
+  vector.write(u32, &ctx.output, object_id) or_return
+  vector.write(u16, &ctx.output, u16(opcode)) or_return
 
-  total_len := collection.vec_reserve(&ctx.output_buffer, u16) or_return
+  total_len := vector.reserve(u16, &ctx.output) or_return
 
   log.debug("Writing (object, request, values)", object.interface.name, request.name, arguments)
 
   for kind, i in request.arguments {
     #partial switch kind {
-    case .BoundNewId: collection.vec_append_generic(&ctx.output_buffer, BoundNewId, arguments[i].(BoundNewId)) or_return
-    case .Uint: collection.vec_append_generic(&ctx.output_buffer, Uint, arguments[i].(Uint)) or_return
-    case .Int: collection.vec_append_generic(&ctx.output_buffer, Int, arguments[i].(Int)) or_return
-    case .Fixed: collection.vec_append_generic(&ctx.output_buffer, Fixed, arguments[i].(Fixed)) or_return
-    case .Object: collection.vec_append_generic(&ctx.output_buffer, Object, arguments[i].(Object)) or_return
+    case .BoundNewId: vector.write(BoundNewId, &ctx.output, arguments[i].(BoundNewId)) or_return
+    case .Uint: vector.write(Uint, &ctx.output, arguments[i].(Uint)) or_return
+    case .Int: vector.write(Int, &ctx.output, arguments[i].(Int)) or_return
+    case .Fixed: vector.write(Fixed, &ctx.output, arguments[i].(Fixed)) or_return
+    case .Object: vector.write(Object, &ctx.output, arguments[i].(Object)) or_return
     case .UnBoundNewId:
       value := arguments[i].(UnBoundNewId)
       l := len(value.interface)
-      collection.vec_append_generic(&ctx.output_buffer, u32, u32(l)) or_return
-      collection.vec_append_n(&ctx.output_buffer, ([]u8)(value.interface)) or_return
-      collection.vec_add_n(&ctx.output_buffer, u32(mem.align_formula(l, size_of(u32)) - l)) or_return
-      collection.vec_append_generic(&ctx.output_buffer, Uint, value.version) or_return
-      collection.vec_append_generic(&ctx.output_buffer, BoundNewId, value.id) or_return
+      vector.write(u32, &ctx.output, u32(l)) or_return
+      vector.write_n(u8, &ctx.output, ([]u8)(value.interface)) or_return
+      vector.padd_n(&ctx.output, u32(mem.align_formula(l, size_of(u32)) - l)) or_return
+      vector.write(Uint, &ctx.output, value.version) or_return
+      vector.write(BoundNewId, &ctx.output, value.id) or_return
     case .Fd:
       fd_append(ctx, arguments[i].(Fd))
     case:
     }
   }
 
-  intrinsics.unaligned_store(total_len, u16(ctx.output_buffer.len - start))
+  intrinsics.unaligned_store(total_len, u16(ctx.output.offset - start))
 
   return nil
 }
@@ -369,10 +369,10 @@ read :: proc(ctx: ^Wayland_Context) -> error.Error {
   ctx.values.len = 0
   bytes_len: u32 = 0
 
-  start := ctx.input_buffer.len
-  object_id := collection.vec_read(&ctx.input_buffer, u32) or_return
-  opcode := collection.vec_read(&ctx.input_buffer, u16) or_return
-  size := collection.vec_read(&ctx.input_buffer, u16) or_return
+  start := ctx.input.offset
+  object_id := vector.read(u32, &ctx.input) or_return
+  opcode := vector.read(u16, &ctx.input) or_return
+  size := vector.read(u16, &ctx.input) or_return
 
   object := get_object(ctx, object_id) or_return
   event := get_event(object, u32(opcode)) or_return
@@ -391,26 +391,26 @@ read :: proc(ctx: ^Wayland_Context) -> error.Error {
     }
   }
 
-  if ctx.input_buffer.len - start != u32(size) do return .OutOfBounds
+  if ctx.input.offset - start != u32(size) do return .OutOfBounds
 
   values := ctx.values.data[0:ctx.values.len]
   log.debug("Reading (object, event, values)", object.interface.name, event.name, values)
-  object.callbacks[opcode](ctx, object_id, values) or_return
+  object.callbacks.data[opcode](ctx, object_id, values) or_return
 
   return nil
 }
 
 @private
 read_and_write :: proc(ctx: ^Wayland_Context, $T: typeid) -> error.Error {
-  value := collection.vec_read(&ctx.input_buffer, T) or_return
-  collection.vec_append(&ctx.values, value)
+  value := vector.read(T, &ctx.input) or_return
+  vector.append(&ctx.values, value)
 
   return nil
 }
 
 @private
 read_fd_and_write :: proc(ctx: ^Wayland_Context) -> error.Error {
-  collection.vec_append(&ctx.values, ctx.in_fds[ctx.in_fd_index]) or_return
+  vector.append(&ctx.values, ctx.in_fds[ctx.in_fd_index]) or_return
   return nil
 }
 
@@ -418,15 +418,15 @@ read_fd_and_write :: proc(ctx: ^Wayland_Context) -> error.Error {
 read_and_write_collection :: proc(ctx: ^Wayland_Context, $T: typeid, length_ptr: ^u32) -> error.Error {
   start := length_ptr^
 
-  length := collection.vec_read(&ctx.input_buffer, u32) or_return
-  bytes := collection.vec_read_n(&ctx.input_buffer, u32(mem.align_formula(int(length), size_of(u32)))) or_return
+  length := vector.read(u32, &ctx.input) or_return
+  bytes := vector.read_n(&ctx.input, u32(mem.align_formula(int(length), size_of(u32)))) or_return
 
   if bytes == nil {
     return .OutOfBounds
   }
 
   copy(ctx.bytes[start:], bytes)
-  collection.vec_append(&ctx.values, T(ctx.bytes[start:length])) or_return
+  vector.append(&ctx.values, T(ctx.bytes[start:length])) or_return
   length_ptr^ += length
 
   return nil
@@ -435,8 +435,8 @@ read_and_write_collection :: proc(ctx: ^Wayland_Context, $T: typeid, length_ptr:
 @private
 recv :: proc(ctx: ^Wayland_Context) -> error.Error {
   iovec := posix.iovec {
-    iov_base = raw_data(ctx.input_buffer.data),
-    iov_len  = len(ctx.input_buffer.data),
+    iov_base = rawptr(&ctx.input.vec.data[0]),
+    iov_len  = uint(ctx.input.vec.cap),
   }
 
   t_size := size_of(posix.FD)
@@ -459,13 +459,13 @@ recv :: proc(ctx: ^Wayland_Context) -> error.Error {
 
   if cmsg.cmsg_len > 0 {
     ctx.in_fds_len = (u32(cmsg.cmsg_len) - alig) / size_of(Fd)
+
     for i in 0 ..< ctx.in_fds_len {
       ctx.in_fds[i] = intrinsics.unaligned_load((^Fd)(raw_data(buf[alig + size_of(Fd) * i:])) )
     }
   }
 
-  ctx.input_buffer.cap = u32(count)
-  ctx.input_buffer.len = 0
+  vector.reader_reset(&ctx.input, u32(count))
 
   return nil
 }
@@ -478,13 +478,13 @@ fd_append :: proc(ctx: ^Wayland_Context, fd: Fd) {
 
 @private
 send :: proc(ctx: ^Wayland_Context) -> error.Error {
-  if ctx.output_buffer.len == 0 {
+  if ctx.output.offset == 0 {
     return nil
   }
 
   io := posix.iovec {
-    iov_base = raw_data(ctx.output_buffer.data),
-    iov_len  = uint(ctx.output_buffer.len),
+    iov_base = rawptr(&ctx.output.vec.data[0]),
+    iov_len  = uint(ctx.output.offset),
   }
 
   cmsg_align := mem.align_formula(size_of(posix.cmsghdr), size_of(uint))
@@ -509,7 +509,7 @@ send :: proc(ctx: ^Wayland_Context) -> error.Error {
     return .SendMessageFailed
   }
 
-  ctx.output_buffer.len = 0
+  ctx.output.offset = 0
   ctx.out_fds_len = 0
 
   return nil
@@ -522,23 +522,23 @@ ctx_append :: proc(ctx: ^Wayland_Context, callbacks: []CallbackConfig, interface
   }
 
   err: mem.Allocator_Error
-  object: InterfaceObject
+  object := vector.one(&ctx.objects) or_return
+
   object.interface = interface
-  if object.callbacks, err = make([]Callback, u32(len(callbacks)), ctx.allocator); err != nil do panic("Failed to allocate some memory")
+  object.callbacks = vector.new(Callback, u32(len(callbacks)), ctx.allocator) or_return
+  vector.reserve_n(&object.callbacks, u32(len(callbacks))) or_return
 
   for callback in callbacks {
     opcode := get_event_opcode(interface, callback.name) or_return
-    object.callbacks[opcode] = callback.function
+    object.callbacks.data[opcode] = callback.function
   }
-
-  collection.vec_append(&ctx.objects, object) or_return
 
   return nil
 }
 
 @private
 get_object :: proc(ctx: ^Wayland_Context, id: u32) -> (InterfaceObject, error.Error) {
-  if len(ctx.objects.data) < int(id) {
+  if ctx.objects.len < id {
     return ctx.objects.data[0], .OutOfBounds
   }
 
@@ -546,20 +546,25 @@ get_object :: proc(ctx: ^Wayland_Context, id: u32) -> (InterfaceObject, error.Er
 }
 
 @private
-get_id :: proc(ctx: ^Wayland_Context, name: string, callbacks: []CallbackConfig, interfaces: []Interface) -> (u32, error.Error) {
+get_id :: proc(ctx: ^Wayland_Context, name: string, callbacks: []CallbackConfig, interfaces: []Interface, loc := #caller_location) -> (id: u32, err: error.Error) {
   for &inter in interfaces {
     if inter.name == name {
-      defer ctx_append(ctx, callbacks, &inter)
-      return ctx.objects.len + 1, nil
+      ctx_append(ctx, callbacks, &inter) or_return
+      id = ctx.objects.len
+      break
     }
   }
 
-  return 0, .OutOfBounds
+  if id == 0 {
+    return 0, .OutOfBounds
+  }
+
+  return id, nil
 }
 
 @private
 copy_id :: proc(ctx: ^Wayland_Context, id: u32) -> (i: u32, err: error.Error) {
-  collection.vec_append(&ctx.objects, get_object(ctx, id) or_return) or_return
+  vector.append(&ctx.objects, get_object(ctx, id) or_return) or_return
 
   return ctx.objects.len, nil
 }
@@ -907,7 +912,7 @@ dma_format_table_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []A
       modifier = modifier,
     }
 
-    collection.vec_append(&ctx.modifiers, mod)
+    vector.append(&ctx.modifiers, mod)
   }
 
   return nil
@@ -943,7 +948,7 @@ dma_tranche_formats_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: 
   ctx.modifiers.len = 0
 
   for i in indices {
-    collection.vec_append(&ctx.modifiers, modifiers.data[i])
+    vector.append(&ctx.modifiers, modifiers.data[i])
   }
 
   return nil

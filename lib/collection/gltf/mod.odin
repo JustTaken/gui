@@ -9,7 +9,8 @@ import "core:path/filepath"
 import "core:math/linalg"
 
 import "core:testing"
-import "./../../error"
+import "lib:error"
+import "lib:collection/vector"
 
 @private
 Matrix :: matrix[4, 4]f32
@@ -47,24 +48,24 @@ Context :: struct {
   raw_nodes: json.Array,
 
   asset: Asset,
-  accessors: []Accessor,
-  materials: []Material,
-  meshes: []Mesh,
-  nodes: []Node,
-  skins: []Skin,
-  buffers: []Buffer,
-  buffer_views: []Buffer_View,
-  animations: []Animation,
+  accessors: vector.Vector(Accessor),
+  materials: vector.Vector(Material),
+  meshes: vector.Vector(Mesh),
+  nodes: vector.Vector(Node),
+  skins: vector.Vector(Skin),
+  buffers: vector.Vector(Buffer),
+  buffer_views: vector.Vector(Buffer_View),
+  animations: vector.Vector(Animation),
   scenes: map[string]Scene,
   allocator: runtime.Allocator,
 }
 
 Gltf :: struct {
   scenes: map[string]Scene,
-  animations: []Animation,
-  nodes: []Node,
-  skins: []Skin,
-  meshes: []Mesh,
+  animations: vector.Vector(Animation),
+  nodes: vector.Vector(Node),
+  skins: vector.Vector(Skin),
+  meshes: vector.Vector(Mesh),
 }
 
 from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, err: error.Error) {
@@ -116,6 +117,7 @@ invertable_transform_apply :: proc(transform: ^Invertable_Transform) {
   scale := linalg.matrix4_scale(transform.scale)
 
   transform.compose = translate * rotate * scale
+  transform.inverse = linalg.inverse(transform.compose)
 }
 
 @test

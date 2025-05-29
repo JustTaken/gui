@@ -2,13 +2,9 @@ package gltf
 
 import "base:runtime"
 import "core:encoding/json"
-import "./../../error"
 
-// Vertex_Data :: struct {
-//   bytes: []u8,
-//   size: u32,
-//   count: u32,
-// }
+import "lib:error"
+import "lib:collection/vector"
 
 Material :: struct {
   name: string,
@@ -26,7 +22,7 @@ Mesh_Primitive :: struct {
 
 Mesh :: struct {
   name: string,
-  primitives: []Mesh_Primitive,
+  primitives: vector.Vector(Mesh_Primitive),
 }
 
 // get_vertex_data :: proc(mesh: ^Mesh, kinds: []Accessor_Kind, allocator: runtime.Allocator) -> Vertex_Data {
@@ -104,7 +100,7 @@ parse_material :: proc(ctx: ^Context, raw: json.Object) -> (material: Material, 
 @private
 parse_materials :: proc(ctx: ^Context) -> error.Error {
   for i in 0..<len(ctx.raw_materials) {
-    ctx.materials[i] = parse_material(ctx, ctx.raw_materials[i].(json.Object)) or_return
+    vector.append(&ctx.materials, parse_material(ctx, ctx.raw_materials[i].(json.Object)) or_return) or_return
   }
 
   return nil
@@ -114,30 +110,16 @@ parse_materials :: proc(ctx: ^Context) -> error.Error {
 parse_mesh_primitive :: proc(ctx: ^Context, raw: json.Object) -> (primitive: Mesh_Primitive, err: error.Error) {
   raw_accessors := raw["attributes"].(json.Object)
 
-  if attrib, ok := raw_accessors["POSITION"]; ok do primitive.accessors[.Position] = &ctx.accessors[u32(attrib.(f64))]
-  if attrib, ok := raw_accessors["NORMAL"]; ok do primitive.accessors[.Normal] = &ctx.accessors[u32(attrib.(f64))]
-  if attrib, ok := raw_accessors["COLOR_0"]; ok do primitive.accessors[.Color0] = &ctx.accessors[u32(attrib.(f64))]
-  if attrib, ok := raw_accessors["JOINTS_0"]; ok do primitive.accessors[.Joint0] = &ctx.accessors[u32(attrib.(f64))]
-  if attrib, ok := raw_accessors["WEIGHTS_0"]; ok do primitive.accessors[.Weight0] = &ctx.accessors[u32(attrib.(f64))]
-  if attrib, ok := raw_accessors["TEXCOORD_0"]; ok do primitive.accessors[.Texture0] = &ctx.accessors[u32(attrib.(f64))]
-  if attrib, ok := raw_accessors["TEXCOORD_1"]; ok do primitive.accessors[.Texture1] = &ctx.accessors[u32(attrib.(f64))]
+  if attrib, ok := raw_accessors["POSITION"]; ok do primitive.accessors[.Position] = &ctx.accessors.data[u32(attrib.(f64))]
+  if attrib, ok := raw_accessors["NORMAL"]; ok do primitive.accessors[.Normal] = &ctx.accessors.data[u32(attrib.(f64))]
+  if attrib, ok := raw_accessors["COLOR_0"]; ok do primitive.accessors[.Color0] = &ctx.accessors.data[u32(attrib.(f64))]
+  if attrib, ok := raw_accessors["JOINTS_0"]; ok do primitive.accessors[.Joint0] = &ctx.accessors.data[u32(attrib.(f64))]
+  if attrib, ok := raw_accessors["WEIGHTS_0"]; ok do primitive.accessors[.Weight0] = &ctx.accessors.data[u32(attrib.(f64))]
+  if attrib, ok := raw_accessors["TEXCOORD_0"]; ok do primitive.accessors[.Texture0] = &ctx.accessors.data[u32(attrib.(f64))]
+  if attrib, ok := raw_accessors["TEXCOORD_1"]; ok do primitive.accessors[.Texture1] = &ctx.accessors.data[u32(attrib.(f64))]
 
-  if indices, ok := raw["indices"]; ok do primitive.indices = &ctx.accessors[u32(indices.(f64))]
-  if material, ok := raw["material"]; ok do primitive.material = &ctx.materials[u32(material.(f64))]
-
-  // count: Maybe(u32)
-
-  // for attrib in primitive.accessors {
-  //   if attrib == nil {
-  //     continue
-  //   }
-
-  //   if count != nil && count.? != attrib.count {
-  //     return primitive, .InvalidAccessorCount
-  //   }
-
-  //   count = attrib.count
-  // }
+  if indices, ok := raw["indices"]; ok do primitive.indices = &ctx.accessors.data[u32(indices.(f64))]
+  if material, ok := raw["material"]; ok do primitive.material = &ctx.materials.data[u32(material.(f64))]
 
   return primitive, nil
 }
@@ -147,10 +129,10 @@ parse_mesh :: proc(ctx: ^Context, raw: json.Object) -> (mesh: Mesh, err: error.E
   mesh.name = raw["name"].(string)
 
   raw_primitives := raw["primitives"].(json.Array)
-  mesh.primitives = make([]Mesh_Primitive, len(raw_primitives), ctx.allocator)
+  mesh.primitives = vector.new(Mesh_Primitive, u32(len(raw_primitives)), ctx.allocator) or_return
 
   for i in 0..<len(raw_primitives) {
-    mesh.primitives[i] = parse_mesh_primitive(ctx, raw_primitives[i].(json.Object)) or_return
+    vector.append(&mesh.primitives, parse_mesh_primitive(ctx, raw_primitives[i].(json.Object)) or_return) or_return
   }
 
   return mesh, nil
@@ -159,7 +141,7 @@ parse_mesh :: proc(ctx: ^Context, raw: json.Object) -> (mesh: Mesh, err: error.E
 @private
 parse_meshes :: proc(ctx: ^Context) -> error.Error {
   for i in 0..<len(ctx.raw_meshes) {
-    ctx.meshes[i] = parse_mesh(ctx, ctx.raw_meshes[i].(json.Object)) or_return
+    vector.append(&ctx.meshes, parse_mesh(ctx, ctx.raw_meshes[i].(json.Object)) or_return) or_return
   }
 
   return nil

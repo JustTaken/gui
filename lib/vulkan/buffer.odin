@@ -2,7 +2,7 @@ package vulk
 
 import vk "vendor:vulkan"
 import "core:log"
-import "./../error"
+import "lib:error"
 
 @private
 Buffer :: struct {
@@ -30,18 +30,18 @@ buffer_create :: proc(ctx: ^Vulkan_Context, size: u32, usage: vk.BufferUsageFlag
 }
 
 @private
-vulkan_buffer_create :: proc(ctx: ^Vulkan_Context, size: u32, usage: vk.BufferUsageFlags) -> (vk.Buffer, error.Error) {
+vulkan_buffer_create :: proc(ctx: ^Vulkan_Context, size: u32, usage: vk.BufferUsageFlags) -> (buffer: vk.Buffer, err: error.Error) {
   buf_info := vk.BufferCreateInfo {
     sType       = .BUFFER_CREATE_INFO,
-    pNext       = nil,
     size        = vk.DeviceSize(size),
     usage       = usage,
     flags       = {},
     sharingMode = .EXCLUSIVE,
   }
 
-  buffer: vk.Buffer
-  if vk.CreateBuffer(ctx.device.handle, &buf_info, nil, &buffer) != .SUCCESS do return buffer, .CreateBuffer
+  if vk.CreateBuffer(ctx.device.handle, &buf_info, nil, &buffer) != .SUCCESS {
+    return buffer, .CreateBuffer
+  }
 
   return buffer, nil
 }
@@ -62,10 +62,23 @@ buffer_create_memory :: proc(ctx: ^Vulkan_Context, buffer: vk.Buffer, properties
     ) or_return,
   }
 
-  if vk.AllocateMemory(ctx.device.handle, &alloc_info, nil, &memory) != .SUCCESS do return memory, .AllocateDeviceMemory
+  if vk.AllocateMemory(ctx.device.handle, &alloc_info, nil, &memory) != .SUCCESS {
+    return memory, .AllocateDeviceMemory
+  }
+
   vk.BindBufferMemory(ctx.device.handle, buffer, memory, 0)
 
   return memory, nil
+}
+
+@private
+memory_copy :: proc($T: typeid, ctx: ^Vulkan_Context, memory: vk.DeviceMemory, offset: u32, data: []T) {
+  l := len(data)
+
+  out: [^]T
+  vk.MapMemory(ctx.device.handle, memory, vk.DeviceSize(offset), vk.DeviceSize(l * size_of(T)), {}, (^rawptr)(&out))
+  copy(out[0:l], data)
+  vk.UnmapMemory(ctx.device.handle, memory)
 }
 
 @private
@@ -77,19 +90,15 @@ copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer: vk.Bu
   }
 
   size := u32(l * size_of(T))
-  offset := vk.DeviceSize(ctx.staging.buffer.len)
 
-  out: [^]T
-  vk.MapMemory(ctx.device.handle, ctx.staging.buffer.memory, offset, vk.DeviceSize(size), {}, (^rawptr)(&out))
-  copy(out[0:l], data)
-  vk.UnmapMemory(ctx.device.handle, ctx.staging.buffer.memory)
+  memory_copy(T, ctx, ctx.staging.buffer.memory, ctx.staging.buffer.len, data)
 
   defer ctx.staging.buffer.len += size
 
   copy_info := vk.BufferCopy {
-    srcOffset = offset,
+    srcOffset = vk.DeviceSize(ctx.staging.buffer.len),
     dstOffset = vk.DeviceSize(dst_offset * size_of(T)),
-    size      = vk.DeviceSize(size),
+    size = vk.DeviceSize(size),
   }
 
   if !ctx.staging.recording {
