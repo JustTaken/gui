@@ -25,7 +25,7 @@ On_Going_Animation :: struct {
 
 Model :: struct {
   geometries: vector.Vector(u32),
-  children: vector.Vector(^Model),
+  children: vector.Vector(u32),
 }
 
 Model_Instance :: struct {
@@ -36,7 +36,7 @@ Model_Instance :: struct {
 
 Scene :: struct {
   parent: ^Scenes,
-  models: vector.Vector(^Model),
+  models: vector.Vector(u32),
 }
 
 Scene_Instance :: struct {
@@ -48,6 +48,7 @@ Scene_Instance :: struct {
 Scenes :: struct {
   childs: map[string]Scene,
   animations: map[string]Scene_Animation,
+  transforms: vector.Vector(Matrix),
   models: vector.Vector(Model),
   materials: vector.Vector(u32),
   transforms_offset: u32,
@@ -182,8 +183,10 @@ scene_instance_create :: proc(ctx: ^Context, scenes: ^Scenes, name: string, tran
     instance.models = vector.new(Model_Instance, scene.models.len, ctx.allocator) or_return
 
     for i in 0..<scene.models.len {
-      vector.append(&instance.models, model_instance_create(ctx, scene.models.data[i], transform, method) or_return) or_return
+      vector.append(&instance.models, model_instance_create(ctx, scenes, scene.models.data[i], transform, method) or_return) or_return
     }
+
+    vulkan.add_transforms(&ctx.vk, vector.data(&scenes.transforms)) or_return
 
     return instance, nil
   }
@@ -201,17 +204,17 @@ scene_instance_update :: proc(ctx: ^Context, instance: ^Scene_Instance, transfor
   return nil
 }
 
-model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix, method: vulkan.Instance_Draw_Method) -> (instance: Model_Instance, err: error.Error) {
-  instance.model = model
+model_instance_create :: proc(ctx: ^Context, scenes: ^Scenes, model: u32, transform: Matrix, method: vulkan.Instance_Draw_Method) -> (instance: Model_Instance, err: error.Error) {
+  instance.model = &scenes.models.data[model]
 
-  instance.children = vector.new(Model_Instance, model.children.len, ctx.allocator) or_return
-  for i in 0..<model.children.len {
-    vector.append(&instance.children, model_instance_create(ctx, model.children.data[i], transform, method) or_return) or_return
+  instance.children = vector.new(Model_Instance, instance.model.children.len, ctx.allocator) or_return
+  for i in 0..<instance.model.children.len {
+    vector.append(&instance.children, model_instance_create(ctx, scenes, instance.model.children.data[i], transform, method) or_return) or_return
   }
 
-  instance.instances = vector.new(^vulkan.Instance, model.geometries.len, ctx.allocator) or_return
-  for i in 0..<model.geometries.len {
-      vector.append(&instance.instances, vulkan.geometry_instance_add(&ctx.vk, model.geometries.data[i], transform, method) or_return) or_return
+  instance.instances = vector.new(^vulkan.Instance, instance.model.geometries.len, ctx.allocator) or_return
+  for i in 0..<instance.model.geometries.len {
+      vector.append(&instance.instances, vulkan.geometry_instance_add(&ctx.vk, instance.model.geometries.data[i], transform, model, method) or_return) or_return
   }
 
   return instance, nil
@@ -351,10 +354,10 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, node: u
 
 load_node :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, node: u32, max: u32) -> error.Error {
   model := vector.one(&scenes.models) or_return
-  model.children = vector.new(^Model, glt.nodes.data[node].children.len, ctx.allocator) or_return
+  model.children = vector.new(u32, glt.nodes.data[node].children.len, ctx.allocator) or_return
 
   for i in 0..<glt.nodes.data[node].children.len {
-    vector.append(&model.children, &scenes.models.data[glt.nodes.data[node].children.data[i]]) or_return
+    vector.append(&model.children, glt.nodes.data[node].children.data[i]) or_return
   }
 
   if glt.nodes.data[node].mesh != nil {
@@ -373,11 +376,11 @@ load_material :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, index: u3
 load_gltf_scene :: proc(ctx: ^Context, scenes: ^Scenes, glt: gltf.Gltf, index: u32) -> error.Error {
   scene: Scene
 
-  scene.models = vector.new(^Model, glt.scenes.data[index].nodes.len, ctx.allocator) or_return
+  scene.models = vector.new(u32, glt.scenes.data[index].nodes.len, ctx.allocator) or_return
   scene.parent = scenes
 
   for j in 0..<glt.scenes.data[index].nodes.len {
-    vector.append(&scene.models, &scenes.models.data[glt.scenes.data[index].nodes.data[j]]) or_return
+    vector.append(&scene.models, glt.scenes.data[index].nodes.data[j]) or_return
   }
 
   scenes.childs[glt.scenes.data[index].name] = scene
@@ -394,6 +397,7 @@ load_gltf_scenes :: proc(ctx: ^Context, path: string, max: u32) -> (scenes: Scen
   scenes.models = vector.new(Model, glt.nodes.len, ctx.allocator) or_return
   scenes.materials =vector.new(u32, glt.materials.len, ctx.allocator) or_return
   scenes.childs = make(map[string]Scene, (glt.scenes.len * 3) / 2, ctx.allocator)
+  scenes.transforms = vector.new(Matrix, glt.nodes.len, ctx.allocator) or_return
 
   for i in 0..<glt.materials.len {
     load_material(ctx, &glt, &scenes, i) or_return
@@ -401,6 +405,7 @@ load_gltf_scenes :: proc(ctx: ^Context, path: string, max: u32) -> (scenes: Scen
 
   for i in 0..<glt.nodes.len {
     load_node(ctx, &glt, &scenes, i, max) or_return
+    vector.append(&scenes.transforms, linalg.MATRIX4F32_IDENTITY) or_return
   }
 
   scenes.animations = load_animations(ctx, &glt) or_return
@@ -409,12 +414,6 @@ load_gltf_scenes :: proc(ctx: ^Context, path: string, max: u32) -> (scenes: Scen
     load_gltf_scene(ctx, &scenes, glt, i) or_return
   }
 
-  bones := vector.new(Matrix, glt.nodes.len, ctx.tmp_allocator) or_return
-  for n in 0..<glt.nodes.len {
-    vector.append(&bones, linalg.MATRIX4F32_IDENTITY) or_return
-  }
-
-  scenes.transforms_offset = vulkan.add_transforms(&ctx.vk, vector.data(&bones)) or_return
 
   return scenes, nil
 }

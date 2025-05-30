@@ -324,6 +324,7 @@ frame_draw :: proc(ctx: ^Vulkan_Context, frame_index: u32, width: u32, height: u
   }
 
   vk.ResetFences(ctx.device.handle, 1, &ctx.draw_fence)
+  render_pass_destroy_unused(ctx, frame.render_pass)
   if vk.QueueSubmit(ctx.device.queues[0].handle, 1, &submit_info, ctx.draw_fence) != .SUCCESS do return .QueueSubmitFailed
 
   return nil

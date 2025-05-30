@@ -82,29 +82,45 @@ Opcodes :: struct {
 
 Wayland_Context :: struct {
   socket: posix.FD,
+
   objects: vector.Vector(InterfaceObject),
+
+  modifiers: vector.Vector(Modifier),
+  dma_main_device: u64,
+
   output: vector.Buffer,
   input: vector.Buffer,
-  values: vector.Vector(interface.Argument),
-  listeners: vector.Vector(KeyListener),
-  modifiers: vector.Vector(Modifier),
-  bytes: []u8,
   in_fds: vector.Buffer,
   out_fds: vector.Vector(interface.Fd),
-  dma_main_device: u64,
+  values: vector.Vector(interface.Argument),
+  bytes: []u8,
+
   buffers: vector.Vector(Buffer),
   active_buffer: u32,
+
   ids: Ids,
   opcodes: Opcodes,
+
   width: u32,
   height: u32,
-  running: bool,
+
+  listeners: vector.Vector(KeyListener),
   keymap: xkb.Keymap_Context,
+
+  key_delay: i64,
+  key_repeat: i64,
+
+  key_start: i64,
+  key_last_time: i64,
+
   vk: ^vulkan.Vulkan_Context,
+
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
   tmp_arena: ^mem.Arena,
   tmp_allocator: runtime.Allocator,
+
+  running: bool,
 }
 
 wayland_init :: proc(ctx: ^Wayland_Context, vk: ^vulkan.Vulkan_Context, width: u32, height: u32, frame_count: u32, arena: ^mem.Arena, tmp_arena: ^mem.Arena) -> error.Error {
@@ -159,6 +175,9 @@ wayland_init :: proc(ctx: ^Wayland_Context, vk: ^vulkan.Vulkan_Context, width: u
   ctx.out_fds = vector.new(interface.Fd, 100, ctx.allocator) or_return
   ctx.in_fds = vector.buffer_new(100, ctx.allocator) or_return
 
+  ctx.key_delay = 200 * 1000 * 1000
+  ctx.key_repeat = 30 * 1000 * 1000
+
   ctx.buffers = vector.new(Buffer, frame_count, ctx.allocator) or_return
   ctx.active_buffer = 0
 
@@ -201,10 +220,25 @@ render :: proc(ctx: ^Wayland_Context) -> error.Error {
 handle_input :: proc(ctx: ^Wayland_Context) -> error.Error {
   now := time.now()._nsec
 
+  if ctx.keymap.pressed_array.len == 0 do return nil
+
+  if now >= ctx.key_start + ctx.key_delay {
+    if now >= ctx.key_last_time + ctx.key_repeat {
+      send_input(ctx, now) or_return
+    }
+  }
+
+  return nil
+}
+
+@private
+send_input :: proc(ctx: ^Wayland_Context, now: i64) -> error.Error {
   for i in 0..<ctx.listeners.len {
     listener := &ctx.listeners.data[i]
     listener.f(listener.ptr, &ctx.keymap, now) or_return
   }
+
+  ctx.key_last_time = now
 
   return nil
 }

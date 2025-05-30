@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "core:mem"
 import "core:sys/posix"
 import "core:log"
+import "core:time"
 
 import "lib:collection/vector"
 import "lib:error"
@@ -52,6 +53,10 @@ keyboard_leave_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []int
 keyboard_key_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interface.Argument) -> error.Error {
   xkb.register_code(&ctx.keymap, u32(arguments[2].(interface.Uint)), u32(arguments[3].(interface.Uint))) or_return
 
+  ctx.key_start = time.now()._nsec
+
+  send_input(ctx, ctx.key_start) or_return
+
   return nil
 }
 @private
@@ -62,8 +67,11 @@ keyboard_modifiers_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: [
 }
 @private
 keyboard_repeat_info_callback :: proc(ctx: ^Wayland_Context, id: u32, arguments: []interface.Argument) -> error.Error {
+  ctx.key_repeat = i64((1 / f32(arguments[0].(interface.Int))) * 1000 * 1000) * 1000
+  ctx.key_delay = i64(arguments[1].(interface.Int) * 1000 * 1000)
+
+
   return nil
-  
 }
 
 @private

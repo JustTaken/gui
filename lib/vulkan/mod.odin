@@ -32,7 +32,11 @@ Vulkan_Context :: struct {
   geometries: vector.Vector(Geometry),
   materials: vector.Vector(Material),
 
+  default_material: u32,
+
   render_pass: Render_Pass,
+
+  descriptor_pool: Descriptor_Pool,
 
   fixed_set: ^Descriptor_Set,
   dynamic_set: ^Descriptor_Set,
@@ -41,24 +45,26 @@ Vulkan_Context :: struct {
   plain_pipeline: ^Pipeline,
   boned_pipeline: ^Pipeline,
 
-  descriptor_pool: Descriptor_Pool,
-
   instances: u32,
   transforms: u32,
 
   command_pool: vk.CommandPool,
   command_buffers: vector.Vector(vk.CommandBuffer),
+
   staging: StagingBuffer,
   frames: vector.Vector(Frame),
-  bones: u32,
+
   copy_fence: vk.Fence,
   draw_fence: vk.Fence,
   semaphore: vk.Semaphore,
+
   format: vk.Format,
   depth_format: vk.Format,
   modifiers: vector.Vector(vk.DrmFormatModifierPropertiesEXT),
+
   arena: ^mem.Arena,
   allocator: runtime.Allocator,
+
   tmp_arena: ^mem.Arena,
   tmp_allocator: runtime.Allocator,
 }
@@ -110,13 +116,24 @@ vulkan_init :: proc(ctx: ^Vulkan_Context, width: u32, height: u32, frame_count: 
 
   layout := render_pass_append_layout(&ctx.render_pass, layout_create(ctx, {fixed_set_layout, dynamic_set_layout}) or_return) or_return
 
-  ctx.default_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, "assets/output/unboned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
-  ctx.plain_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, "assets/output/plain.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
-  ctx.boned_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, "assets/output/boned.spv", "assets/output/frag.spv", {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}, {.Sfloat, 4}, {.Uint, 4}}}) or_return
+  unboned_shader := render_pass_append_shader(ctx, &ctx.render_pass, "assets/output/unboned.spv") or_return
+  boned_shader := render_pass_append_shader(ctx, &ctx.render_pass, "assets/output/boned.spv") or_return
+  plain_shader := render_pass_append_shader(ctx, &ctx.render_pass, "assets/output/plain.spv") or_return
+  fragment_shader := render_pass_append_shader(ctx, &ctx.render_pass, "assets/output/frag.spv") or_return
+
+  defer {
+    shader_module_destroy(ctx, unboned_shader)
+    shader_module_destroy(ctx, boned_shader)
+    shader_module_destroy(ctx, plain_shader)
+    shader_module_destroy(ctx, fragment_shader)
+  }
+
+  ctx.default_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, unboned_shader, fragment_shader, {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
+  ctx.plain_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, plain_shader, fragment_shader, {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}}}) or_return
+  ctx.boned_pipeline = render_pass_append_pipeline(ctx, &ctx.render_pass, layout, boned_shader, fragment_shader, {{{.Sfloat, 3},{.Sfloat, 3}, {.Sfloat, 2}, {.Sfloat, 4}, {.Uint, 4}}}) or_return
 
   ctx.frames = frames_create(ctx, &ctx.render_pass, frame_count, width, height) or_return
-
-  material_create(ctx, Material {0, 0.8, 0.2, 1}) or_return
+  ctx.default_material = material_create(ctx, Material {0, 0.8, 0.2, 1}) or_return
 
   return nil
 }

@@ -74,8 +74,8 @@ run :: proc(width: u32, height: u32, frames: u32) -> error.Error {
 
     //tick_scene_animation(&ctx, &ctx.scene, time.now()._nsec) or_return
 
-    if wayland.render(&ctx.wl) != nil {
-      log.error("Failed to render frame")
+    if err := wayland.render(&ctx.wl); err != nil {
+      log.error("Failed to render frame", err)
     }
   }
 
@@ -104,7 +104,6 @@ init_memory :: proc(ctx: ^Context, bytes: u32, divisor: u32) -> error.Error {
 init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  error.Error {
   vulkan.vulkan_init(&ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
   wayland.wayland_init(&ctx.wl, &ctx.vk, width, height, frames, &ctx.arena, &ctx.tmp_arena) or_return
-
 
   ctx.rotate_up = linalg.matrix4_rotate_f32(ANGLE_VELOCITY, [3]f32{1, 0, 0})
   ctx.rotate_down = linalg.matrix4_rotate_f32(ANGLE_VELOCITY, [3]f32{-1, 0, 0})
@@ -154,6 +153,7 @@ frame :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Erro
   if xkb.is_key_pressed(keymap, .w) do view_translate(ctx, {0, 0, TRANSLATION_VELOCITY, 1})
   if xkb.is_key_pressed(keymap, .k) do view_translate(ctx, {0, -TRANSLATION_VELOCITY, 0, 1})
   if xkb.is_key_pressed(keymap, .j) do view_translate(ctx, {0, TRANSLATION_VELOCITY, 0, 1})
+  if xkb.is_key_pressed(keymap, .r) do vulkan.update_shaders(&ctx.vk) or_return
   if xkb.is_key_pressed(keymap, .ArrowUp) do view_rotate(ctx, ctx.rotate_up)
   if xkb.is_key_pressed(keymap, .ArrowDown) do view_rotate(ctx, ctx.rotate_down)
   if xkb.is_key_pressed(keymap, .ArrowLeft) do view_rotate(ctx, ctx.rotate_left)
@@ -161,7 +161,7 @@ frame :: proc(ptr: rawptr, keymap: ^xkb.Keymap_Context, time: i64) -> error.Erro
 
   if ctx.view_update {
     vulkan.update_view(ctx.wl.vk, ctx.view.rotation * linalg.matrix4_translate_f32({ctx.view.translation[0], ctx.view.translation[1], ctx.view.translation[2]})) or_return
-    scene_instance_update(ctx, &ctx.player, linalg.matrix4_translate_f32(ctx.view.arrow) * ctx.view.rotation) or_return
+    //scene_instance_update(ctx, &ctx.player, linalg.matrix4_translate_f32(ctx.view.arrow) * ctx.view.rotation) or_return
   }
 
   return nil

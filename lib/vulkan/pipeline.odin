@@ -28,6 +28,12 @@ Pipeline :: struct {
   handle: vk.Pipeline,
   layout: ^Pipeline_Layout,
   groups: vector.Vector(Pipeline_Instance_Group),
+
+  vertex_shader: ^Shader_Module,
+  fragment_shader: ^Shader_Module,
+
+  vertex_binding_descriptions: vector.Vector(vk.VertexInputBindingDescription),
+  vertex_attribute_descriptions: vector.Vector(vk.VertexInputAttributeDescription),
 }
 
 @private
@@ -83,68 +89,28 @@ get_attribute_format :: proc(attribute: Vertex_Attribute) -> (format: vk.Format,
 }
 
 @private
-pipeline_create :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, vert: string, frag: string, vertex_attribute_bindings: [][]Vertex_Attribute) -> error.Error {
-  pipeline.groups = vector.new(Pipeline_Instance_Group, 10, ctx.allocator) or_return
-  pipeline.layout = layout
-
-  vert_module := shader_module_create(ctx, vert) or_return
-  defer vk.DestroyShaderModule(ctx.device.handle, vert_module, nil)
-
-  frag_module := shader_module_create(ctx, frag) or_return
-  defer vk.DestroyShaderModule(ctx.device.handle, frag_module, nil)
-
+pipeline_update :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: ^Render_Pass) -> error.Error {
   stages := [?]vk.PipelineShaderStageCreateInfo {
     {
       sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
       stage = {.VERTEX},
-      module = vert_module,
+      module = pipeline.vertex_shader.handle,
       pName = cstring("main"),
     },
     {
       sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
       stage = {.FRAGMENT},
-      module = frag_module,
+      module = pipeline.fragment_shader.handle,
       pName = cstring("main"),
     },
   }
 
-  attribute_count: u32 = 0
-  for i in 0..<len(vertex_attribute_bindings) {
-    for j in 0..<len(vertex_attribute_bindings[i]) {
-      attribute_count += 1
-    }
-  }
-
-  vertex_binding_descriptions := vector.new(vk.VertexInputBindingDescription, u32(len(vertex_attribute_bindings)), ctx.tmp_allocator) or_return
-  vertex_attribute_descriptions := vector.new(vk.VertexInputAttributeDescription, attribute_count, ctx.tmp_allocator) or_return
-
-  for i in 0..<len(vertex_attribute_bindings) {
-    offset: u32 = 0
-
-    for j in 0..<len(vertex_attribute_bindings[i]) {
-      format, size := get_attribute_format(vertex_attribute_bindings[i][j]) or_return
-
-      description := vector.one(&vertex_attribute_descriptions) or_return
-      description.binding = u32(i)
-      description.location = u32(j)
-      description.offset = offset
-      description.format = format
-
-      offset += size
-    }
-
-    binding := vector.one(&vertex_binding_descriptions) or_return
-    binding.binding = u32(i)
-    binding.stride = offset
-    binding.inputRate = .VERTEX
-  }
-
   vert_input_state := vk.PipelineVertexInputStateCreateInfo {
     sType         = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-    vertexBindingDescriptionCount   = vertex_binding_descriptions.len,
-    pVertexBindingDescriptions      = &vertex_binding_descriptions.data[0],
-    vertexAttributeDescriptionCount = vertex_attribute_descriptions.len,
-    pVertexAttributeDescriptions    = &vertex_attribute_descriptions.data[0],
+    vertexBindingDescriptionCount   = pipeline.vertex_binding_descriptions.len,
+    pVertexBindingDescriptions      = &pipeline.vertex_binding_descriptions.data[0],
+    vertexAttributeDescriptionCount = pipeline.vertex_attribute_descriptions.len,
+    pVertexAttributeDescriptions    = &pipeline.vertex_attribute_descriptions.data[0],
   }
 
   viewports := [?]vk.Viewport {
@@ -253,6 +219,48 @@ pipeline_create :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: 
   if vk.CreateGraphicsPipelines(ctx.device.handle, 0, 1, &info, nil, &pipeline.handle) != .SUCCESS {
     return .CreatePipelineFailed
   }
+  return nil
+}
+
+@private
+pipeline_create :: proc(pipeline: ^Pipeline, ctx: ^Vulkan_Context, render_pass: ^Render_Pass, layout: ^Pipeline_Layout, vertex_shader: ^Shader_Module, fragment_shader: ^Shader_Module, vertex_attribute_bindings: [][]Vertex_Attribute) -> error.Error {
+  pipeline.groups = vector.new(Pipeline_Instance_Group, 10, ctx.allocator) or_return
+  pipeline.layout = layout
+  pipeline.vertex_shader = vertex_shader
+  pipeline.fragment_shader = fragment_shader
+
+  attribute_count: u32 = 0
+  for i in 0..<len(vertex_attribute_bindings) {
+    for j in 0..<len(vertex_attribute_bindings[i]) {
+      attribute_count += 1
+    }
+  }
+
+  pipeline.vertex_binding_descriptions = vector.new(vk.VertexInputBindingDescription, u32(len(vertex_attribute_bindings)), ctx.allocator) or_return
+  pipeline.vertex_attribute_descriptions = vector.new(vk.VertexInputAttributeDescription, attribute_count, ctx.allocator) or_return
+
+  for i in 0..<len(vertex_attribute_bindings) {
+    offset: u32 = 0
+
+    for j in 0..<len(vertex_attribute_bindings[i]) {
+      format, size := get_attribute_format(vertex_attribute_bindings[i][j]) or_return
+
+      description := vector.one(&pipeline.vertex_attribute_descriptions) or_return
+      description.binding = u32(i)
+      description.location = u32(j)
+      description.offset = offset
+      description.format = format
+
+      offset += size
+    }
+
+    binding := vector.one(&pipeline.vertex_binding_descriptions) or_return
+    binding.binding = u32(i)
+    binding.stride = offset
+    binding.inputRate = .VERTEX
+  }
+
+  pipeline_update(pipeline, ctx, render_pass) or_return
 
   return nil
 }
@@ -281,50 +289,7 @@ layout_create :: proc(ctx: ^Vulkan_Context, set_layouts: []^Descriptor_Set_Layou
 }
 
 @private
-shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.ShaderModule, err: error.Error) {
-  er: os.Error
-  file: os.Handle
-  size: i64
-
-  if file, er = os.open(path); er != nil {
-    log.error("File", path, "does not exist")
-    return module, .FileNotFound
-  }
-
-  defer os.close(file)
-
-  if size, er = os.file_size(file); er != nil {
-    log.error("Failed to tell file", path, "size")
-    return module, .FileNotFound
-  }
-
-  buf := make([]u8, u32(size), ctx.tmp_allocator)
-
-  l: int
-  if l, er = os.read(file, buf); er != nil {
-    log.error("Failed to read file", path)
-    return module, .ReadFileFailed
-  }
-
-  if int(size) != l do return module, .SizeNotMatch
-
-  info := vk.ShaderModuleCreateInfo {
-    sType    = .SHADER_MODULE_CREATE_INFO,
-    codeSize = int(size),
-    pCode    = cast([^]u32)(&buf[0]),
-  }
-
-  frag_module: vk.ShaderModule
-  if vk.CreateShaderModule(ctx.device.handle, &info, nil, &module) != .SUCCESS {
-    log.error("Failed to create shader", path, "module")
-    return module, .CreateShaderModuleFailed
-  }
-
-  return module, nil
-}
-
-@private
-pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometry_index: u32, model: Maybe(Instance_Model)) -> (instance: ^Instance, err: error.Error) {
+pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometry_index: u32, model: Maybe(Instance_Model), transform_offset: u32) -> (instance: ^Instance, err: error.Error) {
   group: ^Pipeline_Instance_Group = nil
 
   geometry := &ctx.geometries.data[geometry_index]
@@ -352,8 +317,8 @@ pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometr
 
   m := model.? or_else linalg.MATRIX4F32_IDENTITY
 
-  transform_offset := [?]u32{ctx.transforms}
-  copy_data(u32, ctx, transform_offset[:], &ctx.dynamic_set.descriptors[TRANSFORM_OFFSETS].buffer, instance.offset) or_return
+  transform_offsets := [?]u32{ctx.transforms + transform_offset}
+  copy_data(u32, ctx, transform_offsets[:], &ctx.dynamic_set.descriptors[TRANSFORM_OFFSETS].buffer, instance.offset) or_return
 
   material_offsets := [?]u32{geometry.material}
   copy_data(u32, ctx, material_offsets[:], &ctx.dynamic_set.descriptors[MATERIAL_OFFSETS].buffer, instance.offset) or_return
@@ -363,6 +328,7 @@ pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometr
   return instance, nil
 }
 
+@private
 pipeline_deinit :: proc(ctx: ^Vulkan_Context, pipeline: Pipeline) {
-  vk.DestroyPipeline(ctx.device.handle, pipeline.handle, nil)
 }
+
