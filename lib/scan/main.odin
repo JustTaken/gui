@@ -1,29 +1,36 @@
 package scan
 
-import "core:os"
-import "core:mem"
-import "core:strconv"
 import xml "core:encoding/xml"
+import "core:mem"
+import "core:os"
+import "core:strconv"
 
 ArgumentKind :: enum {
-  Int, Uint, Fixed, Object, NewId, Fd, String, Array,
+  Int,
+  Uint,
+  Fixed,
+  Object,
+  NewId,
+  Fd,
+  String,
+  Array,
 }
 
 Request :: struct {
-  name: string,
+  name:      string,
   arguments: []ArgumentKind,
 }
 
 Event :: struct {
-  name: string,
+  name:      string,
   arguments: []ArgumentKind,
 }
 
 Interface :: struct {
-  name: string,
-  version: uint,
+  name:     string,
+  version:  uint,
   requests: []Request,
-  events: []Event,
+  events:   []Event,
 }
 
 Connection :: struct {
@@ -65,16 +72,76 @@ write_preambule :: proc(output: ^[dynamic]u8, package_name: string) {
   copy_type(output, "Fd", "distinct i32")
   copy_type(output, "String", "distinct []u8")
   copy_type(output, "Array", "distinct []u8")
-  copy_composed(output, "UnBoundNewId", "struct", { "id: BoundNewId", "interface: []u8" })
+  copy_composed(
+    output,
+    "UnBoundNewId",
+    "struct",
+    {"id: BoundNewId", "interface: []u8"},
+  )
 
-  copy_composed(output, "ArgumentKind", "enum", { "Int", "Uint", "Fixed", "Fd", "Object", "BoundNewId", "UnBoundNewId", "String", "Array" })
-  copy_composed(output, "Argument", "union", { "Int", "Uint", "Fixed", "Fd", "Object", "BoundNewId", "UnBoundNewId", "String", "Array" })
-  copy_composed(output, "Request", "struct", { "name: string", "arguments: []ArgumentKind" })
-  copy_composed(output, "Event", "struct", { "name: string", "arguments: []ArgumentKind" })
-  copy_composed(output, "Interface", "struct", { "name: string", "requests: []Request", "events: []Event" })
+  copy_composed(
+    output,
+    "ArgumentKind",
+    "enum",
+    {
+      "Int",
+      "Uint",
+      "Fixed",
+      "Fd",
+      "Object",
+      "BoundNewId",
+      "UnBoundNewId",
+      "String",
+      "Array",
+    },
+  )
+
+  copy_composed(
+    output,
+    "Argument",
+    "union",
+    {
+      "Int",
+      "Uint",
+      "Fixed",
+      "Fd",
+      "Object",
+      "BoundNewId",
+      "UnBoundNewId",
+      "String",
+      "Array",
+    },
+  )
+
+  copy_composed(
+    output,
+    "Request",
+    "struct",
+    {"name: string", "arguments: []ArgumentKind"},
+  )
+
+  copy_composed(
+    output,
+    "Event",
+    "struct",
+    {"name: string", "arguments: []ArgumentKind"},
+  )
+
+  copy_composed(
+    output,
+    "Interface",
+    "struct",
+    {"name: string", "requests: []Request", "events: []Event"},
+  )
 }
 
-scan :: proc(output: ^[dynamic]u8, input_path: string, interfaces_name: string, package_name: string, allocator := context.allocator) -> bool {
+scan :: proc(
+  output: ^[dynamic]u8,
+  input_path: string,
+  interfaces_name: string,
+  package_name: string,
+  allocator := context.allocator,
+) -> bool {
   document: ^xml.Document
   err: xml.Error
 
@@ -108,10 +175,17 @@ scan :: proc(output: ^[dynamic]u8, input_path: string, interfaces_name: string, 
 
   for value in document.elements[0].value {
     index := value.(u32)
-    element := &document.elements[index] 
+    element := &document.elements[index]
 
     if element.ident == "interface" {
-      write_interface(output, element, &requests, &events, document.elements[:])
+      write_interface(
+        output,
+        element,
+        &requests,
+        &events,
+        document.elements[:],
+      )
+
       clear(&requests)
       clear(&events)
     }
@@ -122,7 +196,13 @@ scan :: proc(output: ^[dynamic]u8, input_path: string, interfaces_name: string, 
   return true
 }
 
-write_interface :: proc(output: ^[dynamic]u8, element: ^xml.Element, requests: ^[dynamic]^xml.Element, events: ^[dynamic]^xml.Element, elements: []xml.Element) {
+write_interface :: proc(
+  output: ^[dynamic]u8,
+  element: ^xml.Element,
+  requests: ^[dynamic]^xml.Element,
+  events: ^[dynamic]^xml.Element,
+  elements: []xml.Element,
+) {
   if len(element.attribs) != 2 {
     return
   }
@@ -134,7 +214,7 @@ write_interface :: proc(output: ^[dynamic]u8, element: ^xml.Element, requests: ^
   }
 
   for i in element.value {
-    index := i.(u32) 
+    index := i.(u32)
     element := &elements[index]
 
     if element.ident == "request" {
@@ -154,7 +234,11 @@ write_interface :: proc(output: ^[dynamic]u8, element: ^xml.Element, requests: ^
   copy(output, "  },\n")
 }
 
-write_requests :: proc(output: ^[dynamic]u8, requests: []^xml.Element, elements: []xml.Element) {
+write_requests :: proc(
+  output: ^[dynamic]u8,
+  requests: []^xml.Element,
+  elements: []xml.Element,
+) {
   copy(output, "    requests = {\n")
 
   for request in requests {
@@ -169,7 +253,11 @@ write_requests :: proc(output: ^[dynamic]u8, requests: []^xml.Element, elements:
   copy(output, "    },\n")
 }
 
-write_events :: proc(output: ^[dynamic]u8, events: []^xml.Element, elements: []xml.Element) {
+write_events :: proc(
+  output: ^[dynamic]u8,
+  events: []^xml.Element,
+  elements: []xml.Element,
+) {
   copy(output, "    events = {\n")
 
   for event in events {
@@ -184,9 +272,13 @@ write_events :: proc(output: ^[dynamic]u8, events: []^xml.Element, elements: []x
   copy(output, "    },\n")
 }
 
-write_arguments :: proc(output: ^[dynamic]u8, element: ^xml.Element, elements: []xml.Element) {
+write_arguments :: proc(
+  output: ^[dynamic]u8,
+  element: ^xml.Element,
+  elements: []xml.Element,
+) {
   count := 0
-  for i in 0..<len(element.value) {
+  for i in 0 ..< len(element.value) {
     argument_index := element.value[i].(u32)
     if elements[argument_index].ident != "arg" do continue
 
@@ -201,20 +293,28 @@ write_arguments :: proc(output: ^[dynamic]u8, element: ^xml.Element, elements: [
 
 write_kind :: proc(output: ^[dynamic]u8, attribs: []xml.Attribute) {
   switch attribs[1].val {
-    case "new_id":
-      if attribs[2].key == "interface" {
-        copy(output, ".BoundNewId")
-      } else {
-        copy(output, ".UnBoundNewId")
-      }
-    case "int": copy(output, ".Int")
-    case "uint": copy(output, ".Uint")
-    case "fixed": copy(output, ".Fixed")
-    case "object": copy(output, ".Object")
-    case "fd": copy(output, ".Fd")
-    case "string": copy(output, ".String")
-    case "array": copy(output, ".Array")
-    case: copy(output, "Unknow")
+  case "new_id":
+    if attribs[2].key == "interface" {
+      copy(output, ".BoundNewId")
+    } else {
+      copy(output, ".UnBoundNewId")
+    }
+  case "int":
+    copy(output, ".Int")
+  case "uint":
+    copy(output, ".Uint")
+  case "fixed":
+    copy(output, ".Fixed")
+  case "object":
+    copy(output, ".Object")
+  case "fd":
+    copy(output, ".Fd")
+  case "string":
+    copy(output, ".String")
+  case "array":
+    copy(output, ".Array")
+  case:
+    copy(output, "Unknow")
   }
 }
 
@@ -224,7 +324,12 @@ copy :: proc(dst: ^[dynamic]u8, src: string) {
   }
 }
 
-copy_composed :: proc(dst: ^[dynamic]u8, name: string, kind: string, values: []string) {
+copy_composed :: proc(
+  dst: ^[dynamic]u8,
+  name: string,
+  kind: string,
+  values: []string,
+) {
   copy(dst, name)
   copy(dst, " :: ")
   copy(dst, kind)

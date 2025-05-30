@@ -1,21 +1,21 @@
 package vulk
 
-import vk "vendor:vulkan"
-import "lib:error"
 import "lib:collection/vector"
+import "lib:error"
+import vk "vendor:vulkan"
 
 Queue :: struct {
   handle: vk.Queue,
   indice: u32,
 }
 
-@private
+@(private)
 Device :: struct {
   handle: vk.Device,
   queues: []Queue,
 }
 
-@private
+@(private)
 PLANE_INDICES := [?]vk.ImageAspectFlag {
   .MEMORY_PLANE_0_EXT,
   .MEMORY_PLANE_1_EXT,
@@ -23,10 +23,22 @@ PLANE_INDICES := [?]vk.ImageAspectFlag {
   .MEMORY_PLANE_3_EXT,
 }
 
-@private
-get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: vector.Vector(vk.DrmFormatModifierPropertiesEXT), err: error.Error) {
-  render_features: vk.FormatFeatureFlags = {.COLOR_ATTACHMENT, .COLOR_ATTACHMENT_BLEND}
-  texture_features: vk.FormatFeatureFlags = {.SAMPLED_IMAGE, .SAMPLED_IMAGE_FILTER_LINEAR}
+@(private)
+get_drm_modifiers :: proc(
+  ctx: ^Vulkan_Context,
+) -> (
+  modifiers: vector.Vector(vk.DrmFormatModifierPropertiesEXT),
+  err: error.Error,
+) {
+  render_features: vk.FormatFeatureFlags = {
+    .COLOR_ATTACHMENT,
+    .COLOR_ATTACHMENT_BLEND,
+  }
+
+  texture_features: vk.FormatFeatureFlags = {
+    .SAMPLED_IMAGE,
+    .SAMPLED_IMAGE_FILTER_LINEAR,
+  }
 
   modifier_properties_list := vk.DrmFormatModifierPropertiesListEXT {
     sType = .DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
@@ -37,14 +49,32 @@ get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: vector.Vector(vk.
     pNext = &modifier_properties_list,
   }
 
-  vk.GetPhysicalDeviceFormatProperties2(ctx.physical_device, ctx.format, &properties)
+  vk.GetPhysicalDeviceFormatProperties2(
+    ctx.physical_device,
+    ctx.format,
+    &properties,
+  )
   count := modifier_properties_list.drmFormatModifierCount
 
-  modifiers = vector.new(vk.DrmFormatModifierPropertiesEXT, u32(count), ctx.allocator) or_return
-  drmFormatModifierProperties := make([]vk.DrmFormatModifierPropertiesEXT, count, ctx.tmp_allocator)
-  modifier_properties_list.pDrmFormatModifierProperties = &drmFormatModifierProperties[0]
+  modifiers = vector.new(
+    vk.DrmFormatModifierPropertiesEXT,
+    u32(count),
+    ctx.allocator,
+  ) or_return
 
-  vk.GetPhysicalDeviceFormatProperties2(ctx.physical_device, ctx.format, &properties)
+  drmFormatModifierProperties := make(
+    []vk.DrmFormatModifierPropertiesEXT,
+    count,
+    ctx.tmp_allocator,
+  )
+  modifier_properties_list.pDrmFormatModifierProperties =
+  &drmFormatModifierProperties[0]
+
+  vk.GetPhysicalDeviceFormatProperties2(
+    ctx.physical_device,
+    ctx.format,
+    &properties,
+  )
 
   image_modifier_info := vk.PhysicalDeviceImageDrmFormatModifierInfoEXT {
     sType       = .PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT,
@@ -77,8 +107,11 @@ get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: vector.Vector(vk.
   emp := &external_image_properties.externalMemoryProperties
 
   for i in 0 ..< count {
-    modifier_properties := modifier_properties_list.pDrmFormatModifierProperties[i]
-    image_modifier_info.drmFormatModifier = modifier_properties.drmFormatModifier
+    modifier_properties :=
+      modifier_properties_list.pDrmFormatModifierProperties[i]
+
+    image_modifier_info.drmFormatModifier =
+      modifier_properties.drmFormatModifier
 
     if modifier_properties.drmFormatModifierTilingFeatures < render_features do continue
     if modifier_properties.drmFormatModifierTilingFeatures < texture_features do continue
@@ -99,13 +132,26 @@ get_drm_modifiers :: proc(ctx: ^Vulkan_Context) -> (modifiers: vector.Vector(vk.
   return modifiers, nil
 }
 
-@private
-check_physical_device_ext_support :: proc(ctx: ^Vulkan_Context, physical_device: vk.PhysicalDevice) -> error.Error {
+@(private)
+check_physical_device_ext_support :: proc(
+  ctx: ^Vulkan_Context,
+  physical_device: vk.PhysicalDevice,
+) -> error.Error {
   count: u32
 
   vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, nil)
-  available_extensions := make([]vk.ExtensionProperties, count, ctx.tmp_allocator)
-  vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, &available_extensions[0])
+  available_extensions := make(
+    []vk.ExtensionProperties,
+    count,
+    ctx.tmp_allocator,
+  )
+
+  vk.EnumerateDeviceExtensionProperties(
+    physical_device,
+    nil,
+    &count,
+    &available_extensions[0],
+  )
 
   check :: proc(e: cstring, availables: []vk.ExtensionProperties) -> bool {
     for &available in availables do if e == cstring(&available.extensionName[0]) do return true
@@ -118,11 +164,18 @@ check_physical_device_ext_support :: proc(ctx: ^Vulkan_Context, physical_device:
   return nil
 }
 
-@private
-find_physical_device :: proc(ctx: ^Vulkan_Context) -> (physical_device: vk.PhysicalDevice, err: error.Error) {
+@(private)
+find_physical_device :: proc(
+  ctx: ^Vulkan_Context,
+) -> (
+  physical_device: vk.PhysicalDevice,
+  err: error.Error,
+) {
   device_count: u32
   vk.EnumeratePhysicalDevices(ctx.instance, &device_count, nil)
+
   devices := make([]vk.PhysicalDevice, device_count, ctx.tmp_allocator)
+
   vk.EnumeratePhysicalDevices(ctx.instance, &device_count, &devices[0])
 
   suitability :: proc(ctx: ^Vulkan_Context, dev: vk.PhysicalDevice) -> u32 {
@@ -154,8 +207,13 @@ find_physical_device :: proc(ctx: ^Vulkan_Context) -> (physical_device: vk.Physi
   return physical_device, nil
 }
 
-@private
-queues_indices :: proc(ctx: ^Vulkan_Context) -> (indice: []u32, err: error.Error) {
+@(private)
+queues_indices :: proc(
+  ctx: ^Vulkan_Context,
+) -> (
+  indice: []u32,
+  err: error.Error,
+) {
   MAX: u32 = 0xFF
   indices := make([]u32, 2, ctx.tmp_allocator)
 
@@ -164,9 +222,23 @@ queues_indices :: proc(ctx: ^Vulkan_Context) -> (indice: []u32, err: error.Error
   }
 
   queue_count: u32
-  vk.GetPhysicalDeviceQueueFamilyProperties(ctx.physical_device, &queue_count, nil)
-  available_queues := make([]vk.QueueFamilyProperties, queue_count, ctx.tmp_allocator)
-  vk.GetPhysicalDeviceQueueFamilyProperties(ctx.physical_device, &queue_count, raw_data(available_queues))
+  vk.GetPhysicalDeviceQueueFamilyProperties(
+    ctx.physical_device,
+    &queue_count,
+    nil,
+  )
+
+  available_queues := make(
+    []vk.QueueFamilyProperties,
+    queue_count,
+    ctx.tmp_allocator,
+  )
+
+  vk.GetPhysicalDeviceQueueFamilyProperties(
+    ctx.physical_device,
+    &queue_count,
+    raw_data(available_queues),
+  )
 
   for v, i in available_queues {
     if .GRAPHICS in v.queueFlags && indices[0] == MAX do indices[0] = u32(i)
@@ -181,27 +253,37 @@ queues_indices :: proc(ctx: ^Vulkan_Context) -> (indice: []u32, err: error.Error
   return indices, nil
 }
 
-@private
-device_create :: proc(ctx: ^Vulkan_Context) -> (device: Device, err: error.Error) {
+@(private)
+device_create :: proc(
+  ctx: ^Vulkan_Context,
+) -> (
+  device: Device,
+  err: error.Error,
+) {
   MAX_QUEUE :: 10
 
   indices := queues_indices(ctx) or_return
   queue_priority := f32(1.0)
 
   unique_indices: [MAX_QUEUE]u32 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+
   for i in indices {
     if i != indices[0] do panic("Not accepting diferent queue indices for now")
     unique_indices[i] += 1
   }
 
-  queue_create_infos := make([]vk.DeviceQueueCreateInfo, MAX_QUEUE, ctx.tmp_allocator)
+  queue_create_infos := make(
+    []vk.DeviceQueueCreateInfo,
+    MAX_QUEUE,
+    ctx.tmp_allocator,
+  )
 
   count: u32 = 0
   for k, i in unique_indices {
     if k == 0 do continue
 
     queue_create_info := vk.DeviceQueueCreateInfo {
-      sType      = .DEVICE_QUEUE_CREATE_INFO,
+      sType            = .DEVICE_QUEUE_CREATE_INFO,
       queueFamilyIndex = u32(i),
       queueCount       = 1,
       pQueuePriorities = &queue_priority,
@@ -212,18 +294,18 @@ device_create :: proc(ctx: ^Vulkan_Context) -> (device: Device, err: error.Error
   }
 
   feature_info := vk.PhysicalDeviceVulkan13Features {
-    sType      = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
     synchronization2 = true,
   }
 
   device_create_info := vk.DeviceCreateInfo {
-    sType       = .DEVICE_CREATE_INFO,
-    pNext       = &feature_info,
+    sType                   = .DEVICE_CREATE_INFO,
+    pNext                   = &feature_info,
     enabledExtensionCount   = u32(len(DEVICE_EXTENSIONS)),
     ppEnabledExtensionNames = &DEVICE_EXTENSIONS[0],
     pQueueCreateInfos       = &queue_create_infos[0],
     queueCreateInfoCount    = count,
-    pEnabledFeatures  = nil,
+    pEnabledFeatures        = nil,
     enabledLayerCount       = 0,
   }
 
@@ -233,9 +315,14 @@ device_create :: proc(ctx: ^Vulkan_Context) -> (device: Device, err: error.Error
 
   device.queues = make([]Queue, len(indices), ctx.allocator)
 
-  for i in 0..<len(indices) {
+  for i in 0 ..< len(indices) {
     device.queues[i].indice = indices[i]
-    vk.GetDeviceQueue(device.handle, u32(indices[i]), 0, &device.queues[i].handle)
+    vk.GetDeviceQueue(
+      device.handle,
+      u32(indices[i]),
+      0,
+      &device.queues[i].handle,
+    )
   }
 
   return device, nil
@@ -244,7 +331,12 @@ device_create :: proc(ctx: ^Vulkan_Context) -> (device: Device, err: error.Error
 drm_format :: proc(format: vk.Format) -> u32 {
   #partial switch format {
   case .B8G8R8A8_SRGB:
-    return (u32(u8('X'))) | (u32(u8('R')) << 8) | (u32(u8('2')) << 16) | (u32(u8('4')) << 24)
+    return(
+      (u32(u8('X'))) |
+      (u32(u8('R')) << 8) |
+      (u32(u8('2')) << 16) |
+      (u32(u8('4')) << 24) \
+    )
   }
 
   return 0

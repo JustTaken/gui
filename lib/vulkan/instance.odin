@@ -1,10 +1,15 @@
 package vulk
 
-import vk "vendor:vulkan"
 import "lib:error"
+import vk "vendor:vulkan"
 
-@private
-create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: error.Error) {
+@(private)
+create_instance :: proc(
+  ctx: ^Vulkan_Context,
+) -> (
+  instance: vk.Instance,
+  ok: error.Error,
+) {
   layer_count: u32
   vk.EnumerateInstanceLayerProperties(&layer_count, nil)
   layers := make([]vk.LayerProperties, layer_count, ctx.tmp_allocator)
@@ -17,16 +22,16 @@ create_instance :: proc(ctx: ^Vulkan_Context) -> (instance: vk.Instance, ok: err
   }
 
   app_info := vk.ApplicationInfo {
-    sType        = .APPLICATION_INFO,
+    sType              = .APPLICATION_INFO,
     pApplicationName   = "Hello Triangle",
     applicationVersion = vk.MAKE_VERSION(0, 0, 1),
-    pEngineName  = "No Engine",
+    pEngineName        = "No Engine",
     engineVersion      = vk.MAKE_VERSION(0, 0, 1),
-    apiVersion   = vk.MAKE_VERSION(1, 4, 3),
+    apiVersion         = vk.MAKE_VERSION(1, 4, 3),
   }
 
   create_info := vk.InstanceCreateInfo {
-    sType         = .INSTANCE_CREATE_INFO,
+    sType               = .INSTANCE_CREATE_INFO,
     pApplicationInfo    = &app_info,
     ppEnabledLayerNames = &VALIDATION_LAYERS[0],
     enabledLayerCount   = len(VALIDATION_LAYERS),

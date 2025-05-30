@@ -1,27 +1,33 @@
 #+private
 package gltf
 
+import "core:encoding/json"
 import "core:os"
 import "core:path/filepath"
-import "core:encoding/json"
 
-import "lib:error"
 import "lib:collection/vector"
+import "lib:error"
 
-@private
+@(private)
 Buffer :: struct {
   bytes: []u8,
 }
 
-@private
+@(private)
 Buffer_View :: struct {
   buffer: ^Buffer,
   length: u32,
   offset: u32,
 }
 
-@private
-parse_buffer :: proc(ctx: ^Context, raw: json.Object) -> (buffer: Buffer, err: error.Error) {
+@(private)
+parse_buffer :: proc(
+  ctx: ^Context,
+  raw: json.Object,
+) -> (
+  buffer: Buffer,
+  err: error.Error,
+) {
   os_err: os.Error
   fd: os.Handle
 
@@ -44,17 +50,26 @@ parse_buffer :: proc(ctx: ^Context, raw: json.Object) -> (buffer: Buffer, err: e
   return buffer, nil
 }
 
-@private
+@(private)
 parse_buffers :: proc(ctx: ^Context) -> error.Error {
   for i in 0 ..< len(ctx.raw_buffers) {
-    vector.append(&ctx.buffers, parse_buffer(ctx, ctx.raw_buffers[i].(json.Object)) or_return) or_return
+    vector.append(
+      &ctx.buffers,
+      parse_buffer(ctx, ctx.raw_buffers[i].(json.Object)) or_return,
+    ) or_return
   }
 
   return nil
 }
 
-@private
-parse_buffer_view :: proc(ctx: ^Context, raw: json.Object) -> (view: Buffer_View, err: error.Error) {
+@(private)
+parse_buffer_view :: proc(
+  ctx: ^Context,
+  raw: json.Object,
+) -> (
+  view: Buffer_View,
+  err: error.Error,
+) {
   view.buffer = &ctx.buffers.data[u32(raw["buffer"].(f64))]
   view.length = u32(raw["byteLength"].(f64))
   view.offset = u32(raw["byteOffset"].(f64))
@@ -62,10 +77,13 @@ parse_buffer_view :: proc(ctx: ^Context, raw: json.Object) -> (view: Buffer_View
   return view, nil
 }
 
-@private
+@(private)
 parse_buffer_views :: proc(ctx: ^Context) -> error.Error {
-  for i in 0..<len(ctx.raw_buffer_views) {
-    vector.append(&ctx.buffer_views, parse_buffer_view(ctx, ctx.raw_buffer_views[i].(json.Object)) or_return) or_return
+  for i in 0 ..< len(ctx.raw_buffer_views) {
+    vector.append(
+      &ctx.buffer_views,
+      parse_buffer_view(ctx, ctx.raw_buffer_views[i].(json.Object)) or_return,
+    ) or_return
   }
 
   return nil

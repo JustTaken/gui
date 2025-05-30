@@ -2,20 +2,26 @@ package buffer
 
 import "base:runtime"
 
-import "lib:error"
 import "lib:collection/vector"
+import "lib:error"
 
 Buffer :: struct {
-	vec: vector.Vector(u8),
-	offset: u32,
+  vec:    vector.Vector(u8),
+  offset: u32,
 }
 
 
-new :: proc(cap: u32, allocator: runtime.Allocator) -> (buffer: Buffer, err: error.Error) {
-	buffer.vec = vector.new(u8, cap, allocator) or_return
-	buffer.offset = 0
+new :: proc(
+  cap: u32,
+  allocator: runtime.Allocator,
+) -> (
+  buffer: Buffer,
+  err: error.Error,
+) {
+  buffer.vec = vector.new(u8, cap, allocator) or_return
+  buffer.offset = 0
 
-	return buffer, nil
+  return buffer, nil
 }
 
 reserve :: proc($T: typeid, buffer: ^Buffer) -> (^T, error.Error) {
@@ -51,7 +57,10 @@ read :: proc($T: typeid, buffer: ^Buffer) -> (T, error.Error) {
     return value, .OutOfBounds
   }
 
-  value = intrinsics.unaligned_load((^T)(raw_data(buffer.vec.data[buffer.offset:end])))
+  value = intrinsics.unaligned_load(
+    (^T)(raw_data(buffer.vec.data[buffer.offset:end])),
+  )
+
   buffer.offset = end
 
   return value, nil

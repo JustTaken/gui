@@ -1,7 +1,7 @@
 package vector
 
-import "base:runtime"
 import "base:intrinsics"
+import "base:runtime"
 import "core:log"
 import "core:mem"
 
@@ -13,12 +13,19 @@ Vector :: struct(T: typeid) {
   len:  u32,
 }
 
-new :: proc($T: typeid, cap: u32, allocator: runtime.Allocator) -> (vec: Vector(T), err: error.Error) {
+new :: proc(
+  $T: typeid,
+  cap: u32,
+  allocator: runtime.Allocator,
+) -> (
+  vec: Vector(T),
+  err: error.Error,
+) {
   d, e := make([]T, cap, allocator)
 
   if e != nil {
     log.info("Failed to allocate memory for:", typeid_of(T), cap)
-    return vec, .OutOfMemory,
+    return vec, .OutOfMemory
   }
 
   vec.data = raw_data(d)
@@ -28,9 +35,22 @@ new :: proc($T: typeid, cap: u32, allocator: runtime.Allocator) -> (vec: Vector(
   return vec, nil
 }
 
-append :: proc(vec: ^Vector($T), item: T, loc := #caller_location) -> error.Error {
+append :: proc(
+  vec: ^Vector($T),
+  item: T,
+  loc := #caller_location,
+) -> error.Error {
   if vec.len >= vec.cap {
-    log.error("Failed to append element into vector of type", typeid_of(T), "len:", vec.len, "cap:", vec.cap, loc)
+    log.error(
+      "Failed to append element into vector of type",
+      typeid_of(T),
+      "len:",
+      vec.len,
+      "cap:",
+      vec.cap,
+      loc,
+    )
+
     return .OutOfBounds
   }
 
@@ -72,7 +92,13 @@ append_n :: proc(vec: ^Vector($T), items: []T) -> error.Error {
 
 reserve_n :: proc(vec: ^Vector($T), n: u32) -> error.Error {
   if vec.len + n > vec.cap {
-    log.info("Vector does not have more space", typeid_of(T), n, vec.cap, vec.len)
+    log.info(
+      "Vector does not have more space",
+      typeid_of(T),
+      n,
+      vec.cap,
+      vec.len,
+    )
     return .OutOfBounds
   }
 
@@ -83,7 +109,15 @@ reserve_n :: proc(vec: ^Vector($T), n: u32) -> error.Error {
 
 one :: proc(vec: ^Vector($T)) -> (^T, error.Error) {
   if vec.len >= vec.cap {
-    log.error("Failed to append element into vector len: ", vec.len, "cap:", vec.cap, "of type", typeid_of(T))
+    log.error(
+      "Failed to append element into vector len: ",
+      vec.len,
+      "cap:",
+      vec.cap,
+      "of type",
+      typeid_of(T),
+    )
+
     return nil, .OutOfBounds
   }
 

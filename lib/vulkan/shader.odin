@@ -1,19 +1,22 @@
 package vulk
 
-import vk "vendor:vulkan"
-import "core:strings"
-import "core:os"
 import "core:log"
+import "core:os"
+import "core:strings"
+import vk "vendor:vulkan"
 
 import "lib:error"
 
 Shader_Module :: struct {
-  path: string,
+  path:   string,
   handle: vk.ShaderModule,
 }
 
-@private
-shader_module_update :: proc(module: ^Shader_Module, ctx: ^Vulkan_Context) -> error.Error {
+@(private)
+shader_module_update :: proc(
+  module: ^Shader_Module,
+  ctx: ^Vulkan_Context,
+) -> error.Error {
   er: os.Error
   file: os.Handle
   size: i64
@@ -46,7 +49,8 @@ shader_module_update :: proc(module: ^Shader_Module, ctx: ^Vulkan_Context) -> er
     pCode    = cast([^]u32)(&buf[0]),
   }
 
-  if vk.CreateShaderModule(ctx.device.handle, &info, nil, &module.handle) != .SUCCESS {
+  if vk.CreateShaderModule(ctx.device.handle, &info, nil, &module.handle) !=
+     .SUCCESS {
     log.error("Failed to create shader", module.path, "module")
     return .CreateShaderModuleFailed
   }
@@ -54,8 +58,12 @@ shader_module_update :: proc(module: ^Shader_Module, ctx: ^Vulkan_Context) -> er
   return nil
 }
 
-@private
-shader_module_create :: proc(module: ^Shader_Module, ctx: ^Vulkan_Context, path: string) -> error.Error {
+@(private)
+shader_module_create :: proc(
+  module: ^Shader_Module,
+  ctx: ^Vulkan_Context,
+  path: string,
+) -> error.Error {
   module.path = strings.clone(path, ctx.allocator)
   shader_module_update(module, ctx) or_return
 

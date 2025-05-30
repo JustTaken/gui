@@ -1,9 +1,9 @@
 package vulk
 
-import vk "vendor:vulkan"
 import "core:fmt"
-import "core:math/linalg"
 import "core:log"
+import "core:math/linalg"
+import vk "vendor:vulkan"
 
 import "lib:collection/vector"
 import "lib:error"
@@ -23,20 +23,31 @@ Instance_Draw_Method :: enum {
 }
 
 Instance :: struct {
-  offset: u32,
+  offset:    u32,
   transform: Matrix,
 }
 
 Geometry :: struct {
-  vertex: Buffer,
-  indice: Buffer,
-  count: u32,
-  material: u32,
+  vertex:    Buffer,
+  indice:    Buffer,
+  count:     u32,
+  material:  u32,
   transform: Matrix,
-  kind: Geometry_Kind,
+  kind:      Geometry_Kind,
 }
 
-geometry_create :: proc($T: typeid, ctx: ^Vulkan_Context, vertices: []T, indices: []u16, transform: Matrix, material: Maybe(u32), kind: Geometry_Kind) -> (index: u32, err: error.Error) {
+geometry_create :: proc(
+  $T: typeid,
+  ctx: ^Vulkan_Context,
+  vertices: []T,
+  indices: []u16,
+  transform: Matrix,
+  material: Maybe(u32),
+  kind: Geometry_Kind,
+) -> (
+  index: u32,
+  err: error.Error,
+) {
   index = ctx.geometries.len
 
   geometry := vector.one(&ctx.geometries) or_return
@@ -46,68 +57,116 @@ geometry_create :: proc($T: typeid, ctx: ^Vulkan_Context, vertices: []T, indices
 
   geometry.material = material.? or_else ctx.default_material
 
-  geometry.vertex = buffer_create(ctx, u32(len(vertices) * size_of(T)), {.VERTEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
+  geometry.vertex = buffer_create(
+    ctx,
+    u32(len(vertices) * size_of(T)),
+    {.VERTEX_BUFFER, .TRANSFER_DST},
+    {.DEVICE_LOCAL},
+  ) or_return
   copy_data(T, ctx, vertices, &geometry.vertex, 0) or_return
 
-  geometry.indice = buffer_create(ctx, u32(len(indices) * size_of(u16)), {.INDEX_BUFFER, .TRANSFER_DST}, {.DEVICE_LOCAL}) or_return
+  geometry.indice = buffer_create(
+    ctx,
+    u32(len(indices) * size_of(u16)),
+    {.INDEX_BUFFER, .TRANSFER_DST},
+    {.DEVICE_LOCAL},
+  ) or_return
   copy_data(u16, ctx, indices, &geometry.indice, 0) or_return
 
   return index, nil
 }
 
-geometry_instance_add :: proc(ctx: ^Vulkan_Context, geometry_index: u32, model: Maybe(Instance_Model), transform_offset: u32, method: Instance_Draw_Method) -> (instance: ^Instance, ok: error.Error) {
+geometry_instance_add :: proc(
+  ctx: ^Vulkan_Context,
+  geometry_index: u32,
+  model: Maybe(Instance_Model),
+  transform_offset: u32,
+  method: Instance_Draw_Method,
+) -> (
+  instance: ^Instance,
+  ok: error.Error,
+) {
   pipeline: ^Pipeline
   offset: u32
 
   switch ctx.geometries.data[geometry_index].kind {
-    case .Unboned:
-      offset = transform_offset
+  case .Unboned:
+    offset = transform_offset
 
-      switch method {
-        case .WithView:
-          pipeline = ctx.default_pipeline
-        case .WithoutView:
-          pipeline = ctx.plain_pipeline
-      }
-    case .Boned:
-      offset = 0
+    switch method {
+    case .WithView:
+      pipeline = ctx.default_pipeline
+    case .WithoutView:
+      pipeline = ctx.plain_pipeline
+    }
+  case .Boned:
+    offset = 0
 
-      switch method {
-        case .WithView:
-          pipeline = ctx.boned_pipeline
-        case .WithoutView:
-          panic("TODO")
-      }
+    switch method {
+    case .WithView:
+      pipeline = ctx.boned_pipeline
+    case .WithoutView:
+      panic("TODO")
+    }
   }
 
-  instance = pipeline_add_instance(ctx, pipeline, geometry_index, model, offset) or_return
+  instance = pipeline_add_instance(
+    ctx,
+    pipeline,
+    geometry_index,
+    model,
+    offset,
+  ) or_return
 
   return instance, nil
 }
 
-instance_update :: proc(ctx: ^Vulkan_Context, instance: ^Instance, model: Maybe(Instance_Model)) -> error.Error {
+instance_update :: proc(
+  ctx: ^Vulkan_Context,
+  instance: ^Instance,
+  model: Maybe(Instance_Model),
+) -> error.Error {
   if model != nil {
     models := [?]Instance_Model{model.? * instance.transform}
-    copy_data(Instance_Model, ctx, models[:], &ctx.dynamic_set.descriptors[MODELS].buffer, instance.offset) or_return
+    copy_data(
+      Instance_Model,
+      ctx,
+      models[:],
+      &ctx.dynamic_set.descriptors.data[MODELS].buffer,
+      instance.offset,
+    ) or_return
   }
 
   return nil
 }
 
-add_transforms :: proc(ctx: ^Vulkan_Context, transforms: []Matrix) -> error.Error {
+add_transforms :: proc(
+  ctx: ^Vulkan_Context,
+  transforms: []Matrix,
+) -> error.Error {
   update_transforms(ctx, transforms, ctx.transforms) or_return
   ctx.transforms += u32(len(transforms))
 
   return nil
 }
 
-update_transforms :: proc(ctx: ^Vulkan_Context, transforms: []Matrix, offset: u32) -> error.Error {
-  copy_data(Matrix, ctx, transforms, &ctx.dynamic_set.descriptors[DYNAMIC_TRANSFORMS].buffer, offset) or_return
+update_transforms :: proc(
+  ctx: ^Vulkan_Context,
+  transforms: []Matrix,
+  offset: u32,
+) -> error.Error {
+  copy_data(
+    Matrix,
+    ctx,
+    transforms,
+    &ctx.dynamic_set.descriptors.data[DYNAMIC_TRANSFORMS].buffer,
+    offset,
+  ) or_return
 
   return nil
 }
 
-@private
+@(private)
 destroy_geometry :: proc(ctx: ^Vulkan_Context, geometry: ^Geometry) {
   buffer_destroy(ctx, geometry.vertex)
   buffer_destroy(ctx, geometry.indice)
