@@ -8,9 +8,11 @@ import "lib:collection/vector"
 TRANSFORMS :: 0
 LIGHTS :: 1
 
-MODELS :: 0
-DYNAMIC_TRANSFORMS :: 1
-OFFSETS :: 2
+MATERIALS :: 0
+MODELS :: 1
+DYNAMIC_TRANSFORMS :: 2
+TRANSFORM_OFFSETS :: 3
+MATERIAL_OFFSETS :: 4
 
 @private
 Descriptor_Set_Layout_Binding :: struct {
@@ -60,10 +62,10 @@ descriptor_set_allocate :: proc(ctx: ^Vulkan_Context, pool: ^Descriptor_Pool, la
 
   layouts := [?]vk.DescriptorSetLayout { layout.handle }
   info := vk.DescriptorSetAllocateInfo {
-    sType        = .DESCRIPTOR_SET_ALLOCATE_INFO,
-    descriptorPool     = pool.handle,
+    sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+    descriptorPool = pool.handle,
     descriptorSetCount = u32(len(layouts)),
-    pSetLayouts  = &layouts[0],
+    pSetLayouts = &layouts[0],
   }
 
   if vk.AllocateDescriptorSets(ctx.device.handle, &info, &set.handle) != .SUCCESS {
@@ -128,14 +130,16 @@ set_layout_create :: proc(ctx: ^Vulkan_Context, bindings: []Descriptor_Set_Layou
 @private
 descriptor_pool_create :: proc(ctx: ^Vulkan_Context, sizes: []vk.DescriptorPoolSize, max: u32) -> (pool: Descriptor_Pool, err: error.Error) {
   info := vk.DescriptorPoolCreateInfo {
-    sType   = .DESCRIPTOR_POOL_CREATE_INFO,
+    sType = .DESCRIPTOR_POOL_CREATE_INFO,
     poolSizeCount = u32(len(sizes)),
-    pPoolSizes    = &sizes[0],
-    maxSets       = max,
+    pPoolSizes = &sizes[0],
+    maxSets = max,
   }
 
-  if vk.CreateDescriptorPool(ctx.device.handle, &info, nil, &pool.handle) != nil do return pool, .CreateDescriptorPoolFailed
   pool.sets = vector.new(Descriptor_Set, max, ctx.allocator) or_return
+  if vk.CreateDescriptorPool(ctx.device.handle, &info, nil, &pool.handle) != nil {
+    return pool, .CreateDescriptorPoolFailed
+  }
 
   return pool, nil
 }
@@ -172,21 +176,21 @@ descriptor_set_update :: proc(ctx: ^Vulkan_Context, set: Descriptor_Set) {
 
 update_projection :: proc(ctx: ^Vulkan_Context, projection: Matrix) -> error.Error {
   m := [?]Matrix{projection}
-  copy_data(Matrix, ctx, m[:], ctx.fixed_set.descriptors[TRANSFORMS].buffer.handle, 0) or_return
+  copy_data(Matrix, ctx, m[:], &ctx.fixed_set.descriptors[TRANSFORMS].buffer, 0) or_return
 
   return nil
 }
 
 update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> error.Error {
   m := [?]Matrix{view}
-  copy_data(Matrix, ctx, m[:], ctx.fixed_set.descriptors[TRANSFORMS].buffer.handle, 1) or_return
+  copy_data(Matrix, ctx, m[:], &ctx.fixed_set.descriptors[TRANSFORMS].buffer, 1) or_return
 
   return nil
 }
 
 update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> error.Error {
   m := [?]Light{light}
-  copy_data(Light, ctx, m[:], ctx.fixed_set.descriptors[LIGHTS].buffer.handle, 0) or_return
+  copy_data(Light, ctx, m[:], &ctx.fixed_set.descriptors[LIGHTS].buffer, 0) or_return
 
   return nil
 }
@@ -198,9 +202,9 @@ submit_staging_data :: proc(ctx: ^Vulkan_Context) -> error.Error {
   if vk.EndCommandBuffer(ctx.command_buffers.data[1]) != .SUCCESS do return .EndCommandBufferFailed
 
   submit_info := vk.SubmitInfo {
-    sType        = .SUBMIT_INFO,
+    sType = .SUBMIT_INFO,
     commandBufferCount = 1,
-    pCommandBuffers    = &ctx.command_buffers.data[1],
+    pCommandBuffers = &ctx.command_buffers.data[1],
   }
 
   vk.ResetFences(ctx.device.handle, 1, &ctx.copy_fence)

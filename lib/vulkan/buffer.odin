@@ -32,10 +32,10 @@ buffer_create :: proc(ctx: ^Vulkan_Context, size: u32, usage: vk.BufferUsageFlag
 @private
 vulkan_buffer_create :: proc(ctx: ^Vulkan_Context, size: u32, usage: vk.BufferUsageFlags) -> (buffer: vk.Buffer, err: error.Error) {
   buf_info := vk.BufferCreateInfo {
-    sType       = .BUFFER_CREATE_INFO,
-    size        = vk.DeviceSize(size),
-    usage       = usage,
-    flags       = {},
+    sType = .BUFFER_CREATE_INFO,
+    size = vk.DeviceSize(size),
+    usage = usage,
+    flags = {},
     sharingMode = .EXCLUSIVE,
   }
 
@@ -52,8 +52,8 @@ buffer_create_memory :: proc(ctx: ^Vulkan_Context, buffer: vk.Buffer, properties
   vk.GetBufferMemoryRequirements(ctx.device.handle, buffer, &requirements)
 
   alloc_info := vk.MemoryAllocateInfo {
-    sType     = .MEMORY_ALLOCATE_INFO,
-    pNext     = nil,
+    sType = .MEMORY_ALLOCATE_INFO,
+    pNext = nil,
     allocationSize  = requirements.size,
     memoryTypeIndex = find_memory_type(
       ctx.physical_device,
@@ -82,11 +82,16 @@ memory_copy :: proc($T: typeid, ctx: ^Vulkan_Context, memory: vk.DeviceMemory, o
 }
 
 @private
-copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer: vk.Buffer, dst_offset: u32) -> error.Error {
+copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer: ^Buffer, dst_offset: u32) -> error.Error {
   l := u32(len(data))
 
   if ctx.staging.buffer.len + l > ctx.staging.buffer.cap {
     return .OutOfStagingMemory
+  }
+
+  if dst_offset >= dst_buffer.cap {
+    log.error("Trying to copy data outside of buffer boundary")
+    return .OutOfBounds
   }
 
   size := u32(l * size_of(T))
@@ -112,21 +117,21 @@ copy_data :: proc($T: typeid, ctx: ^Vulkan_Context, data: []T, dst_buffer: vk.Bu
     ctx.staging.recording = true
   }
 
-  vk.CmdCopyBuffer(ctx.command_buffers.data[1], ctx.staging.buffer.handle, dst_buffer, 1, &copy_info)
+  vk.CmdCopyBuffer(ctx.command_buffers.data[1], ctx.staging.buffer.handle, dst_buffer.handle, 1, &copy_info)
 
   return nil
 }
 
 @private
 find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) -> (u32, error.Error) {
-	mem_properties: vk.PhysicalDeviceMemoryProperties
-	vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
+  mem_properties: vk.PhysicalDeviceMemoryProperties
+  vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
 
-	for i in 0 ..< mem_properties.memoryTypeCount {
-		if (type_filter & (1 << i) != 0) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties do return i, nil
-	}
+  for i in 0 ..< mem_properties.memoryTypeCount {
+    if (type_filter & (1 << i) != 0) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties do return i, nil
+  }
 
-	return 0, .MemoryNotFound
+  return 0, .MemoryNotFound
 }
 
 @private

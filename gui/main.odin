@@ -115,7 +115,7 @@ init_scene :: proc(ctx: ^Context, width: u32, height: u32, frames: u32) ->  erro
   ctx.view.rotation = linalg.MATRIX4F32_IDENTITY
   ctx.scenes = load_gltf_scenes(ctx, "assets/scene.gltf", 1) or_return
   ctx.ambient = scene_instance_create(ctx, &ctx.scenes, "Ambient", linalg.matrix4_translate_f32({0, -5, -20}), .WithView) or_return
-  ctx.player = scene_instance_create(ctx, &ctx.scenes, "Arrows", linalg.matrix4_translate_f32(ctx.view.arrow), .WithoutView) or_return
+  ctx.player = scene_instance_create(ctx, &ctx.scenes, "Arrows", linalg.matrix4_translate_f32(ctx.view.arrow), .WithView) or_return
 
   wayland.add_listener(&ctx.wl, ctx, frame) or_return
   vulkan.update_view(&ctx.vk, linalg.MATRIX4F32_IDENTITY) or_return

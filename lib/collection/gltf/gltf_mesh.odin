@@ -6,18 +6,10 @@ import "core:encoding/json"
 import "lib:error"
 import "lib:collection/vector"
 
-Material :: struct {
-  name: string,
-  double_sided: bool,
-  metallic_roughness: []f64,
-  metallic_factor: f64,
-  roughness_factor: f64,
-}
-
 Mesh_Primitive :: struct {
   accessors: [Accessor_Kind]^Accessor,
   indices: ^Accessor,
-  material: ^Material,
+  material: Maybe(u32),
 }
 
 Mesh :: struct {
@@ -73,40 +65,6 @@ Mesh :: struct {
 // }
 
 @private
-parse_material :: proc(ctx: ^Context, raw: json.Object) -> (material: Material, err: error.Error) {
-  material.name = raw["name"].(string)
-  material.double_sided = raw["doubleSided"].(bool)
-
-  if attrib, ok := raw["pbrMetallicRoughness"]; ok {
-    factor := attrib.(json.Object)["baseColorFactor"].(json.Array)
-    material.metallic_roughness = make([]f64, len(factor), ctx.allocator)
-
-    for i in 0..<len(factor) {
-      material.metallic_roughness[i] = factor[i].(f64)
-    }
-  }
-
-  if attrib, ok := raw["metallicFactor"]; ok {
-    material.metallic_factor = attrib.(f64)
-  }
-
-  if attrib, ok := raw["roughnessFactor"]; ok {
-    material.roughness_factor = attrib.(f64)
-  }
-
-  return material, nil
-}
-
-@private
-parse_materials :: proc(ctx: ^Context) -> error.Error {
-  for i in 0..<len(ctx.raw_materials) {
-    vector.append(&ctx.materials, parse_material(ctx, ctx.raw_materials[i].(json.Object)) or_return) or_return
-  }
-
-  return nil
-}
-
-@private
 parse_mesh_primitive :: proc(ctx: ^Context, raw: json.Object) -> (primitive: Mesh_Primitive, err: error.Error) {
   raw_accessors := raw["attributes"].(json.Object)
 
@@ -119,7 +77,7 @@ parse_mesh_primitive :: proc(ctx: ^Context, raw: json.Object) -> (primitive: Mes
   if attrib, ok := raw_accessors["TEXCOORD_1"]; ok do primitive.accessors[.Texture1] = &ctx.accessors.data[u32(attrib.(f64))]
 
   if indices, ok := raw["indices"]; ok do primitive.indices = &ctx.accessors.data[u32(indices.(f64))]
-  if material, ok := raw["material"]; ok do primitive.material = &ctx.materials.data[u32(material.(f64))]
+  if material, ok := raw["material"]; ok do primitive.material = u32(material.(f64))
 
   return primitive, nil
 }

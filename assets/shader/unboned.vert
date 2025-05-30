@@ -15,25 +15,34 @@ layout(set = 0, binding = 1) readonly buffer Light {
   vec3 light;
 };
 
-layout(set = 1, binding = 0) readonly buffer InstanceModel {
+layout(set = 1, binding = 0) readonly buffer Materials {
+  vec4 materials[];
+};
+
+layout(set = 1, binding = 1) readonly buffer InstanceModel {
   mat4 models[];
 };
 
-layout(set = 1, binding = 1) readonly buffer InstanceTransform {
+layout(set = 1, binding = 2) readonly buffer InstanceBones {
   mat4 transforms[];
 };
 
-layout(set = 1, binding = 2) readonly buffer InstanceOffset {
-  int offsets[];
+layout(set = 1, binding = 3) readonly buffer InstanceOffset {
+  int transform_offsets[];
+};
+
+layout(set = 1, binding = 4) readonly buffer InstanceMaterialOffset {
+  int material_offsets[];
 };
 
 void main() {
-  int offset = offsets[gl_InstanceIndex];
+  int offset = transform_offsets[gl_InstanceIndex];
   mat4 transform = transforms[offset];
 
   gl_Position = projection * view * transform * models[gl_InstanceIndex] * vec4(in_position, 1.0);
 
+  vec4 color = materials[material_offsets[gl_InstanceIndex]];
   vec3 ligth_direction = normalize(light - gl_Position.xyz);
-  out_color = vec4(length(dot(in_normal, ligth_direction)) * vec3(1, 1, 1), 1);
+  out_color = vec4(length(dot(in_normal, ligth_direction)) * color.rgb, color.a);
 }
 

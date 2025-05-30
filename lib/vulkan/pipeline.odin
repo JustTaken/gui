@@ -268,9 +268,9 @@ layout_create :: proc(ctx: ^Vulkan_Context, set_layouts: []^Descriptor_Set_Layou
   }
 
   layout_info := vk.PipelineLayoutCreateInfo {
-    sType    = .PIPELINE_LAYOUT_CREATE_INFO,
+    sType = .PIPELINE_LAYOUT_CREATE_INFO,
     setLayoutCount = u32(len(layouts)),
-    pSetLayouts    = &layouts[0],
+    pSetLayouts = &layouts[0],
   }
 
   if vk.CreatePipelineLayout(ctx.device.handle, &layout_info, nil, &layout.handle) != .SUCCESS {
@@ -324,8 +324,10 @@ shader_module_create :: proc(ctx: ^Vulkan_Context, path: string) -> (module: vk.
 }
 
 @private
-pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometry: ^Geometry, model: Maybe(Instance_Model)) -> (instance: ^Instance, err: error.Error) {
+pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometry_index: u32, model: Maybe(Instance_Model)) -> (instance: ^Instance, err: error.Error) {
   group: ^Pipeline_Instance_Group = nil
+
+  geometry := &ctx.geometries.data[geometry_index]
 
   for i in 0..<pipeline.groups.len {
     if geometry == pipeline.groups.data[i].geometry {
@@ -351,7 +353,10 @@ pipeline_add_instance :: proc(ctx: ^Vulkan_Context, pipeline: ^Pipeline, geometr
   m := model.? or_else linalg.MATRIX4F32_IDENTITY
 
   transform_offset := [?]u32{ctx.transforms}
-  copy_data(u32, ctx, transform_offset[:], ctx.dynamic_set.descriptors[OFFSETS].buffer.handle, instance.offset) or_return
+  copy_data(u32, ctx, transform_offset[:], &ctx.dynamic_set.descriptors[TRANSFORM_OFFSETS].buffer, instance.offset) or_return
+
+  material_offsets := [?]u32{geometry.material}
+  copy_data(u32, ctx, material_offsets[:], &ctx.dynamic_set.descriptors[MATERIAL_OFFSETS].buffer, instance.offset) or_return
 
   instance_update(ctx, instance, m) or_return
 

@@ -66,6 +66,7 @@ Gltf :: struct {
   nodes: vector.Vector(Node),
   skins: vector.Vector(Skin),
   meshes: vector.Vector(Mesh),
+  materials: vector.Vector(Material),
 }
 
 from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, err: error.Error) {
@@ -86,6 +87,7 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
   parse_buffers(&ctx) or_return
   parse_buffer_views(&ctx) or_return
   parse_accessors(&ctx) or_return
+  parse_materials(&ctx) or_return
   parse_meshes(&ctx) or_return
   parse_skins(&ctx) or_return
   parse_animations(&ctx) or_return
@@ -93,8 +95,9 @@ from_file :: proc(path: string, allocator: runtime.Allocator) -> (gltf: Gltf, er
   parse_scenes(&ctx) or_return
 
   gltf.scenes = ctx.scenes
-  gltf.nodes = ctx.nodes
+  gltf.materials = ctx.materials
   gltf.meshes = ctx.meshes
+  gltf.nodes = ctx.nodes
   gltf.skins = ctx.skins
   gltf.animations = ctx.animations
 

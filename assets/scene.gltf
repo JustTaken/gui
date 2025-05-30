@@ -8,27 +8,22 @@
 		{
 			"name":"Ambient",
 			"nodes":[
-				0,
 				1,
-				2
+				2,
+				3
 			]
 		},
 		{
 			"name":"Arrows",
 			"nodes":[
-				3
+				0
 			]
 		}
 	],
 	"nodes":[
 		{
-			"mesh":0,
-			"name":"Plane",
-			"scale":[
-				16.40563201904297,
-				16.40563201904297,
-				16.40563201904297
-			]
+			"mesh":3,
+			"name":"TimeThing"
 		},
 		{
 			"mesh":1,
@@ -54,13 +49,29 @@
 			]
 		},
 		{
-			"mesh":3,
-			"name":"Sphere",
+			"mesh":0,
+			"name":"Plane",
 			"scale":[
-				0.14848697185516357,
-				0.14848697185516357,
-				0.14848697185516357
+				16.40563201904297,
+				16.40563201904297,
+				16.40563201904297
 			]
+		}
+	],
+	"materials":[
+		{
+			"doubleSided":true,
+			"name":"Pink",
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.8002825975418091,
+					0.15373347699642181,
+					0.6916794180870056,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0.5
+			}
 		}
 	],
 	"meshes":[
@@ -104,7 +115,7 @@
 			]
 		},
 		{
-			"name":"Sphere.001",
+			"name":"Circle.004",
 			"primitives":[
 				{
 					"attributes":{
@@ -112,7 +123,8 @@
 						"NORMAL":13,
 						"TEXCOORD_0":14
 					},
-					"indices":15
+					"indices":15,
+					"material":0
 				}
 			]
 		}
@@ -223,35 +235,35 @@
 		{
 			"bufferView":12,
 			"componentType":5126,
-			"count":3520,
+			"count":272,
 			"max":[
-				13.194172859191895,
-				13.194172859191895,
-				13.194172859191895
+				0.7192721962928772,
+				3.469459056854248,
+				0.7192721962928772
 			],
 			"min":[
-				-0.9999990463256836,
-				-1,
-				-1
+				-0.719272255897522,
+				0.18463802337646484,
+				-0.7192721962928772
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":13,
 			"componentType":5126,
-			"count":3520,
+			"count":272,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":14,
 			"componentType":5126,
-			"count":3520,
+			"count":272,
 			"type":"VEC2"
 		},
 		{
 			"bufferView":15,
 			"componentType":5123,
-			"count":5166,
+			"count":1524,
 			"type":"SCALAR"
 		}
 	],
@@ -330,32 +342,32 @@
 		},
 		{
 			"buffer":0,
-			"byteLength":42240,
+			"byteLength":3264,
 			"byteOffset":4340,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":42240,
-			"byteOffset":46580,
+			"byteLength":3264,
+			"byteOffset":7604,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":28160,
-			"byteOffset":88820,
+			"byteLength":2176,
+			"byteOffset":10868,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":10332,
-			"byteOffset":116980,
+			"byteLength":3048,
+			"byteOffset":13044,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":127312,
+			"byteLength":16092,
 			"uri":"scene.bin"
 		}
 	]

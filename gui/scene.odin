@@ -20,14 +20,23 @@ Scene_Animation :: struct {
 On_Going_Animation :: struct {
   start: i64,
   last_frame: u32,
-  ref: Scene_Animation,
+  ref: ^Scene_Animation,
+}
+
+Model :: struct {
+  geometries: vector.Vector(u32),
+  children: vector.Vector(^Model),
 }
 
 Model_Instance :: struct {
   model: ^Model,
   instances: vector.Vector(^vulkan.Instance),
-  bones: vector.Vector(Scene_Instance),
   children: vector.Vector(Model_Instance),
+}
+
+Scene :: struct {
+  parent: ^Scenes,
+  models: vector.Vector(^Model),
 }
 
 Scene_Instance :: struct {
@@ -36,22 +45,12 @@ Scene_Instance :: struct {
   on_going: Maybe(On_Going_Animation),
 }
 
-Scene :: struct {
-  parent: ^Scenes,
-  models: vector.Vector(^Model),
-}
-
 Scenes :: struct {
   childs: map[string]Scene,
   animations: map[string]Scene_Animation,
+  models: vector.Vector(Model),
+  materials: vector.Vector(u32),
   transforms_offset: u32,
-  all_models: vector.Vector(Model),
-}
-
-Model :: struct {
-  geometries: vector.Vector(^vulkan.Geometry),
-  children: vector.Vector(^Model),
-  bones: vector.Vector(Matrix),
 }
 
 // next_scene_animation_frame :: proc(ctx: ^Context, instance: ^Scene_Instance, name: string) -> error.Error {
@@ -135,7 +134,7 @@ play_scene_animation :: proc(instance: ^Scene_Instance, name: string, time: i64)
   on_going: On_Going_Animation
 
   if ref, ok := instance.scene.parent.animations[name]; ok {
-    on_going.ref = ref
+    on_going.ref = &ref
   } else {
     log.error("Animation", name, "Not Found")
     return .NoAnimation
@@ -205,11 +204,6 @@ scene_instance_update :: proc(ctx: ^Context, instance: ^Scene_Instance, transfor
 model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix, method: vulkan.Instance_Draw_Method) -> (instance: Model_Instance, err: error.Error) {
   instance.model = model
 
-  instance.bones = vector.new(Scene_Instance, model.bones.len, ctx.allocator) or_return
-  //for i in 0..<model.bones.len {
-    //collection.append(&instance.bones, scene_instance_create(ctx, ctx.bone, transform * model.bones.data[i]) or_return) or_return
-  //}
-
   instance.children = vector.new(Model_Instance, model.children.len, ctx.allocator) or_return
   for i in 0..<model.children.len {
     vector.append(&instance.children, model_instance_create(ctx, model.children.data[i], transform, method) or_return) or_return
@@ -223,17 +217,17 @@ model_instance_create :: proc(ctx: ^Context, model: ^Model, transform: Matrix, m
   return instance, nil
 }
 
-load_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: vector.Vector(^vulkan.Geometry), err: error.Error) {
+load_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, node: u32, max: u32) -> (geometries: vector.Vector(u32), err: error.Error) {
   if glt.nodes.data[node].skin != nil {
-    geometries = load_boned_mesh(ctx, glt, node, max) or_return
+    geometries = load_boned_mesh(ctx, glt, scenes, node, max) or_return
   } else {
-    geometries = load_unboned_mesh(ctx, glt, node, max) or_return
+    geometries = load_unboned_mesh(ctx, glt, scenes, node, max) or_return
   }
 
   return geometries, nil
 }
 
-load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: vector.Vector(^vulkan.Geometry), err: error.Error) {
+load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, node: u32, max: u32) -> (geometries: vector.Vector(u32), err: error.Error) {
   Vertex :: struct {
     position: [3]f32,
     normal: [3]f32,
@@ -243,13 +237,15 @@ load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -
   mesh := &glt.meshes.data[glt.nodes.data[node].mesh.?]
   transform := glt.nodes.data[node].transform.compose
 
-  geometries = vector.new(^vulkan.Geometry, mesh.primitives.len, ctx.allocator) or_return
+  geometries = vector.new(u32, mesh.primitives.len, ctx.allocator) or_return
 
   for p in 0..<mesh.primitives.len {
-    positions := mesh.primitives.data[p].accessors[.Position]
-    normals := mesh.primitives.data[p].accessors[.Normal]
-    textures := mesh.primitives.data[p].accessors[.Texture0]
-    indices := mesh.primitives.data[p].indices
+    primitive := &mesh.primitives.data[p]
+
+    positions := primitive.accessors[.Position]
+    normals := primitive.accessors[.Normal]
+    textures := primitive.accessors[.Texture0]
+    indices := primitive.indices
 
     assert(positions.component_kind == .F32 && positions.component_count == 3)
     assert(normals.component_kind == .F32 && normals.component_count == 3)
@@ -274,15 +270,20 @@ load_unboned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -
       vertex.texture = texts[i]
     }
 
+    material: Maybe(u32) = nil
+    if primitive.material != nil {
+      material = scenes.materials.data[primitive.material.?]
+    }
+
     ind := (cast([^]u16)raw_data(indices.bytes))[0:indices.count]
-    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, transform, .Unboned) or_return
+    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, transform, material, .Unboned) or_return
     vector.append(&geometries, geometry) or_return
   }
 
   return geometries, nil
 }
 
-load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> (geometries: vector.Vector(^vulkan.Geometry), err: error.Error) {
+load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, node: u32, max: u32) -> (geometries: vector.Vector(u32), err: error.Error) {
   Vertex :: struct {
     position: [3]f32,
     normal: [3]f32,
@@ -294,15 +295,17 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> 
   mesh := &glt.meshes.data[glt.nodes.data[node].mesh.?]
   transform := glt.nodes.data[node].transform.compose
 
-  geometries = vector.new(^vulkan.Geometry, mesh.primitives.len, ctx.allocator) or_return
+  geometries = vector.new(u32, mesh.primitives.len, ctx.allocator) or_return
 
   for p in 0..<mesh.primitives.len {
-    positions := mesh.primitives.data[p].accessors[.Position]
-    normals := mesh.primitives.data[p].accessors[.Normal]
-    textures := mesh.primitives.data[p].accessors[.Texture0]
-    weights := mesh.primitives.data[p].accessors[.Weight0]
-    joints := mesh.primitives.data[p].accessors[.Joint0]
-    indices := mesh.primitives.data[p].indices
+    primitive := &mesh.primitives.data[p]
+
+    positions := primitive.accessors[.Position]
+    normals := primitive.accessors[.Normal]
+    textures := primitive.accessors[.Texture0]
+    weights := primitive.accessors[.Weight0]
+    joints := primitive.accessors[.Joint0]
+    indices := primitive.indices
 
     assert(positions.component_kind == .F32 && positions.component_count == 3)
     assert(normals.component_kind == .F32 && normals.component_count == 3)
@@ -333,8 +336,13 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> 
       vertex.joint = {u32(joint[i][0]), u32(joint[i][1]), u32(joint[i][2]), u32(joint[i][3])}
     }
 
+    material: Maybe(u32) = nil
+    if primitive.material != nil {
+      material = scenes.materials.data[primitive.material.?]
+    }
+
     ind := (cast([^]u16)raw_data(indices.bytes))[0:indices.count]
-    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, transform, .Boned) or_return
+    geometry := vulkan.geometry_create(Vertex, &ctx.vk, vector.data(&vertices), ind, transform, material, .Boned) or_return
     vector.append(&geometries, geometry) or_return
   }
 
@@ -342,25 +350,22 @@ load_boned_mesh :: proc(ctx: ^Context, glt: ^gltf.Gltf, node: u32, max: u32) -> 
 }
 
 load_node :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, node: u32, max: u32) -> error.Error {
-  model := vector.one(&scenes.all_models) or_return
+  model := vector.one(&scenes.models) or_return
   model.children = vector.new(^Model, glt.nodes.data[node].children.len, ctx.allocator) or_return
 
-  if glt.nodes.data[node].skin != nil {
-    skin := &glt.skins.data[glt.nodes.data[node].skin.?]
-    model.bones = vector.new(Matrix, skin.joints.len, ctx.allocator) or_return
-
-    for i in 0..<skin.joints.len {
-      vector.append(&model.bones, glt.nodes.data[skin.joints.data[i]].transform.compose) or_return
-    }
-  }
-
   for i in 0..<glt.nodes.data[node].children.len {
-    vector.append(&model.children, &scenes.all_models.data[glt.nodes.data[node].children.data[i]]) or_return
+    vector.append(&model.children, &scenes.models.data[glt.nodes.data[node].children.data[i]]) or_return
   }
 
   if glt.nodes.data[node].mesh != nil {
-    model.geometries = load_mesh(ctx, glt, node, max) or_return
+    model.geometries = load_mesh(ctx, glt, scenes, node, max) or_return
   }
+
+  return nil
+}
+
+load_material :: proc(ctx: ^Context, glt: ^gltf.Gltf, scenes: ^Scenes, index: u32) -> error.Error {
+  vector.append(&scenes.materials, vulkan.material_create(&ctx.vk, glt.materials.data[index].color) or_return) or_return
 
   return nil
 }
@@ -372,7 +377,7 @@ load_gltf_scene :: proc(ctx: ^Context, scenes: ^Scenes, glt: gltf.Gltf, index: u
   scene.parent = scenes
 
   for j in 0..<glt.scenes.data[index].nodes.len {
-    vector.append(&scene.models, &scenes.all_models.data[glt.scenes.data[index].nodes.data[j]]) or_return
+    vector.append(&scene.models, &scenes.models.data[glt.scenes.data[index].nodes.data[j]]) or_return
   }
 
   scenes.childs[glt.scenes.data[index].name] = scene
@@ -386,11 +391,16 @@ load_gltf_scenes :: proc(ctx: ^Context, path: string, max: u32) -> (scenes: Scen
 
   glt := gltf.from_file(path, ctx.tmp_allocator) or_return
 
-  scenes.all_models = vector.new(Model, glt.nodes.len, ctx.allocator) or_return
+  scenes.models = vector.new(Model, glt.nodes.len, ctx.allocator) or_return
+  scenes.materials =vector.new(u32, glt.materials.len, ctx.allocator) or_return
   scenes.childs = make(map[string]Scene, (glt.scenes.len * 3) / 2, ctx.allocator)
 
-  for j in 0..<glt.nodes.len {
-    load_node(ctx, &glt, &scenes, j, max) or_return
+  for i in 0..<glt.materials.len {
+    load_material(ctx, &glt, &scenes, i) or_return
+  }
+
+  for i in 0..<glt.nodes.len {
+    load_node(ctx, &glt, &scenes, i, max) or_return
   }
 
   scenes.animations = load_animations(ctx, &glt) or_return
