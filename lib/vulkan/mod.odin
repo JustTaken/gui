@@ -24,36 +24,40 @@ DEVICE_EXTENSIONS := [?]cstring {
 }
 
 Vulkan_Context :: struct {
-  instance:         vk.Instance,
-  device:           Device,
-  physical_device:  vk.PhysicalDevice,
-  set_layouts:      vector.Vector(Descriptor_Set_Layout),
-  geometries:       vector.Vector(Geometry),
-  materials:        vector.Vector(Material),
-  default_material: u32,
-  render_pass:      Render_Pass,
-  descriptor_pool:  Descriptor_Pool,
-  fixed_set:        ^Descriptor_Set,
-  dynamic_set:      ^Descriptor_Set,
-  default_pipeline: ^Pipeline,
-  plain_pipeline:   ^Pipeline,
-  boned_pipeline:   ^Pipeline,
-  instances:        u32,
-  transforms:       u32,
-  command_pool:     vk.CommandPool,
-  command_buffers:  vector.Vector(vk.CommandBuffer),
-  staging:          StagingBuffer,
-  frames:           vector.Vector(Frame),
-  copy_fence:       vk.Fence,
-  draw_fence:       vk.Fence,
-  semaphore:        vk.Semaphore,
-  format:           vk.Format,
-  depth_format:     vk.Format,
-  modifiers:        vector.Vector(vk.DrmFormatModifierPropertiesEXT),
-  arena:            ^mem.Arena,
-  allocator:        runtime.Allocator,
-  tmp_arena:        ^mem.Arena,
-  tmp_allocator:    runtime.Allocator,
+  instance:                vk.Instance,
+  device:                  Device,
+  draw_queue:              ^Queue,
+  transfer_queue:          ^Queue,
+  physical_device:         vk.PhysicalDevice,
+  set_layouts:             vector.Vector(Descriptor_Set_Layout),
+  geometries:              vector.Vector(Geometry),
+  materials:               vector.Vector(Material),
+  default_material:        u32,
+  render_pass:             Render_Pass,
+  descriptor_pool:         Descriptor_Pool,
+  fixed_set:               ^Descriptor_Set,
+  dynamic_set:             ^Descriptor_Set,
+  default_pipeline:        ^Pipeline,
+  plain_pipeline:          ^Pipeline,
+  boned_pipeline:          ^Pipeline,
+  instances:               u32,
+  transforms:              u32,
+  draw_command_pool:       ^Command_Pool,
+  transfer_command_pool:   ^Command_Pool,
+  draw_command_buffer:     ^Command_Buffer,
+  transfer_command_buffer: ^Command_Buffer,
+  staging:                 StagingBuffer,
+  frames:                  vector.Vector(Frame),
+  copy_fence:              vk.Fence,
+  draw_fence:              vk.Fence,
+  semaphore:               vk.Semaphore,
+  format:                  vk.Format,
+  depth_format:            vk.Format,
+  modifiers:               vector.Vector(vk.DrmFormatModifierPropertiesEXT),
+  arena:                   ^mem.Arena,
+  allocator:               runtime.Allocator,
+  tmp_arena:               ^mem.Arena,
+  tmp_allocator:           runtime.Allocator,
 }
 
 vulkan_init :: proc(
@@ -91,17 +95,33 @@ vulkan_init :: proc(
   ctx.modifiers = get_drm_modifiers(ctx) or_return
   ctx.device = device_create(ctx) or_return
 
+  ctx.transfer_queue = queue_get(ctx, .Transfer, 1) or_return
+
+  ctx.transfer_command_pool = command_pool_create(
+    ctx,
+    ctx.transfer_queue,
+    2,
+  ) or_return
+
+  ctx.transfer_command_buffer = command_buffer_allocate(
+    ctx,
+    ctx.transfer_command_pool,
+  ) or_return
+
+  ctx.draw_queue = queue_get(ctx, .Graphics, 1) or_return
+
+  ctx.draw_command_pool = command_pool_create(ctx, ctx.draw_queue, 2) or_return
+
+  ctx.draw_command_buffer = command_buffer_allocate(
+    ctx,
+    ctx.draw_command_pool,
+  ) or_return
+
   ctx.draw_fence = fence_create(ctx) or_return
   ctx.copy_fence = fence_create(ctx) or_return
   ctx.semaphore = semaphore_create(ctx) or_return
 
-  ctx.command_pool = command_pool_create(ctx, ctx.device.queues[1]) or_return
-
-  ctx.command_buffers = command_buffers_allocate(
-    ctx,
-    ctx.command_pool,
-    2,
-  ) or_return
+  command_buffer_begin(ctx, ctx.transfer_command_buffer) or_return
 
   ctx.staging.buffer = buffer_create(
     ctx,
@@ -326,8 +346,8 @@ vulkan_deinit :: proc(ctx: ^Vulkan_Context) {
   descriptor_pool_deinit(ctx, ctx.descriptor_pool)
   render_pass_deinit(ctx, &ctx.render_pass)
 
-  vk.DestroyCommandPool(ctx.device.handle, ctx.command_pool, nil)
-  vk.DestroyDevice(ctx.device.handle, nil)
+  device_deinit(&ctx.device)
+
   vk.DestroyInstance(ctx.instance, nil)
 
   _ = dynlib.unload_library(library)

@@ -20,7 +20,7 @@ material_create :: proc(
 
   materials := [?]Material{material}
 
-  copy_data(
+  copy_data_to_buffer(
     Material,
     ctx,
     materials[:],

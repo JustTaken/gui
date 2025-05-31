@@ -9,19 +9,15 @@ import "lib:collection/vector"
 import "lib:error"
 
 Frame :: struct {
-  fd:           i32,
-  render_pass:  ^Render_Pass,
-  planes:       vector.Vector(vk.SubresourceLayout),
-  modifier:     vk.DrmFormatModifierPropertiesEXT,
-  image:        vk.Image,
-  memory:       vk.DeviceMemory,
-  view:         vk.ImageView,
-  depth:        vk.Image,
-  depth_memory: vk.DeviceMemory,
-  depth_view:   vk.ImageView,
-  buffer:       vk.Framebuffer,
-  width:        u32,
-  height:       u32,
+  fd:          i32,
+  render_pass: ^Render_Pass,
+  planes:      vector.Vector(vk.SubresourceLayout),
+  modifier:    vk.DrmFormatModifierPropertiesEXT,
+  image:       Image,
+  depth:       Image,
+  buffer:      vk.Framebuffer,
+  width:       u32,
+  height:      u32,
 }
 
 @(private)
@@ -88,29 +84,16 @@ frame_create :: proc(
 
   frame.image = image_create(
     ctx,
-    ctx.format,
-    .D2,
-    .DRM_FORMAT_MODIFIER_EXT,
-    {.COLOR_ATTACHMENT},
-    {},
-    &list_info,
-    width,
-    height,
-  ) or_return
-
-  frame.memory = image_memory_create(
-    ctx,
-    ctx.physical_device,
-    frame.image,
-    {.HOST_VISIBLE, .HOST_COHERENT},
-    &export_info,
-  ) or_return
-
-  frame.view = image_view_create(
-    ctx,
-    frame.image,
-    ctx.format,
-    {.COLOR},
+    width = width,
+    height = height,
+    format = ctx.format,
+    type = .D2,
+    tiling = .DRM_FORMAT_MODIFIER_EXT,
+    usage = {.COLOR_ATTACHMENT},
+    properties = {.HOST_VISIBLE, .HOST_COHERENT},
+    aspect = vk.ImageAspectFlags{.COLOR},
+    image_pNext = &list_info,
+    memory_pNext = &export_info,
   ) or_return
 
   properties := vk.ImageDrmFormatModifierPropertiesEXT {
@@ -119,7 +102,7 @@ frame_create :: proc(
 
   if vk.GetImageDrmFormatModifierPropertiesEXT(
        ctx.device.handle,
-       frame.image,
+       frame.image.handle,
        &properties,
      ) !=
      .SUCCESS {
@@ -143,7 +126,7 @@ frame_create :: proc(
 
     vk.GetImageSubresourceLayout(
       ctx.device.handle,
-      frame.image,
+      frame.image.handle,
       &image_resource,
       vector.one(&frame.planes) or_return,
     )
@@ -151,7 +134,7 @@ frame_create :: proc(
 
   info := vk.MemoryGetFdInfoKHR {
     sType      = .MEMORY_GET_FD_INFO_KHR,
-    memory     = frame.memory,
+    memory     = frame.image.memory,
     handleType = {.DMA_BUF_EXT},
   }
 
@@ -161,150 +144,26 @@ frame_create :: proc(
 
   frame.depth = image_create(
     ctx,
-    ctx.depth_format,
-    .D2,
-    .OPTIMAL,
-    {.DEPTH_STENCIL_ATTACHMENT},
-    {},
-    nil,
-    width,
-    height,
-  ) or_return
-
-  frame.depth_memory = image_memory_create(
-    ctx,
-    ctx.physical_device,
-    frame.depth,
-    {.DEVICE_LOCAL},
-    nil,
-  ) or_return
-
-  frame.depth_view = image_view_create(
-    ctx,
-    frame.depth,
-    ctx.depth_format,
-    {.DEPTH},
+    width = width,
+    height = height,
+    format = ctx.depth_format,
+    type = .D2,
+    tiling = .OPTIMAL,
+    usage = {.DEPTH_STENCIL_ATTACHMENT},
+    properties = {.DEVICE_LOCAL},
+    aspect = vk.ImageAspectFlags{.DEPTH},
   ) or_return
 
   frame.buffer = framebuffer_create(
     ctx,
     frame.render_pass,
-    frame.view,
-    frame.depth_view,
+    frame.image.view.?,
+    frame.depth.view.?,
     width,
     height,
   ) or_return
 
   return nil
-}
-
-@(private)
-image_create :: proc(
-  ctx: ^Vulkan_Context,
-  format: vk.Format,
-  type: vk.ImageType,
-  tiling: vk.ImageTiling,
-  usage: vk.ImageUsageFlags,
-  flags: vk.ImageCreateFlags,
-  pNext: rawptr,
-  width: u32,
-  height: u32,
-) -> (
-  image: vk.Image,
-  err: error.Error,
-) {
-  info := vk.ImageCreateInfo {
-    sType = .IMAGE_CREATE_INFO,
-    pNext = pNext,
-    flags = flags,
-    imageType = type,
-    format = format,
-    mipLevels = 1,
-    arrayLayers = 1,
-    samples = {._1},
-    tiling = tiling,
-    usage = usage,
-    sharingMode = .EXCLUSIVE,
-    queueFamilyIndexCount = 0,
-    pQueueFamilyIndices = nil,
-    initialLayout = .UNDEFINED,
-    extent = vk.Extent3D{width = width, height = height, depth = 1},
-  }
-
-  if res := vk.CreateImage(ctx.device.handle, &info, nil, &image);
-     res != .SUCCESS {
-    return image, .CreateImageFailed
-  }
-
-  return image, nil
-}
-
-@(private)
-image_memory_create :: proc(
-  ctx: ^Vulkan_Context,
-  physical_device: vk.PhysicalDevice,
-  image: vk.Image,
-  properties: vk.MemoryPropertyFlags,
-  pNext: rawptr,
-) -> (
-  memory: vk.DeviceMemory,
-  err: error.Error,
-) {
-  requirements: vk.MemoryRequirements
-  vk.GetImageMemoryRequirements(ctx.device.handle, image, &requirements)
-
-  alloc_info := vk.MemoryAllocateInfo {
-    sType           = .MEMORY_ALLOCATE_INFO,
-    pNext           = pNext,
-    allocationSize  = requirements.size,
-    memoryTypeIndex = find_memory_type(
-      physical_device,
-      requirements.memoryTypeBits,
-      properties,
-    ) or_return,
-  }
-
-  if vk.AllocateMemory(ctx.device.handle, &alloc_info, nil, &memory) !=
-     .SUCCESS {
-    return memory, .AllocateDeviceMemory
-  }
-
-  vk.BindImageMemory(ctx.device.handle, image, memory, vk.DeviceSize(0))
-
-  return memory, nil
-}
-
-@(private)
-image_view_create :: proc(
-  ctx: ^Vulkan_Context,
-  image: vk.Image,
-  format: vk.Format,
-  aspect: vk.ImageAspectFlags,
-) -> (
-  view: vk.ImageView,
-  err: error.Error,
-) {
-  range := vk.ImageSubresourceRange {
-    levelCount     = 1,
-    layerCount     = 1,
-    aspectMask     = aspect,
-    baseMipLevel   = 0,
-    baseArrayLayer = 0,
-  }
-
-  info := vk.ImageViewCreateInfo {
-    sType            = .IMAGE_VIEW_CREATE_INFO,
-    image            = image,
-    viewType         = .D2,
-    format           = format,
-    subresourceRange = range,
-  }
-
-  if vk.CreateImageView(ctx.device.handle, &info, nil, &view) != .SUCCESS {
-    return view, .CreateImageViewFailed
-  }
-
-  return view, nil
 }
 
 @(private)
@@ -362,9 +221,19 @@ frame_draw :: proc(
   width: u32,
   height: u32,
 ) -> error.Error {
-  frame := get_frame(ctx, frame_index)
+  command_buffer_end(
+    ctx,
+    ctx.transfer_command_buffer,
+    ctx.copy_fence,
+  ) or_return
 
-  submit_staging_data(ctx) or_return
+  ctx.staging.buffer.len = 0
+
+  for i in 0 ..< ctx.descriptor_pool.sets.len {
+    descriptor_set_update(ctx, ctx.descriptor_pool.sets.data[i])
+  }
+
+  frame := get_frame(ctx, frame_index)
 
   area := vk.Rect2D {
     offset = vk.Offset2D{x = 0, y = 0},
@@ -399,23 +268,23 @@ frame_draw :: proc(
 
   if vk.WaitForFences(ctx.device.handle, 1, &ctx.draw_fence, true, 0xFFFFFF) != .SUCCESS do return .WaitFencesFailed
 
-  cmd := ctx.command_buffers.data[0]
+  cmd := ctx.draw_command_buffer
 
-  if vk.BeginCommandBuffer(cmd, &begin_info) != .SUCCESS do return .BeginCommandBufferFailed
+  if vk.BeginCommandBuffer(cmd.handle, &begin_info) != .SUCCESS do return .BeginCommandBufferFailed
 
-  vk.CmdBeginRenderPass(cmd, &render_pass_info, .INLINE)
-  vk.CmdSetViewport(cmd, 0, 1, &viewport)
-  vk.CmdSetScissor(cmd, 0, 1, &area)
+  vk.CmdBeginRenderPass(cmd.handle, &render_pass_info, .INLINE)
+  vk.CmdSetViewport(cmd.handle, 0, 1, &viewport)
+  vk.CmdSetScissor(cmd.handle, 0, 1, &area)
 
   for p in 0 ..< frame.render_pass.pipelines.len {
     pipeline := &frame.render_pass.pipelines.data[p]
 
-    vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.handle)
+    vk.CmdBindPipeline(cmd.handle, .GRAPHICS, pipeline.handle)
 
     sets := [?]vk.DescriptorSet{ctx.fixed_set.handle, ctx.dynamic_set.handle}
 
     vk.CmdBindDescriptorSets(
-      cmd,
+      cmd.handle,
       .GRAPHICS,
       pipeline.layout.handle,
       0,
@@ -432,10 +301,15 @@ frame_draw :: proc(
 
       offset := vk.DeviceSize(0)
 
-      vk.CmdBindIndexBuffer(cmd, group.geometry.indice.handle, 0, .UINT16)
+      vk.CmdBindIndexBuffer(
+        cmd.handle,
+        group.geometry.indice.handle,
+        0,
+        .UINT16,
+      )
 
       vk.CmdBindVertexBuffers(
-        cmd,
+        cmd.handle,
         0,
         1,
         &group.geometry.vertex.handle,
@@ -443,7 +317,7 @@ frame_draw :: proc(
       )
 
       vk.CmdDrawIndexed(
-        cmd,
+        cmd.handle,
         group.geometry.count,
         group.instances.len,
         0,
@@ -453,23 +327,26 @@ frame_draw :: proc(
     }
   }
 
-  vk.CmdEndRenderPass(cmd)
+  vk.CmdEndRenderPass(cmd.handle)
 
-  if vk.EndCommandBuffer(cmd) != .SUCCESS do return .EndCommandBufferFailed
+  if vk.EndCommandBuffer(cmd.handle) != .SUCCESS do return .EndCommandBufferFailed
 
   wait_stage := vk.PipelineStageFlags{.COLOR_ATTACHMENT_OUTPUT}
 
   submit_info := vk.SubmitInfo {
     sType              = .SUBMIT_INFO,
     commandBufferCount = 1,
-    pCommandBuffers    = &cmd,
+    pCommandBuffers    = &cmd.handle,
     pWaitDstStageMask  = &wait_stage,
   }
 
   vk.ResetFences(ctx.device.handle, 1, &ctx.draw_fence)
+
   render_pass_destroy_unused(ctx, frame.render_pass)
 
-  if vk.QueueSubmit(ctx.device.queues[0].handle, 1, &submit_info, ctx.draw_fence) != .SUCCESS do return .QueueSubmitFailed
+  if vk.QueueSubmit(cmd.pool.queue.handle, 1, &submit_info, ctx.draw_fence) != .SUCCESS do return .QueueSubmitFailed
+
+  command_buffer_begin(ctx, ctx.transfer_command_buffer) or_return
 
   return nil
 }
@@ -477,12 +354,12 @@ frame_draw :: proc(
 @(private)
 frame_destroy :: proc(ctx: ^Vulkan_Context, frame: ^Frame) {
   vk.DestroyFramebuffer(ctx.device.handle, frame.buffer, nil)
-  vk.DestroyImageView(ctx.device.handle, frame.view, nil)
-  vk.FreeMemory(ctx.device.handle, frame.memory, nil)
-  vk.DestroyImage(ctx.device.handle, frame.image, nil)
-  vk.DestroyImageView(ctx.device.handle, frame.depth_view, nil)
-  vk.FreeMemory(ctx.device.handle, frame.depth_memory, nil)
-  vk.DestroyImage(ctx.device.handle, frame.depth, nil)
+  vk.DestroyImageView(ctx.device.handle, frame.image.view.?, nil)
+  vk.FreeMemory(ctx.device.handle, frame.image.memory, nil)
+  vk.DestroyImage(ctx.device.handle, frame.image.handle, nil)
+  vk.DestroyImageView(ctx.device.handle, frame.depth.view.?, nil)
+  vk.FreeMemory(ctx.device.handle, frame.depth.memory, nil)
+  vk.DestroyImage(ctx.device.handle, frame.depth.handle, nil)
 
   posix.close(posix.FD(frame.fd))
 }

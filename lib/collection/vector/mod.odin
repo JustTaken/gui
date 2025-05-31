@@ -90,7 +90,7 @@ append_n :: proc(vec: ^Vector($T), items: []T) -> error.Error {
   return nil
 }
 
-reserve_n :: proc(vec: ^Vector($T), n: u32) -> error.Error {
+reserve_n :: proc(vec: ^Vector($T), n: u32) -> (ptr: []T, err: error.Error) {
   if vec.len + n > vec.cap {
     log.info(
       "Vector does not have more space",
@@ -99,12 +99,15 @@ reserve_n :: proc(vec: ^Vector($T), n: u32) -> error.Error {
       vec.cap,
       vec.len,
     )
-    return .OutOfBounds
+
+    return ptr, .OutOfBounds
   }
+
+  ptr = vec.data[vec.len:vec.len + n]
 
   vec.len += n
 
-  return nil
+  return ptr, nil
 }
 
 one :: proc(vec: ^Vector($T)) -> (^T, error.Error) {

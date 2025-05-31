@@ -4,15 +4,23 @@ import "lib:collection/vector"
 import "lib:error"
 import vk "vendor:vulkan"
 
+
+Queue_Kind :: enum {
+  Transfer,
+  Graphics,
+}
+
 Queue :: struct {
-  handle: vk.Queue,
-  indice: u32,
+  handle:        vk.Queue,
+  indice:        u32,
+  command_pools: vector.Vector(Command_Pool),
 }
 
 @(private)
 Device :: struct {
-  handle: vk.Device,
-  queues: []Queue,
+  handle:  vk.Device,
+  indices: [Queue_Kind]u32,
+  queues:  vector.Vector(Queue),
 }
 
 @(private)
@@ -210,16 +218,13 @@ find_physical_device :: proc(
 @(private)
 queues_indices :: proc(
   ctx: ^Vulkan_Context,
+  flags: []vk.QueueFlag,
 ) -> (
-  indice: []u32,
+  indices: []u32,
   err: error.Error,
 ) {
-  MAX: u32 = 0xFF
-  indices := make([]u32, 2, ctx.tmp_allocator)
-
-  for &indice in indices {
-    indice = MAX
-  }
+  indices_vec := vector.new(u32, u32(len(flags)), ctx.tmp_allocator) or_return
+  founds_vec := vector.new(bool, u32(len(flags)), ctx.tmp_allocator) or_return
 
   queue_count: u32
   vk.GetPhysicalDeviceQueueFamilyProperties(
@@ -228,27 +233,35 @@ queues_indices :: proc(
     nil,
   )
 
-  available_queues := make(
-    []vk.QueueFamilyProperties,
+  available_queues := vector.new(
+    vk.QueueFamilyProperties,
     queue_count,
     ctx.tmp_allocator,
-  )
+  ) or_return
+
+  vec := vector.reserve_n(&available_queues, queue_count) or_return
 
   vk.GetPhysicalDeviceQueueFamilyProperties(
     ctx.physical_device,
     &queue_count,
-    raw_data(available_queues),
+    &vec[0],
   )
 
-  for v, i in available_queues {
-    if .GRAPHICS in v.queueFlags && indices[0] == MAX do indices[0] = u32(i)
-    if .TRANSFER in v.queueFlags && indices[1] == MAX do indices[1] = u32(i)
+  indices = vector.reserve_n(&indices_vec, indices_vec.cap) or_return
+  founds := vector.reserve_n(&founds_vec, founds_vec.cap) or_return
+
+  for i in 0 ..< queue_count {
+    for j in 0 ..< len(flags) {
+      if flags[j] in vec[i].queueFlags && !founds[j] {
+        indices[j] = u32(i)
+        founds[j] = true
+      }
+    }
   }
 
-  for indice in indices {
-    if indice == MAX do return indices, .FamilyIndiceNotComplete
+  for found in founds {
+    if !found do return indices, .FamilyIndiceNotComplete
   }
-
 
   return indices, nil
 }
@@ -260,37 +273,38 @@ device_create :: proc(
   device: Device,
   err: error.Error,
 ) {
+  indices := queues_indices(ctx, {.GRAPHICS, .TRANSFER}) or_return
+  device.indices[.Graphics] = indices[0]
+  device.indices[.Transfer] = indices[1]
+
+  device.queues = vector.new(Queue, u32(len(indices)), ctx.allocator) or_return
+
   MAX_QUEUE :: 10
-
-  indices := queues_indices(ctx) or_return
-  queue_priority := f32(1.0)
-
-  unique_indices: [MAX_QUEUE]u32 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+  unique_indices: [MAX_QUEUE]u32
 
   for i in indices {
-    if i != indices[0] do panic("Not accepting diferent queue indices for now")
+    // if i != indices[0] do panic("Not accepting diferent queue indices for now")
     unique_indices[i] += 1
   }
 
-  queue_create_infos := make(
-    []vk.DeviceQueueCreateInfo,
-    MAX_QUEUE,
+  queue_priority := f32(1.0)
+  queue_create_infos := vector.new(
+    vk.DeviceQueueCreateInfo,
+    u32(len(indices)),
     ctx.tmp_allocator,
-  )
+  ) or_return
 
-  count: u32 = 0
   for k, i in unique_indices {
     if k == 0 do continue
 
-    queue_create_info := vk.DeviceQueueCreateInfo {
+    info := vk.DeviceQueueCreateInfo {
       sType            = .DEVICE_QUEUE_CREATE_INFO,
       queueFamilyIndex = u32(i),
       queueCount       = 1,
       pQueuePriorities = &queue_priority,
     }
 
-    queue_create_infos[count] = queue_create_info
-    count += 1
+    vector.append(&queue_create_infos, info) or_return
   }
 
   feature_info := vk.PhysicalDeviceVulkan13Features {
@@ -303,8 +317,8 @@ device_create :: proc(
     pNext                   = &feature_info,
     enabledExtensionCount   = u32(len(DEVICE_EXTENSIONS)),
     ppEnabledExtensionNames = &DEVICE_EXTENSIONS[0],
-    pQueueCreateInfos       = &queue_create_infos[0],
-    queueCreateInfoCount    = count,
+    pQueueCreateInfos       = &queue_create_infos.data[0],
+    queueCreateInfoCount    = queue_create_infos.len,
     pEnabledFeatures        = nil,
     enabledLayerCount       = 0,
   }
@@ -313,19 +327,29 @@ device_create :: proc(
 
   vk.load_proc_addresses_device(device.handle)
 
-  device.queues = make([]Queue, len(indices), ctx.allocator)
-
-  for i in 0 ..< len(indices) {
-    device.queues[i].indice = indices[i]
-    vk.GetDeviceQueue(
-      device.handle,
-      u32(indices[i]),
-      0,
-      &device.queues[i].handle,
-    )
-  }
-
   return device, nil
+}
+
+@(private)
+queue_get :: proc(
+  ctx: ^Vulkan_Context,
+  kind: Queue_Kind,
+  command_pool_count: u32,
+) -> (
+  queue: ^Queue,
+  err: error.Error,
+) {
+  queue = vector.one(&ctx.device.queues) or_return
+  queue.indice = ctx.device.indices[kind]
+  queue.command_pools = vector.new(
+    Command_Pool,
+    command_pool_count,
+    ctx.allocator,
+  ) or_return
+
+  vk.GetDeviceQueue(ctx.device.handle, queue.indice, 0, &queue.handle)
+
+  return queue, nil
 }
 
 drm_format :: proc(format: vk.Format) -> u32 {
@@ -340,4 +364,18 @@ drm_format :: proc(format: vk.Format) -> u32 {
   }
 
   return 0
+}
+
+device_deinit :: proc(device: ^Device) {
+  for i in 0 ..< device.queues.len {
+    for j in 0 ..< device.queues.data[i].command_pools.len {
+      vk.DestroyCommandPool(
+        device.handle,
+        device.queues.data[i].command_pools.data[j].handle,
+        nil,
+      )
+    }
+  }
+
+  vk.DestroyDevice(device.handle, nil)
 }

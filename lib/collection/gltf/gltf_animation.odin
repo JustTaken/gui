@@ -3,6 +3,7 @@ package gltf
 import "core:encoding/json"
 import "core:log"
 import "core:math/linalg"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 
@@ -54,158 +55,66 @@ Animation :: struct {
 }
 
 @(private)
-parse_rotation :: proc(
-  channel: ^Animation_Channel,
-  frames: vector.Vector(Animation_Frame),
-) -> error.Error {
-  assert(channel.sampler.input.component_kind == .F32)
-  assert(channel.sampler.output.component_kind == .F32)
-  assert(channel.sampler.input.component_count == 1)
-  assert(channel.sampler.output.component_count == 4)
-  assert(channel.sampler.input.count == channel.sampler.output.count)
-
-  input := (cast([^]f32)raw_data(
-      channel.sampler.input.bytes,
-    ))[0:channel.sampler.input.count]
-
-  output := (cast([^][4]f32)raw_data(
-      channel.sampler.output.bytes,
-    ))[0:channel.sampler.output.count]
-
-  #partial switch channel.sampler.interpolation {
-  case .Linear:
-    k := 0
-
-    for i in 0 ..< frames.len {
-      if frames.data[i].time >= input[k] {
-        k += 1
-        frames.data[i].transforms.data[channel.target.node].rotate =
-          output[k - 1]
-      } else {
-        delta := (input[k] - frames.data[i].time) / (input[k] - input[k - 1])
-        frames.data[i].transforms.data[channel.target.node].rotate =
-          output[k - 1] * delta + output[k] * (1.0 - delta)
-      }
-    }
-  case .Step:
-    k := 0
-
-    for i in 0 ..< frames.len {
-      if frames.data[i].time >= input[k] {
-        k += 1
-      }
-
-      frames.data[i].transforms.data[channel.target.node].rotate =
-        output[k - 1]
-    }
-  case:
-    return .InvalidAnimationInterpolation
-  }
-
-  return nil
+parse_translation :: proc(transform: ^Transform, output: [3]f32) {
+  transform.translate = output
 }
 
 @(private)
-parse_translation :: proc(
-  channel: ^Animation_Channel,
-  frames: vector.Vector(Animation_Frame),
-) -> error.Error {
-  assert(channel.sampler.input.component_kind == .F32)
-  assert(channel.sampler.output.component_kind == .F32)
-  assert(channel.sampler.input.component_count == 1)
-  assert(channel.sampler.output.component_count == 3)
-  assert(channel.sampler.input.count == channel.sampler.output.count)
-
-  input := (cast([^]f32)raw_data(
-      channel.sampler.input.bytes,
-    ))[0:channel.sampler.input.count]
-
-  output := (cast([^][3]f32)raw_data(
-      channel.sampler.output.bytes,
-    ))[0:channel.sampler.output.count]
-
-  #partial switch channel.sampler.interpolation {
-  case .Linear:
-    k := 0
-
-    for i in 0 ..< frames.len {
-      if frames.data[i].time >= input[k] {
-        k += 1
-        frames.data[i].transforms.data[channel.target.node].translate =
-          output[k - 1]
-      } else {
-        delta := (input[k] - frames.data[i].time) / (input[k] - input[k - 1])
-        frames.data[i].transforms.data[channel.target.node].translate =
-          output[k - 1] * delta + output[k] * (1.0 - delta)
-      }
-    }
-  case .Step:
-    k := 0
-
-    for i in 0 ..< frames.len {
-      if frames.data[i].time >= input[k] {
-        k += 1
-      }
-
-      frames.data[i].transforms.data[channel.target.node].translate =
-        output[k - 1]
-    }
-  case:
-    return .InvalidAnimationInterpolation
-  }
-
-  return nil
+parse_rotation :: proc(transform: ^Transform, output: [4]f32) {
+  transform.rotate = output
 }
 
 @(private)
-parse_scale :: proc(
+parse_scale :: proc(transform: ^Transform, output: [3]f32) {
+  transform.scale = output
+}
+
+@(private)
+parse_step :: proc(
+  $T: typeid,
   channel: ^Animation_Channel,
   frames: vector.Vector(Animation_Frame),
-) -> error.Error {
-  assert(channel.sampler.input.component_kind == .F32)
-  assert(channel.sampler.output.component_kind == .F32)
-  assert(channel.sampler.input.component_count == 1)
-  assert(channel.sampler.output.component_count == 3)
-  assert(channel.sampler.input.count == channel.sampler.output.count)
+  input: []f32,
+  output: []T,
+  function: proc(tranform: ^Transform, output: T),
+) {
+  k := 0
 
-  input := (cast([^]f32)raw_data(
-      channel.sampler.input.bytes,
-    ))[0:channel.sampler.input.count]
+  for i in 0 ..< frames.len {
+    frame := &frames.data[i]
+    transform := &frame.transforms.data[channel.target.node]
 
-  output := (cast([^][3]f32)raw_data(
-      channel.sampler.output.bytes,
-    ))[0:channel.sampler.output.count]
-
-  #partial switch channel.sampler.interpolation {
-  case .Linear:
-    k := 0
-
-    for i in 0 ..< frames.len {
-      if frames.data[i].time >= input[k] {
-        k += 1
-        frames.data[i].transforms.data[channel.target.node].scale =
-          output[k - 1]
-      } else {
-        delta := (input[k] - frames.data[i].time) / (input[k] - input[k - 1])
-        frames.data[i].transforms.data[channel.target.node].scale =
-          output[k - 1] * delta + output[k] * (1.0 - delta)
-      }
+    if frame.time >= input[k] {
+      k += 1
     }
-  case .Step:
-    k := 0
 
-    for i in 0 ..< frames.len {
-      if frames.data[i].time >= input[k] {
-        k += 1
-      }
-
-      frames.data[i].transforms.data[channel.target.node].scale = output[k - 1]
-    }
-  case:
-    return .InvalidAnimationInterpolation
+    function(transform, output[k - 1])
   }
+}
 
-  return nil
+@(private)
+parse_linear :: proc(
+  $T: typeid,
+  channel: ^Animation_Channel,
+  frames: vector.Vector(Animation_Frame),
+  input: []f32,
+  output: []T,
+  parse: proc(transform: ^Transform, output: T),
+) {
+  k := 0
+
+  for i in 0 ..< frames.len {
+    frame := &frames.data[i]
+    transform := &frame.transforms.data[channel.target.node]
+
+    if frames.data[i].time >= input[k] {
+      k += 1
+      parse(transform, output[k - 1])
+    } else {
+      delta := (input[k] - frame.time) / (input[k] - input[k - 1])
+      parse(transform, output[k - 1] * delta + output[k] * (1.0 - delta))
+    }
+  }
 }
 
 @(private)
@@ -283,8 +192,7 @@ parse_animation_sampler :: proc(
   sampler.input = &ctx.accessors.data[u32(raw["input"].(f64))]
   sampler.output = &ctx.accessors.data[u32(raw["output"].(f64))]
 
-  interpolation := raw["interpolation"].(string)
-  switch interpolation {
+  switch raw["interpolation"].(string) {
   case "STEP":
     sampler.interpolation = .Step
   case "LINEAR":
@@ -326,13 +234,44 @@ parse_channel_transforms :: proc(
   channel: ^Animation_Channel,
   frames: vector.Vector(Animation_Frame),
 ) -> error.Error {
+  assert(channel.sampler.input.component_kind == .F32)
+  assert(channel.sampler.output.component_kind == .F32)
+  assert(channel.sampler.input.component_count == 1)
+  assert(channel.sampler.input.count == channel.sampler.output.count)
+
+  input := mem.slice_data_cast([]f32, channel.sampler.input.bytes)
+
   switch channel.target.path {
   case .Translation:
-    parse_translation(channel, frames) or_return
+    assert(channel.sampler.output.component_count == 3)
+    output := mem.slice_data_cast([][3]f32, channel.sampler.output.bytes)
+
+    switch channel.sampler.interpolation {
+    case .Step:
+      parse_step([3]f32, channel, frames, input, output, parse_translation)
+    case .Linear:
+      parse_linear([3]f32, channel, frames, input, output, parse_translation)
+    }
   case .Scale:
-    parse_scale(channel, frames) or_return
+    assert(channel.sampler.output.component_count == 3)
+    output := mem.slice_data_cast([][3]f32, channel.sampler.output.bytes)
+
+    switch channel.sampler.interpolation {
+    case .Step:
+      parse_step([3]f32, channel, frames, input, output, parse_scale)
+    case .Linear:
+      parse_linear([3]f32, channel, frames, input, output, parse_scale)
+    }
   case .Rotation:
-    parse_rotation(channel, frames) or_return
+    assert(channel.sampler.output.component_count == 4)
+    output := mem.slice_data_cast([][4]f32, channel.sampler.output.bytes)
+
+    switch channel.sampler.interpolation {
+    case .Step:
+      parse_step([4]f32, channel, frames, input, output, parse_rotation)
+    case .Linear:
+      parse_linear([4]f32, channel, frames, input, output, parse_rotation)
+    }
   }
 
   return nil
@@ -342,20 +281,18 @@ parse_channel_transforms :: proc(
 parse_frames :: proc(
   ctx: ^Context,
   channels: []Animation_Channel,
-  sampler: ^Animation_Sampler,
+  input: []f32,
 ) -> (
   frames: vector.Vector(Animation_Frame),
   err: error.Error,
 ) {
   frames = vector.new(
     Animation_Frame,
-    sampler.input.count,
+    u32(len(input)),
     ctx.allocator,
   ) or_return
 
-  input := (cast([^]f32)raw_data(sampler.input.bytes))[0:sampler.input.count]
-
-  for i in 0 ..< sampler.input.count {
+  for i in 0 ..< len(input) {
     frame := vector.one(&frames) or_return
 
     frame.time = input[i]
@@ -396,6 +333,7 @@ parse_animation :: proc(
     ctx,
     raw["samplers"].(json.Array),
   ) or_return
+
   channels := parse_animation_channels(
     ctx,
     raw["channels"].(json.Array),
@@ -403,18 +341,18 @@ parse_animation :: proc(
   ) or_return
 
   frame_count: u32 = 0
-  greater_sampler: ^Animation_Sampler = nil
+  input: []f32
 
   for i in 0 ..< samplers.len {
     if samplers.data[i].input.count > frame_count {
       frame_count = samplers.data[i].input.count
-      greater_sampler = &samplers.data[i]
+      input := mem.slice_data_cast([]f32, samplers.data[i].input.bytes)
     }
   }
 
-  assert(greater_sampler != nil)
+  assert(frame_count > 0)
 
-  animation.frames = parse_frames(ctx, channels, greater_sampler) or_return
+  animation.frames = parse_frames(ctx, channels, input) or_return
 
   return animation, nil
 }

@@ -30,6 +30,8 @@ Accessor :: struct {
   component_count: u32,
   bytes:           []u8,
   count:           u32,
+  min:             vector.Vector(f32),
+  max:             vector.Vector(f32),
 }
 
 @(private)
@@ -70,6 +72,26 @@ parse_accessor :: proc(
     accessor.component_count = 1
   case:
     return accessor, .InvalidAccessorKind
+  }
+
+  if min, ok := raw["min"]; ok {
+    array := min.(json.Array)
+    accessor.min = vector.new(f32, u32(len(array)), ctx.allocator) or_return
+
+    for i in 0 ..< len(array) {
+      vector.append(&accessor.min, f32(array[i].(f64))) or_return
+    }
+  }
+
+  if max, ok := raw["max"]; ok {
+    array := max.(json.Array)
+    assert(len(array) == int(accessor.component_count))
+    accessor.max = vector.new(f32, u32(len(array)), ctx.allocator) or_return
+
+    for i in 0 ..< len(array) {
+      assert(len(array) == int(accessor.component_count))
+      vector.append(&accessor.max, f32(array[i].(f64))) or_return
+    }
   }
 
   return accessor, nil

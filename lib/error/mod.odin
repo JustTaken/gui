@@ -67,4 +67,5 @@ Error :: enum {
   RenderFailed,
   InvalidFormat,
   InvalidScene,
+  InvalidImage,
 }

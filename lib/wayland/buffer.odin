@@ -7,7 +7,6 @@ import "lib:wayland/interface"
 
 @(private)
 Buffer :: struct {
-  data:     []u8,
   id:       u32,
   offset:   u32,
   width:    u32,

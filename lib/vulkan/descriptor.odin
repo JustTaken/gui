@@ -244,7 +244,7 @@ update_projection :: proc(
   projection: Matrix,
 ) -> error.Error {
   m := [?]Matrix{projection}
-  copy_data(
+  copy_data_to_buffer(
     Matrix,
     ctx,
     m[:],
@@ -257,7 +257,7 @@ update_projection :: proc(
 
 update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> error.Error {
   m := [?]Matrix{view}
-  copy_data(
+  copy_data_to_buffer(
     Matrix,
     ctx,
     m[:],
@@ -270,7 +270,7 @@ update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> error.Error {
 
 update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> error.Error {
   m := [?]Light{light}
-  copy_data(
+  copy_data_to_buffer(
     Light,
     ctx,
     m[:],
@@ -283,26 +283,7 @@ update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> error.Error {
 
 @(private)
 submit_staging_data :: proc(ctx: ^Vulkan_Context) -> error.Error {
-  if !ctx.staging.recording do return nil
-
-  if vk.EndCommandBuffer(ctx.command_buffers.data[1]) != .SUCCESS do return .EndCommandBufferFailed
-
-  submit_info := vk.SubmitInfo {
-    sType              = .SUBMIT_INFO,
-    commandBufferCount = 1,
-    pCommandBuffers    = &ctx.command_buffers.data[1],
-  }
-
-  vk.ResetFences(ctx.device.handle, 1, &ctx.copy_fence)
-  if vk.QueueSubmit(ctx.device.queues[1].handle, 1, &submit_info, ctx.copy_fence) != .SUCCESS do return .QueueSubmitFailed
-  if vk.WaitForFences(ctx.device.handle, 1, &ctx.copy_fence, true, 0xFFFFFF) != .SUCCESS do return .WaitFencesFailed
-
-  ctx.staging.recording = false
-  ctx.staging.buffer.len = 0
-
-  for i in 0 ..< ctx.descriptor_pool.sets.len {
-    descriptor_set_update(ctx, ctx.descriptor_pool.sets.data[i])
-  }
+  // if !ctx.staging.recording do return nil
 
   return nil
 }

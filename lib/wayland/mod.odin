@@ -87,28 +87,28 @@ Opcodes :: struct {
 
 Wayland_Context :: struct {
   socket:          posix.FD,
+  bytes:           []u8,
   objects:         vector.Vector(InterfaceObject),
   modifiers:       vector.Vector(Modifier),
-  dma_main_device: u64,
+  listeners:       vector.Vector(KeyListener),
   output:          vector.Buffer,
   input:           vector.Buffer,
   in_fds:          vector.Buffer,
   out_fds:         vector.Vector(interface.Fd),
   values:          vector.Vector(interface.Argument),
-  bytes:           []u8,
   buffers:         vector.Vector(Buffer),
   active_buffer:   u32,
   ids:             Ids,
   opcodes:         Opcodes,
   width:           u32,
   height:          u32,
-  listeners:       vector.Vector(KeyListener),
-  keymap:          xkb.Keymap_Context,
   key_delay:       i64,
   key_repeat:      i64,
   key_start:       i64,
   key_last_time:   i64,
+  dma_main_device: u64,
   vk:              ^vulkan.Vulkan_Context,
+  keymap:          xkb.Keymap_Context,
   arena:           ^mem.Arena,
   allocator:       runtime.Allocator,
   tmp_arena:       ^mem.Arena,
@@ -180,7 +180,6 @@ wayland_init :: proc(
   ctx.key_repeat = 30 * 1000 * 1000
 
   ctx.buffers = vector.new(Buffer, frame_count, ctx.allocator) or_return
-  ctx.active_buffer = 0
 
   ctx.ids.display = get_id(
     ctx,

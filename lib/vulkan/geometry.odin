@@ -63,7 +63,7 @@ geometry_create :: proc(
     {.VERTEX_BUFFER, .TRANSFER_DST},
     {.DEVICE_LOCAL},
   ) or_return
-  copy_data(T, ctx, vertices, &geometry.vertex, 0) or_return
+  copy_data_to_buffer(T, ctx, vertices, &geometry.vertex, 0) or_return
 
   geometry.indice = buffer_create(
     ctx,
@@ -71,7 +71,7 @@ geometry_create :: proc(
     {.INDEX_BUFFER, .TRANSFER_DST},
     {.DEVICE_LOCAL},
   ) or_return
-  copy_data(u16, ctx, indices, &geometry.indice, 0) or_return
+  copy_data_to_buffer(u16, ctx, indices, &geometry.indice, 0) or_return
 
   return index, nil
 }
@@ -128,7 +128,7 @@ instance_update :: proc(
 ) -> error.Error {
   if model != nil {
     models := [?]Instance_Model{model.? * instance.transform}
-    copy_data(
+    copy_data_to_buffer(
       Instance_Model,
       ctx,
       models[:],
@@ -155,7 +155,7 @@ update_transforms :: proc(
   transforms: []Matrix,
   offset: u32,
 ) -> error.Error {
-  copy_data(
+  copy_data_to_buffer(
     Matrix,
     ctx,
     transforms,

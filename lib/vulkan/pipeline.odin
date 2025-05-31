@@ -395,7 +395,7 @@ pipeline_add_instance :: proc(
   m := model.? or_else linalg.MATRIX4F32_IDENTITY
 
   transform_offsets := [?]u32{ctx.transforms + transform_offset}
-  copy_data(
+  copy_data_to_buffer(
     u32,
     ctx,
     transform_offsets[:],
@@ -404,7 +404,7 @@ pipeline_add_instance :: proc(
   ) or_return
 
   material_offsets := [?]u32{geometry.material}
-  copy_data(
+  copy_data_to_buffer(
     u32,
     ctx,
     material_offsets[:],
