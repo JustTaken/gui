@@ -229,9 +229,7 @@ frame_draw :: proc(
 
   ctx.staging.buffer.len = 0
 
-  for i in 0 ..< ctx.descriptor_pool.sets.len {
-    descriptor_set_update(ctx, ctx.descriptor_pool.sets.data[i])
-  }
+  descriptor_pool_update(ctx, &ctx.descriptor_pool)
 
   frame := get_frame(ctx, frame_index)
 

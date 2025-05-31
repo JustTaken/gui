@@ -20,11 +20,12 @@ material_create :: proc(
 
   materials := [?]Material{material}
 
-  copy_data_to_buffer(
+  descriptor_set_update(
     Material,
     ctx,
+    ctx.dynamic_set,
+    MATERIALS,
     materials[:],
-    &ctx.dynamic_set.descriptors.data[MATERIALS].buffer,
     index,
   ) or_return
 

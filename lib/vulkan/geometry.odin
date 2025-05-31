@@ -128,11 +128,12 @@ instance_update :: proc(
 ) -> error.Error {
   if model != nil {
     models := [?]Instance_Model{model.? * instance.transform}
-    copy_data_to_buffer(
+    descriptor_set_update(
       Instance_Model,
       ctx,
+      ctx.dynamic_set,
+      MODELS,
       models[:],
-      &ctx.dynamic_set.descriptors.data[MODELS].buffer,
       instance.offset,
     ) or_return
   }
@@ -155,11 +156,12 @@ update_transforms :: proc(
   transforms: []Matrix,
   offset: u32,
 ) -> error.Error {
-  copy_data_to_buffer(
-    Matrix,
+  descriptor_set_update(
+    Instance_Model,
     ctx,
-    transforms,
-    &ctx.dynamic_set.descriptors.data[DYNAMIC_TRANSFORMS].buffer,
+    ctx.dynamic_set,
+    DYNAMIC_TRANSFORMS,
+    transforms[:],
     offset,
   ) or_return
 

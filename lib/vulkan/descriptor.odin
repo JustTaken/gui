@@ -45,6 +45,7 @@ Descriptor :: struct {
 
 @(private)
 Descriptor_Set :: struct {
+  parent:      ^Descriptor_Pool,
   handle:      vk.DescriptorSet,
   descriptors: vector.Vector(Descriptor),
 }
@@ -53,6 +54,8 @@ Descriptor_Set :: struct {
 Descriptor_Pool :: struct {
   handle: vk.DescriptorPool,
   sets:   vector.Vector(Descriptor_Set),
+  writes: vector.Vector(vk.WriteDescriptorSet),
+  infos:  vector.Vector(vk.DescriptorBufferInfo),
 }
 
 @(private)
@@ -66,6 +69,7 @@ descriptor_set_allocate :: proc(
   err: error.Error,
 ) {
   set = vector.one(&pool.sets) or_return
+  set.parent = pool
 
   layouts := [?]vk.DescriptorSetLayout{layout.handle}
   info := vk.DescriptorSetAllocateInfo {
@@ -88,6 +92,7 @@ descriptor_set_allocate :: proc(
 
   for i in 0 ..< layout.bindings.len {
     descriptor := vector.one(&set.descriptors) or_return
+
     descriptor.kind = layout.bindings.data[i].kind
     descriptor.size = counts[i] * layout.bindings.data[i].type_size
     descriptor.binding = u32(i)
@@ -136,11 +141,11 @@ set_layout_create :: proc(
 ) {
   set_layout = vector.one(&ctx.set_layouts) or_return
 
-  raw_bindings := make(
-    []vk.DescriptorSetLayoutBinding,
-    len(bindings),
+  raw_bindings := vector.new(
+    vk.DescriptorSetLayoutBinding,
+    u32(len(bindings)),
     ctx.tmp_allocator,
-  )
+  ) or_return
 
   set_layout.bindings = vector.new(
     Descriptor_Set_Layout_Binding,
@@ -154,13 +159,13 @@ set_layout_create :: proc(
     binding^ = bindings[i]
     binding.handle.binding = u32(i)
 
-    raw_bindings[i] = binding.handle
+    vector.append(&raw_bindings, binding.handle) or_return
   }
 
   set_layout_info := vk.DescriptorSetLayoutCreateInfo {
     sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    bindingCount = u32(len(raw_bindings)),
-    pBindings    = &raw_bindings[0],
+    bindingCount = raw_bindings.len,
+    pBindings    = &raw_bindings.data[0],
   }
 
   if vk.CreateDescriptorSetLayout(
@@ -198,45 +203,81 @@ descriptor_pool_create :: proc(
     return pool, .CreateDescriptorPoolFailed
   }
 
+  pool.writes = vector.new(
+    vk.WriteDescriptorSet,
+    max * 2,
+    ctx.allocator,
+  ) or_return
+
+  pool.infos = vector.new(
+    vk.DescriptorBufferInfo,
+    max * 2,
+    ctx.allocator,
+  ) or_return
+
   return pool, nil
 }
 
 @(private)
-descriptor_set_update :: proc(ctx: ^Vulkan_Context, set: Descriptor_Set) {
-  writes := make(
-    []vk.WriteDescriptorSet,
-    set.descriptors.len,
-    ctx.tmp_allocator,
-  )
+descriptor_set_update :: proc(
+  $T: typeid,
+  ctx: ^Vulkan_Context,
+  set: ^Descriptor_Set,
+  descriptor_index: u32,
+  data: []T,
+  offset: u32,
+) -> error.Error {
+  copy_data_to_buffer(
+    T,
+    ctx,
+    data,
+    &set.descriptors.data[descriptor_index].buffer,
+    offset,
+  ) or_return
 
-  infos := make(
-    []vk.DescriptorBufferInfo,
-    set.descriptors.len,
-    ctx.tmp_allocator,
-  )
+  write := vector.one(&set.parent.writes) or_return
+  info := vector.one(&set.parent.infos) or_return
 
-  count := 0
-  for i in 0 ..< set.descriptors.len {
-    descriptor := &set.descriptors.data[i]
+  descriptor := &set.descriptors.data[descriptor_index]
 
-    if descriptor.size == 0 do continue
+  info.buffer = descriptor.buffer.handle
+  info.offset = vk.DeviceSize(offset * size_of(T))
+  info.range = vk.DeviceSize(size_of(T) * len(data))
 
-    infos[count].offset = 0
-    infos[count].buffer = descriptor.buffer.handle
-    infos[count].range = vk.DeviceSize(descriptor.size)
+  write.sType = .WRITE_DESCRIPTOR_SET
+  write.dstSet = set.handle
+  write.descriptorType = descriptor.kind
+  write.dstBinding = descriptor.binding
+  write.pBufferInfo = info
+  write.descriptorCount = 1
+  write.dstArrayElement = 0
+  write.pNext = nil
+  write.pImageInfo = nil
+  write.pTexelBufferView = nil
 
-    writes[count].sType = .WRITE_DESCRIPTOR_SET
-    writes[count].dstSet = set.handle
-    writes[count].dstBinding = descriptor.binding
-    writes[count].dstArrayElement = 0
-    writes[count].descriptorCount = 1
-    writes[count].pBufferInfo = &infos[count]
-    writes[count].descriptorType = descriptor.kind
+  return nil
+}
 
-    count += 1
+@(private)
+descriptor_pool_update :: proc(
+  ctx: ^Vulkan_Context,
+  descriptor_pool: ^Descriptor_Pool,
+) {
+  defer {
+    descriptor_pool.writes.len = 0
+    descriptor_pool.infos.len = 0
   }
 
-  vk.UpdateDescriptorSets(ctx.device.handle, u32(count), &writes[0], 0, nil)
+  if descriptor_pool.writes.len == 0 do return
+  log.info("Writing updates to descriptors:", descriptor_pool.writes.len)
+
+  vk.UpdateDescriptorSets(
+    ctx.device.handle,
+    descriptor_pool.writes.len,
+    &descriptor_pool.writes.data[0],
+    0,
+    nil,
+  )
 }
 
 update_projection :: proc(
@@ -244,11 +285,12 @@ update_projection :: proc(
   projection: Matrix,
 ) -> error.Error {
   m := [?]Matrix{projection}
-  copy_data_to_buffer(
+  descriptor_set_update(
     Matrix,
     ctx,
+    ctx.fixed_set,
+    TRANSFORMS,
     m[:],
-    &ctx.fixed_set.descriptors.data[TRANSFORMS].buffer,
     0,
   ) or_return
 
@@ -257,11 +299,12 @@ update_projection :: proc(
 
 update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> error.Error {
   m := [?]Matrix{view}
-  copy_data_to_buffer(
+  descriptor_set_update(
     Matrix,
     ctx,
+    ctx.fixed_set,
+    TRANSFORMS,
     m[:],
-    &ctx.fixed_set.descriptors.data[TRANSFORMS].buffer,
     1,
   ) or_return
 
@@ -270,20 +313,7 @@ update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> error.Error {
 
 update_light :: proc(ctx: ^Vulkan_Context, light: Light) -> error.Error {
   m := [?]Light{light}
-  copy_data_to_buffer(
-    Light,
-    ctx,
-    m[:],
-    &ctx.fixed_set.descriptors.data[LIGHTS].buffer,
-    0,
-  ) or_return
-
-  return nil
-}
-
-@(private)
-submit_staging_data :: proc(ctx: ^Vulkan_Context) -> error.Error {
-  // if !ctx.staging.recording do return nil
+  descriptor_set_update(Light, ctx, ctx.fixed_set, LIGHTS, m[:], 0) or_return
 
   return nil
 }

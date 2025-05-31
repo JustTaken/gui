@@ -1,9 +1,9 @@
 package vulk
 
+import "core:log"
 import "lib:collection/vector"
 import "lib:error"
 import vk "vendor:vulkan"
-
 
 Queue_Kind :: enum {
   Transfer,
@@ -70,11 +70,17 @@ get_drm_modifiers :: proc(
     ctx.allocator,
   ) or_return
 
-  drmFormatModifierProperties := make(
-    []vk.DrmFormatModifierPropertiesEXT,
+  drmFormatModifierProperties_vec := vector.new(
+    vk.DrmFormatModifierPropertiesEXT,
     count,
     ctx.tmp_allocator,
-  )
+  ) or_return
+
+  drmFormatModifierProperties := vector.reserve_n(
+    &drmFormatModifierProperties_vec,
+    count,
+  ) or_return
+
   modifier_properties_list.pDrmFormatModifierProperties =
   &drmFormatModifierProperties[0]
 
@@ -148,11 +154,16 @@ check_physical_device_ext_support :: proc(
   count: u32
 
   vk.EnumerateDeviceExtensionProperties(physical_device, nil, &count, nil)
-  available_extensions := make(
-    []vk.ExtensionProperties,
+  available_extensions_vec := vector.new(
+    vk.ExtensionProperties,
     count,
     ctx.tmp_allocator,
-  )
+  ) or_return
+
+  available_extensions := vector.reserve_n(
+    &available_extensions_vec,
+    count,
+  ) or_return
 
   vk.EnumerateDeviceExtensionProperties(
     physical_device,
@@ -162,7 +173,11 @@ check_physical_device_ext_support :: proc(
   )
 
   check :: proc(e: cstring, availables: []vk.ExtensionProperties) -> bool {
-    for &available in availables do if e == cstring(&available.extensionName[0]) do return true
+    for &available in availables {
+      if e == cstring(&available.extensionName[0]) {
+        return true
+      }
+    }
 
     return false
   }
@@ -182,7 +197,13 @@ find_physical_device :: proc(
   device_count: u32
   vk.EnumeratePhysicalDevices(ctx.instance, &device_count, nil)
 
-  devices := make([]vk.PhysicalDevice, device_count, ctx.tmp_allocator)
+  devices_vec := vector.new(
+    vk.PhysicalDevice,
+    device_count,
+    ctx.tmp_allocator,
+  ) or_return
+
+  devices := vector.reserve_n(&devices_vec, device_count) or_return
 
   vk.EnumeratePhysicalDevices(ctx.instance, &device_count, &devices[0])
 
@@ -203,7 +224,9 @@ find_physical_device :: proc(
 
   hiscore: u32 = 0
   for dev in devices {
+
     score := suitability(ctx, dev)
+    log.info("PHYSICAL_DEVICE:", dev, device_count, score)
     if score > hiscore {
       physical_device = dev
       hiscore = score

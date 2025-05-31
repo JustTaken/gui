@@ -395,20 +395,22 @@ pipeline_add_instance :: proc(
   m := model.? or_else linalg.MATRIX4F32_IDENTITY
 
   transform_offsets := [?]u32{ctx.transforms + transform_offset}
-  copy_data_to_buffer(
+  descriptor_set_update(
     u32,
     ctx,
+    ctx.dynamic_set,
+    TRANSFORM_OFFSETS,
     transform_offsets[:],
-    &ctx.dynamic_set.descriptors.data[TRANSFORM_OFFSETS].buffer,
     instance.offset,
   ) or_return
 
   material_offsets := [?]u32{geometry.material}
-  copy_data_to_buffer(
+  descriptor_set_update(
     u32,
     ctx,
+    ctx.dynamic_set,
+    MATERIAL_OFFSETS,
     material_offsets[:],
-    &ctx.dynamic_set.descriptors.data[MATERIAL_OFFSETS].buffer,
     instance.offset,
   ) or_return
 
