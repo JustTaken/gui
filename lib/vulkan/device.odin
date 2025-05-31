@@ -1,6 +1,5 @@
 package vulk
 
-import "core:log"
 import "lib:collection/vector"
 import "lib:error"
 import vk "vendor:vulkan"
@@ -226,7 +225,6 @@ find_physical_device :: proc(
   for dev in devices {
 
     score := suitability(ctx, dev)
-    log.info("PHYSICAL_DEVICE:", dev, device_count, score)
     if score > hiscore {
       physical_device = dev
       hiscore = score

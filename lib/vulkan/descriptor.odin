@@ -48,6 +48,7 @@ Descriptor_Set :: struct {
   parent:      ^Descriptor_Pool,
   handle:      vk.DescriptorSet,
   descriptors: vector.Vector(Descriptor),
+  to_update:   vector.Vector(bool),
 }
 
 @(private)
@@ -90,7 +91,15 @@ descriptor_set_allocate :: proc(
     ctx.allocator,
   ) or_return
 
+  set.to_update = vector.new(
+    bool,
+    layout.bindings.len,
+    ctx.allocator,
+  ) or_return
+
   for i in 0 ..< layout.bindings.len {
+    vector.append(&set.to_update, false) or_return
+
     descriptor := vector.one(&set.descriptors) or_return
 
     descriptor.kind = layout.bindings.data[i].kind
@@ -235,14 +244,18 @@ descriptor_set_update :: proc(
     offset,
   ) or_return
 
-  write := vector.one(&set.parent.writes) or_return
-  info := vector.one(&set.parent.infos) or_return
+  if set.to_update.data[descriptor_index] {
+    return nil
+  }
 
   descriptor := &set.descriptors.data[descriptor_index]
 
+  write := vector.one(&set.parent.writes) or_return
+  info := vector.one(&set.parent.infos) or_return
+
   info.buffer = descriptor.buffer.handle
-  info.offset = vk.DeviceSize(offset * size_of(T))
-  info.range = vk.DeviceSize(size_of(T) * len(data))
+  info.offset = vk.DeviceSize(0)
+  info.range = vk.DeviceSize(descriptor.size)
 
   write.sType = .WRITE_DESCRIPTOR_SET
   write.dstSet = set.handle
@@ -255,6 +268,8 @@ descriptor_set_update :: proc(
   write.pImageInfo = nil
   write.pTexelBufferView = nil
 
+  set.to_update.data[descriptor_index] = true
+
   return nil
 }
 
@@ -266,10 +281,15 @@ descriptor_pool_update :: proc(
   defer {
     descriptor_pool.writes.len = 0
     descriptor_pool.infos.len = 0
+
+    for i in 0 ..< descriptor_pool.sets.len {
+      for j in 0 ..< descriptor_pool.sets.data[i].to_update.len {
+        descriptor_pool.sets.data[i].to_update.data[j] = false
+      }
+    }
   }
 
   if descriptor_pool.writes.len == 0 do return
-  log.info("Writing updates to descriptors:", descriptor_pool.writes.len)
 
   vk.UpdateDescriptorSets(
     ctx.device.handle,
@@ -299,6 +319,7 @@ update_projection :: proc(
 
 update_view :: proc(ctx: ^Vulkan_Context, view: Matrix) -> error.Error {
   m := [?]Matrix{view}
+
   descriptor_set_update(
     Matrix,
     ctx,

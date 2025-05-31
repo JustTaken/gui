@@ -39,6 +39,8 @@ void main() {
   int offset = transform_offsets[gl_InstanceIndex];
   mat4 transform = transforms[offset];
 
+  // gl_Position = projection * view * vec4(in_position, 1.0);
+  // out_color = vec4(1, 1, 1, 1);
   gl_Position = projection * view * transform * models[gl_InstanceIndex] * vec4(in_position, 1.0);
 
   vec4 color = materials[material_offsets[gl_InstanceIndex]];
