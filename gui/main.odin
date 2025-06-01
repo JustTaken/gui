@@ -45,7 +45,7 @@ Context :: struct {
 run :: proc(width: u32, height: u32, frames: u32) -> error.Error {
   ctx: Context
 
-  init_memory(&ctx, 1024 * 1024 * 2, 2) or_return
+  init_memory(&ctx, 1024 * 1024 * 50, 2) or_return
   init_scene(&ctx, width, height, frames) or_return
 
   for ctx.wl.running {

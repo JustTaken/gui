@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import vk "vendor:vulkan"
 
+import "lib:collection/vector"
 import "lib:error"
 
 Shader_Module :: struct {
@@ -53,6 +54,35 @@ shader_module_update :: proc(
      .SUCCESS {
     log.error("Failed to create shader", module.path, "module")
     return .CreateShaderModuleFailed
+  }
+
+  return nil
+}
+
+update_shaders :: proc(ctx: ^Vulkan_Context) -> error.Error {
+  log.info("Updating shaders")
+
+  for i in 0 ..< ctx.shaders.len {
+    shader_module_update(&ctx.shaders.data[i], ctx) or_return
+  }
+
+  for j in 0 ..< ctx.render_passes.len {
+    for i in 0 ..< ctx.render_passes.data[j].pipelines.len {
+      vector.append(
+        &ctx.render_passes.data[j].unused,
+        ctx.render_passes.data[j].pipelines.data[i],
+      ) or_return
+
+      pipeline_update(
+        &ctx.render_passes.data[j].pipelines.data[i],
+        ctx,
+        &ctx.render_passes.data[j],
+      ) or_return
+    }
+  }
+
+  for i in 0 ..< ctx.shaders.len {
+    shader_module_destroy(ctx, &ctx.shaders.data[i])
   }
 
   return nil

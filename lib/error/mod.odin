@@ -68,4 +68,5 @@ Error :: enum {
   InvalidFormat,
   InvalidScene,
   InvalidImage,
+  SamplerCreateFailed,
 }

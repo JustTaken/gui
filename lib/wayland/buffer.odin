@@ -6,7 +6,7 @@ import "lib:vulkan"
 import "lib:wayland/interface"
 
 @(private)
-Buffer :: struct {
+Wayland_Buffer :: struct {
   id:       u32,
   offset:   u32,
   width:    u32,
@@ -30,12 +30,15 @@ buffers_init :: proc(ctx: ^Wayland_Context) -> error.Error {
     ctx.ids.buffer_base,
   ) or_return
 
-  vector.append(&ctx.buffers, Buffer{id = ctx.ids.buffer_base}) or_return
+  vector.append(
+    &ctx.buffers,
+    Wayland_Buffer{id = ctx.ids.buffer_base},
+  ) or_return
 
   for i in 1 ..< ctx.buffers.cap {
     vector.append(
       &ctx.buffers,
-      Buffer{id = copy_id(ctx, ctx.ids.buffer_base) or_return},
+      Wayland_Buffer{id = copy_id(ctx, ctx.ids.buffer_base) or_return},
     ) or_return
   }
 

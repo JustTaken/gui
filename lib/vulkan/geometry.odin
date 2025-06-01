@@ -28,8 +28,8 @@ Instance :: struct {
 }
 
 Geometry :: struct {
-  vertex:    Buffer,
-  indice:    Buffer,
+  vertex:    ^Buffer,
+  indice:    ^Buffer,
   count:     u32,
   material:  u32,
   transform: Matrix,
@@ -57,21 +57,29 @@ geometry_create :: proc(
 
   geometry.material = material.? or_else ctx.default_material
 
-  geometry.vertex = buffer_create(
+  geometry.vertex = vector.one(&ctx.buffers) or_return
+
+  buffer_create(
+    geometry.vertex,
     ctx,
     u32(len(vertices) * size_of(T)),
     {.VERTEX_BUFFER, .TRANSFER_DST},
     {.DEVICE_LOCAL},
   ) or_return
-  copy_data_to_buffer(T, ctx, vertices, &geometry.vertex, 0) or_return
 
-  geometry.indice = buffer_create(
+  copy_data_to_buffer(T, ctx, vertices, geometry.vertex, 0) or_return
+
+  geometry.indice = vector.one(&ctx.buffers) or_return
+
+  buffer_create(
+    geometry.indice,
     ctx,
     u32(len(indices) * size_of(u16)),
     {.INDEX_BUFFER, .TRANSFER_DST},
     {.DEVICE_LOCAL},
   ) or_return
-  copy_data_to_buffer(u16, ctx, indices, &geometry.indice, 0) or_return
+
+  copy_data_to_buffer(u16, ctx, indices, geometry.indice, 0) or_return
 
   return index, nil
 }
@@ -128,13 +136,20 @@ instance_update :: proc(
 ) -> error.Error {
   if model != nil {
     models := [?]Instance_Model{model.? * instance.transform}
+    copy_data_to_buffer(
+      Instance_Model,
+      ctx,
+      models[:],
+      ctx.model_buffer,
+      instance.offset,
+    ) or_return
+
     descriptor_set_update(
       Instance_Model,
       ctx,
       ctx.dynamic_set,
+      ctx.model_buffer,
       MODELS,
-      models[:],
-      instance.offset,
     ) or_return
   }
 
@@ -145,8 +160,8 @@ add_transforms :: proc(
   ctx: ^Vulkan_Context,
   transforms: []Matrix,
 ) -> error.Error {
-  update_transforms(ctx, transforms, ctx.transforms) or_return
-  ctx.transforms += u32(len(transforms))
+  update_transforms(ctx, transforms, ctx.transform_index) or_return
+  ctx.transform_index += u32(len(transforms))
 
   return nil
 }
@@ -156,20 +171,21 @@ update_transforms :: proc(
   transforms: []Matrix,
   offset: u32,
 ) -> error.Error {
-  descriptor_set_update(
-    Instance_Model,
+  copy_data_to_buffer(
+    Matrix,
     ctx,
-    ctx.dynamic_set,
-    DYNAMIC_TRANSFORMS,
     transforms[:],
+    ctx.transform_buffer,
     offset,
   ) or_return
 
-  return nil
-}
+  descriptor_set_update(
+    Matrix,
+    ctx,
+    ctx.dynamic_set,
+    ctx.transform_buffer,
+    DYNAMIC_TRANSFORMS,
+  ) or_return
 
-@(private)
-destroy_geometry :: proc(ctx: ^Vulkan_Context, geometry: ^Geometry) {
-  buffer_destroy(ctx, geometry.vertex)
-  buffer_destroy(ctx, geometry.indice)
+  return nil
 }

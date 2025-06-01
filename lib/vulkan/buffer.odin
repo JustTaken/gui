@@ -13,43 +13,13 @@ Buffer :: struct {
 }
 
 @(private)
-StagingBuffer :: struct {
-  buffer:    Buffer,
-  recording: bool,
-}
-
-@(private)
 buffer_create :: proc(
+  buffer: ^Buffer,
   ctx: ^Vulkan_Context,
   size: u32,
   usage: vk.BufferUsageFlags,
   properties: vk.MemoryPropertyFlags,
-) -> (
-  buffer: Buffer,
-  err: error.Error,
-) {
-  buffer.handle = vulkan_buffer_create(ctx, size, usage) or_return
-  buffer.memory = buffer_create_memory(
-    ctx,
-    buffer.handle,
-    properties,
-  ) or_return
-
-  buffer.len = 0
-  buffer.cap = u32(size)
-
-  return buffer, nil
-}
-
-@(private)
-vulkan_buffer_create :: proc(
-  ctx: ^Vulkan_Context,
-  size: u32,
-  usage: vk.BufferUsageFlags,
-) -> (
-  buffer: vk.Buffer,
-  err: error.Error,
-) {
+) -> error.Error {
   buf_info := vk.BufferCreateInfo {
     sType       = .BUFFER_CREATE_INFO,
     size        = vk.DeviceSize(size),
@@ -58,24 +28,17 @@ vulkan_buffer_create :: proc(
     sharingMode = .EXCLUSIVE,
   }
 
-  if vk.CreateBuffer(ctx.device.handle, &buf_info, nil, &buffer) != .SUCCESS {
-    return buffer, .CreateBuffer
+  if vk.CreateBuffer(ctx.device.handle, &buf_info, nil, &buffer.handle) !=
+     .SUCCESS {
+    return .CreateBuffer
   }
 
-  return buffer, nil
-}
-
-@(private)
-buffer_create_memory :: proc(
-  ctx: ^Vulkan_Context,
-  buffer: vk.Buffer,
-  properties: vk.MemoryPropertyFlags,
-) -> (
-  memory: vk.DeviceMemory,
-  err: error.Error,
-) {
   requirements: vk.MemoryRequirements
-  vk.GetBufferMemoryRequirements(ctx.device.handle, buffer, &requirements)
+  vk.GetBufferMemoryRequirements(
+    ctx.device.handle,
+    buffer.handle,
+    &requirements,
+  )
 
   alloc_info := vk.MemoryAllocateInfo {
     sType           = .MEMORY_ALLOCATE_INFO,
@@ -88,14 +51,17 @@ buffer_create_memory :: proc(
     ) or_return,
   }
 
-  if vk.AllocateMemory(ctx.device.handle, &alloc_info, nil, &memory) !=
+  if vk.AllocateMemory(ctx.device.handle, &alloc_info, nil, &buffer.memory) !=
      .SUCCESS {
-    return memory, .AllocateDeviceMemory
+    return .AllocateDeviceMemory
   }
 
-  vk.BindBufferMemory(ctx.device.handle, buffer, memory, 0)
+  vk.BindBufferMemory(ctx.device.handle, buffer.handle, buffer.memory, 0)
 
-  return memory, nil
+  buffer.len = 0
+  buffer.cap = u32(size)
+
+  return nil
 }
 
 @(private)
@@ -122,18 +88,19 @@ memory_copy :: proc(
 }
 
 @(private)
-staging_buffer_append :: proc(
+buffer_append :: proc(
   $T: typeid,
   ctx: ^Vulkan_Context,
+  buffer: ^Buffer,
   data: []T,
 ) -> (
   offset: u32,
   err: error.Error,
 ) {
-  offset = ctx.staging.buffer.len
+  offset = buffer.len
 
-  memory_copy(T, ctx, ctx.staging.buffer.memory, ctx.staging.buffer.len, data)
-  ctx.staging.buffer.len += u32(len(data) * size_of(T))
+  memory_copy(T, ctx, buffer.memory, buffer.len, data)
+  buffer.len += u32(len(data) * size_of(T))
 
   return offset, nil
 }
@@ -142,18 +109,14 @@ staging_buffer_append :: proc(
 copy_data_to_image :: proc(
   ctx: ^Vulkan_Context,
   data: []u8,
-  image: vk.Image,
-  aspect: vk.ImageAspectFlags,
+  image: ^Image,
   width: u32,
   height: u32,
+  aspect: vk.ImageAspectFlags,
 ) -> error.Error {
   l := u32(len(data))
 
-  staging_buffer_check_cap(ctx, l) or_return
-
-  if ctx.staging.buffer.len + l > ctx.staging.buffer.cap {
-    return .OutOfStagingMemory
-  }
+  buffer_check_cap(ctx, l) or_return
 
   resource := vk.ImageSubresourceLayers {
     aspectMask     = aspect,
@@ -174,8 +137,9 @@ copy_data_to_image :: proc(
     z = 0,
   }
 
+  staging_offset := buffer_append(u8, ctx, ctx.staging, data) or_return
   copy_info := vk.BufferImageCopy {
-    bufferOffset      = 0,
+    bufferOffset      = vk.DeviceSize(staging_offset),
     bufferRowLength   = 0,
     bufferImageHeight = 0,
     imageSubresource  = resource,
@@ -185,8 +149,8 @@ copy_data_to_image :: proc(
 
   vk.CmdCopyBufferToImage(
     ctx.transfer_command_buffer.handle,
-    ctx.staging.buffer.handle,
-    image,
+    ctx.staging.handle,
+    image.handle,
     .TRANSFER_DST_OPTIMAL,
     1,
     &copy_info,
@@ -205,14 +169,14 @@ copy_data_to_buffer :: proc(
 ) -> error.Error {
   l := u32(len(data))
 
-  staging_buffer_check_cap(ctx, l) or_return
+  buffer_check_cap(ctx, l) or_return
 
   if dst_offset >= dst_buffer.cap {
     log.error("Trying to copy data outside of buffer boundary")
     return .OutOfBounds
   }
 
-  staging_offset := staging_buffer_append(T, ctx, data) or_return
+  staging_offset := buffer_append(T, ctx, ctx.staging, data) or_return
 
   copy_info := vk.BufferCopy {
     srcOffset = vk.DeviceSize(staging_offset),
@@ -222,7 +186,7 @@ copy_data_to_buffer :: proc(
 
   vk.CmdCopyBuffer(
     ctx.transfer_command_buffer.handle,
-    ctx.staging.buffer.handle,
+    ctx.staging.handle,
     dst_buffer.handle,
     1,
     &copy_info,
@@ -232,8 +196,8 @@ copy_data_to_buffer :: proc(
 }
 
 @(private)
-staging_buffer_check_cap :: proc(ctx: ^Vulkan_Context, l: u32) -> error.Error {
-  if ctx.staging.buffer.len + l > ctx.staging.buffer.cap {
+buffer_check_cap :: proc(ctx: ^Vulkan_Context, l: u32) -> error.Error {
+  if ctx.staging.len + l > ctx.staging.cap {
     return .OutOfStagingMemory
   }
 
@@ -260,7 +224,7 @@ find_memory_type :: proc(
 }
 
 @(private)
-buffer_destroy :: proc(ctx: ^Vulkan_Context, buffer: Buffer) {
+buffer_destroy :: proc(ctx: ^Vulkan_Context, buffer: ^Buffer) {
   vk.DestroyBuffer(ctx.device.handle, buffer.handle, nil)
   vk.FreeMemory(ctx.device.handle, buffer.memory, nil)
 }

@@ -96,7 +96,7 @@ Wayland_Context :: struct {
   in_fds:          vector.Buffer,
   out_fds:         vector.Vector(interface.Fd),
   values:          vector.Vector(interface.Argument),
-  buffers:         vector.Vector(Buffer),
+  buffers:         vector.Vector(Wayland_Buffer),
   active_buffer:   u32,
   ids:             Ids,
   opcodes:         Opcodes,
@@ -179,7 +179,11 @@ wayland_init :: proc(
   ctx.key_delay = 200 * 1000 * 1000
   ctx.key_repeat = 30 * 1000 * 1000
 
-  ctx.buffers = vector.new(Buffer, frame_count, ctx.allocator) or_return
+  ctx.buffers = vector.new(
+    Wayland_Buffer,
+    frame_count,
+    ctx.allocator,
+  ) or_return
 
   ctx.ids.display = get_id(
     ctx,

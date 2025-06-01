@@ -213,10 +213,12 @@ find_physical_device :: proc(
     vk.GetPhysicalDeviceProperties(dev, &props)
     vk.GetPhysicalDeviceFeatures(dev, &features)
 
+    if !features.samplerAnisotropy do return 0
+    if check_physical_device_ext_support(ctx, dev) != nil do return 0
+
     score: u32 = 10
     if props.deviceType == .DISCRETE_GPU do score += 1000
 
-    if check_physical_device_ext_support(ctx, dev) != nil do return 0
 
     return score + props.limits.maxImageDimension2D
   }

@@ -13,8 +13,8 @@ Frame :: struct {
   render_pass: ^Render_Pass,
   planes:      vector.Vector(vk.SubresourceLayout),
   modifier:    vk.DrmFormatModifierPropertiesEXT,
-  image:       Image,
-  depth:       Image,
+  image:       ^Image,
+  depth:       ^Image,
   buffer:      vk.Framebuffer,
   width:       u32,
   height:      u32,
@@ -37,6 +37,8 @@ frames_create :: proc(
     frame := vector.one(&frames) or_return
     frame.planes = vector.new(vk.SubresourceLayout, 3, ctx.allocator) or_return
     frame.render_pass = render_pass
+    frame.image = vector.one(&ctx.images) or_return
+    frame.depth = vector.one(&ctx.images) or_return
 
     frame_create(ctx, frame, width, height) or_return
   }
@@ -82,7 +84,8 @@ frame_create :: proc(
     handleTypes = {.DMA_BUF_EXT},
   }
 
-  frame.image = image_create(
+  image_create(
+    frame.image,
     ctx,
     width = width,
     height = height,
@@ -142,7 +145,8 @@ frame_create :: proc(
     return .GetFdFailed
   }
 
-  frame.depth = image_create(
+  image_create(
+    frame.depth,
     ctx,
     width = width,
     height = height,
@@ -157,8 +161,8 @@ frame_create :: proc(
   frame.buffer = framebuffer_create(
     ctx,
     frame.render_pass,
-    frame.image.view.?,
-    frame.depth.view.?,
+    frame.image.view,
+    frame.depth.view,
     width,
     height,
   ) or_return
@@ -210,6 +214,8 @@ frame_resize :: proc(
   frame := get_frame(ctx, index)
 
   frame_destroy(ctx, frame)
+  image_destroy(ctx, frame.image)
+  image_destroy(ctx, frame.depth)
   frame_create(ctx, frame, width, height) or_return
 
   return nil
@@ -227,9 +233,9 @@ frame_draw :: proc(
     ctx.copy_fence,
   ) or_return
 
-  ctx.staging.buffer.len = 0
+  ctx.staging.len = 0
 
-  descriptor_pool_update(ctx, &ctx.descriptor_pool)
+  descriptors_update(ctx)
 
   frame := get_frame(ctx, frame_index)
 
@@ -352,12 +358,6 @@ frame_draw :: proc(
 @(private)
 frame_destroy :: proc(ctx: ^Vulkan_Context, frame: ^Frame) {
   vk.DestroyFramebuffer(ctx.device.handle, frame.buffer, nil)
-  vk.DestroyImageView(ctx.device.handle, frame.image.view.?, nil)
-  vk.FreeMemory(ctx.device.handle, frame.image.memory, nil)
-  vk.DestroyImage(ctx.device.handle, frame.image.handle, nil)
-  vk.DestroyImageView(ctx.device.handle, frame.depth.view.?, nil)
-  vk.FreeMemory(ctx.device.handle, frame.depth.memory, nil)
-  vk.DestroyImage(ctx.device.handle, frame.depth.handle, nil)
 
   posix.close(posix.FD(frame.fd))
 }

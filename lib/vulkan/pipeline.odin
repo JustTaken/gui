@@ -313,18 +313,16 @@ pipeline_create :: proc(
 }
 
 @(private)
-layout_create :: proc(
+pipeline_layout_create :: proc(
+  layout: ^Pipeline_Layout,
   ctx: ^Vulkan_Context,
   set_layouts: []^Descriptor_Set_Layout,
-) -> (
-  layout: Pipeline_Layout,
-  err: error.Error,
-) {
-  layouts := make(
-    []vk.DescriptorSetLayout,
-    len(set_layouts),
+) -> error.Error {
+  layouts := vector.new(
+    vk.DescriptorSetLayout,
+    u32(len(set_layouts)),
     ctx.tmp_allocator,
-  )
+  ) or_return
 
   layout.sets = vector.new(
     ^Descriptor_Set_Layout,
@@ -334,13 +332,13 @@ layout_create :: proc(
 
   for i in 0 ..< len(set_layouts) {
     vector.append(&layout.sets, set_layouts[i]) or_return
-    layouts[i] = set_layouts[i].handle
+    vector.append(&layouts, set_layouts[i].handle) or_return
   }
 
   layout_info := vk.PipelineLayoutCreateInfo {
     sType          = .PIPELINE_LAYOUT_CREATE_INFO,
-    setLayoutCount = u32(len(layouts)),
-    pSetLayouts    = &layouts[0],
+    setLayoutCount = layouts.len,
+    pSetLayouts    = &layouts.data[0],
   }
 
   if vk.CreatePipelineLayout(
@@ -350,10 +348,10 @@ layout_create :: proc(
        &layout.handle,
      ) !=
      .SUCCESS {
-    return layout, .CreatePipelineLayouFailed
+    return .CreatePipelineLayouFailed
   }
 
-  return layout, nil
+  return nil
 }
 
 @(private)
@@ -379,9 +377,10 @@ pipeline_add_instance :: proc(
 
   if group == nil {
     group = vector.one(&pipeline.groups) or_return
+
     group.geometry = geometry
-    group.offset = ctx.instances
-    ctx.instances += 10
+    group.offset = ctx.instance_index
+    ctx.instance_index += 10
 
     group.instances = vector.new(Instance, 10, ctx.allocator) or_return
   }
@@ -394,24 +393,38 @@ pipeline_add_instance :: proc(
 
   m := model.? or_else linalg.MATRIX4F32_IDENTITY
 
-  transform_offsets := [?]u32{ctx.transforms + transform_offset}
-  descriptor_set_update(
+  transform_offsets := [?]u32{ctx.transform_index + transform_offset}
+  copy_data_to_buffer(
     u32,
     ctx,
-    ctx.dynamic_set,
-    TRANSFORM_OFFSETS,
     transform_offsets[:],
+    ctx.transform_offset_buffer,
     instance.offset,
   ) or_return
 
-  material_offsets := [?]u32{geometry.material}
   descriptor_set_update(
     u32,
     ctx,
     ctx.dynamic_set,
-    MATERIAL_OFFSETS,
+    ctx.transform_offset_buffer,
+    TRANSFORM_OFFSETS,
+  ) or_return
+
+  material_offsets := [?]u32{geometry.material}
+  copy_data_to_buffer(
+    u32,
+    ctx,
     material_offsets[:],
+    ctx.material_offset_buffer,
     instance.offset,
+  ) or_return
+
+  descriptor_set_update(
+    u32,
+    ctx,
+    ctx.dynamic_set,
+    ctx.material_offset_buffer,
+    MATERIAL_OFFSETS,
   ) or_return
 
   instance_update(ctx, instance, m) or_return

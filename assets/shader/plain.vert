@@ -5,6 +5,7 @@ layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec2 in_texture;
 
 layout(location = 0) out vec4 out_color;
+layout(location = 1) out vec2 out_texture;
 
 layout(set = 0, binding = 0) uniform Projection {
   mat4 projection;
@@ -44,4 +45,5 @@ void main() {
   vec4 color = materials[material_offsets[gl_InstanceIndex]];
   vec3 ligth_direction = normalize(light - gl_Position.xyz);
   out_color = vec4(length(dot(in_normal, ligth_direction)) * color.rgb, color.a);
+  out_texture = in_texture;
 }
