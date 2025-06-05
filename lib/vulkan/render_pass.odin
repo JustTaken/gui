@@ -95,49 +95,6 @@ render_pass_create :: proc(
   return nil
 }
 
-// @(private)
-// render_pass_append_shader :: proc(
-//   ctx: ^Vulkan_Context,
-//   render_pass: ^Render_Pass,
-//   path: string,
-// ) -> (
-//   module: ^Shader_Module,
-//   err: error.Error,
-// ) {
-//   shader_module_create(
-//     vector.one(&render_pass.shaders) or_return,
-//     ctx,
-//     path,
-//   ) or_return
-
-//   return module, nil
-// }
-
-// @(private)
-// render_pass_append_pipeline :: proc(
-//   ctx: ^Vulkan_Context,
-//   render_pass: ^Render_Pass,
-//   layout: ^Pipeline_Layout,
-//   vertex_shader: ^Shader_Module,
-//   fragment_shader: ^Shader_Module,
-//   vertex_attribute_bindings: [][]Vertex_Attribute,
-// ) -> (
-//   pipeline: ^Pipeline,
-//   err: error.Error,
-// ) {
-//   pipeline_create(
-//     pipeline,
-//     ctx,
-//     render_pass,
-//     layout,
-//     vertex_shader,
-//     fragment_shader,
-//     vertex_attribute_bindings,
-//   ) or_return
-
-//   return pipeline, nil
-// }
-
 render_pass_destroy_unused :: proc(
   ctx: ^Vulkan_Context,
   render_pass: ^Render_Pass,
