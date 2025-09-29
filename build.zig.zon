@@ -1,0 +1,14 @@
+.{
+    .name = .Gui,
+    .version = "0.0.1",
+    .fingerprint = 0xecb21618f4516592,
+    .minimum_zig_version = "0.15.1",
+    // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "Vulkan",
+        "Wayland",
+    },
+}
