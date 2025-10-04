@@ -28,3 +28,44 @@ pub const Allocator = struct {
         std.heap.page_allocator.free(self.main_buffer.buffer);
     }
 };
+
+pub const Matrix = [16]f32;
+
+pub const Math = struct {
+    pub fn scale(vec: [3]f32) Matrix {
+        return .{
+            vec[0], 0,      0,      0,
+            0,      vec[1], 0,      0,
+            0,      0,      vec[2], 0,
+            0,      0,      0,      1,
+        };
+    }
+
+    pub fn translate(vec: [3]f32) Matrix {
+        return .{
+            1, 0, 0, vec[0],
+            0, 1, 0, vec[1],
+            0, 0, 1, vec[2],
+            0, 0, 0, 1,
+        };
+    }
+
+    pub fn multiply(first: Matrix, second: Matrix) Matrix {
+        var matrix: Matrix = .{
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        };
+
+        for (0..4) |i| {
+            for (0..4) |j| {
+                for (0..4) |k| {
+                    matrix[j + i * 4] += first[j + k * 4] * second[i * 4 + k];
+                }
+            }
+        }
+
+        return matrix;
+    }
+};
