@@ -221,9 +221,9 @@ fn isAlpha(c: Char) bool {
     return c != '"' and std.ascii.isAscii(c); //(c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or isNumber(c);
 }
 
-pub fn parse(path: []const u8, allocator: std.mem.Allocator) Error!Map {
-    var file = std.fs.cwd().openFile(path, .{}) catch return error.FileNotFound;
-    defer file.close();
+pub fn parse(file: std.fs.File, allocator: std.mem.Allocator) Error!Map {
+    //var file = std.fs.cwd().openFile(path, .{}) catch return error.FileNotFound;
+    //defer file.close();
 
     const content = file.readToEndAlloc(allocator, 4096 * 100) catch return error.ReadFile;
     var context = try Context.init(content, allocator);

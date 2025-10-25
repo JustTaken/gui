@@ -17,19 +17,19 @@ pub fn build(builder: *std.Build) void {
         },
     });
 
-    // const vulkan_module = addModule(builder, "Vulkan", target, &.{.{
-    //     .name = "Util",
-    //     .module = util_module,
-    // }});
+    const vulkan_module = addModule(builder, "Vulkan", target, &.{.{
+        .name = "Util",
+        .module = util_module,
+    }});
 
-    // const wayland_module = addModule(builder, "Wayland", target, &.{.{
-    //     .name = "Util",
-    //     .module = util_module,
-    // }});
+    const wayland_module = addModule(builder, "Wayland", target, &.{.{
+        .name = "Util",
+        .module = util_module,
+    }});
 
     util_module.addIncludePath(builder.path("Asset/Include/"));
-    // wayland_module.linkSystemLibrary("wayland-client", .{});
-    // wayland_module.addCSourceFile(.{ .file = builder.path("Asset/Include/XdgShell.c") });
+    wayland_module.linkSystemLibrary("wayland-client", .{});
+    wayland_module.addCSourceFile(.{ .file = builder.path("Asset/Include/XdgShell.c") });
 
     const exe = builder.addExecutable(.{
         .name = "Gui",
@@ -38,14 +38,14 @@ pub fn build(builder: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                // .{
-                //     .name = "Vulkan",
-                //     .module = vulkan_module,
-                // },
-                // .{
-                //     .name = "Wayland",
-                //     .module = wayland_module,
-                // },
+                .{
+                    .name = "Vulkan",
+                    .module = vulkan_module,
+                },
+                .{
+                    .name = "Wayland",
+                    .module = wayland_module,
+                },
                 .{
                     .name = "GltfParser",
                     .module = gltf_parser_module,

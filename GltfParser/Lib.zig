@@ -99,11 +99,11 @@ pub const Gltf = struct {
             indices: Index,
 
             fn init(self: *Primitive, map: JsonParser.Map) !void {
-                self.indices = @intCast(map.get("indices").?.int);
                 const attributes = map.get("attributes").?.map;
 
                 self.attributes = AttributeMap.init(.{});
 
+                self.indices = @intCast(map.get("indices").?.int);
                 if (attributes.get("POSITION")) |position| self.attributes.put(.position, @intCast(position.int));
                 if (attributes.get("NORMAL")) |normal| self.attributes.put(.normal, @intCast(normal.int));
                 if (attributes.get("TEXCOORD_0")) |texcoord| self.attributes.put(.texcoord, @intCast(texcoord.int));
@@ -149,15 +149,15 @@ pub const Gltf = struct {
     };
 
     const Accessor = struct {
-        buffer_view: Index,
-        byte_offset: Index,
+        buffer_view: u32,
+        byte_offset: u32,
+        count: u32,
         component_type: ComponentType,
-        count: Index,
         kind: Kind,
         min: []u8,
         max: []u8,
 
-        const ComponentType = enum(Index) {
+        const ComponentType = enum(u16) {
             float32 = 5126,
             int8 = 5120,
             int16 = 5122,
@@ -229,9 +229,9 @@ pub const Gltf = struct {
     };
 
     const BufferView = struct {
-        buffer: Index,
-        byte_length: Index,
-        byte_offset: Index,
+        buffer: u32,
+        byte_length: u32,
+        byte_offset: u32,
         // target: Index,
 
         fn init(self: *BufferView, map: JsonParser.Map) !void {
@@ -258,20 +258,19 @@ pub const Gltf = struct {
     const Buffer = struct {
         content: []u8,
 
-        fn init(self: *Buffer, map: JsonParser.Map, allocator: std.mem.Allocator) !void {
-            const path = map.get("uri").?.string;
-            _ = path;
+        fn init(self: *Buffer, map: JsonParser.Map, dir: std.fs.Dir, allocator: std.mem.Allocator) !void {
+            const uri = map.get("uri").?.string;
             const size = map.get("byteLength").?.int;
 
             self.content = try allocator.alloc(u8, @intCast(size));
-            _ = try std.fs.cwd().readFile("Asset/Mesh/Cube.bin", self.content);
+            _ = try dir.readFile(uri, self.content);
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]Buffer {
+        fn initArray(array: JsonParser.Array, dir: std.fs.Dir, allocator: std.mem.Allocator) ![]Buffer {
             const buffers = try allocator.alloc(Buffer, array.len);
 
             for (0..array.len) |i| {
-                try buffers[i].init(array[i].map, allocator);
+                try buffers[i].init(array[i].map, dir, allocator);
             }
 
             return buffers;
@@ -296,7 +295,9 @@ pub const Gltf = struct {
             }
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]Skin {
+        fn initArray(array_opt: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Skin {
+            const array = if (array_opt) |a| a.array else return &.{};
+
             const skins = try allocator.alloc(Skin, array.len);
 
             for (0..array.len) |i| {
@@ -390,7 +391,8 @@ pub const Gltf = struct {
             self.samplers = try Sampler.initArray(map.get("samplers").?.array, allocator);
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]Animation {
+        fn initArray(array_opt: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Animation {
+            const array = if (array_opt) |a| a.array else return &.{};
             const animations = try allocator.alloc(Animation, array.len);
 
             for (0..array.len) |i| {
@@ -450,23 +452,17 @@ pub const Gltf = struct {
             }
         }
 
+        const root_nodes = try allocator.alloc(Index, self.nodes.len);
         var count: u32 = 0;
 
         for (0..self.nodes.len) |i| {
-            if (root_nodes_flag[i]) count += 1;
-        }
-
-        const root_nodes = try allocator.alloc(Index, count);
-        var j: u32 = 0;
-
-        for (0..self.nodes.len) |i| {
             if (root_nodes_flag[i]) {
-                root_nodes[j] = @intCast(i);
-                j += 1;
+                root_nodes[count] = @intCast(i);
+                count += 1;
             }
         }
 
-        return root_nodes;
+        return root_nodes[0..count];
     }
 
     fn completeNodeTransform(self: *Gltf, node: *CompleteNode, complete_nodes: []CompleteNode, parent_transform: ?Matrix) void {
@@ -478,7 +474,12 @@ pub const Gltf = struct {
     }
 
     fn getCompleteNode(self: *Gltf, node: Node, nodes: []CompleteNode, allocator: std.mem.Allocator) !CompleteNode {
-        var complete_node: CompleteNode = undefined;
+        var complete_node = CompleteNode {
+            .children = &.{},
+            .mesh = null,
+            .skin = null,
+            .transform = Math.scale(.{ 1, 1, 1}),
+        };
 
         complete_node.transform = node.transform;
         complete_node.children = try allocator.alloc(*CompleteNode, node.children.len);
@@ -514,19 +515,36 @@ pub const Gltf = struct {
         const primitives = mesh.primitives[0];
         const attributes = primitives.attributes;
 
-        var data: CompleteMesh = undefined;
+        var data = CompleteMesh {
+            .indices = &.{},
+            .position = &.{},
+            .normal = &.{},
+            .texcoord = &.{},
+            .joints = &.{},
+            .weights = &.{},
+        };
+
+        //std.debug.print("PRIMITIVE INDICES: {any}\n", .{primitives.indices});
 
         data.indices = self.getView(primitives.indices, Index);
         data.position = self.getView(attributes.get(.position).?, [3]f32);
         data.normal = self.getView(attributes.get(.normal).?, [3]f32);
         data.texcoord = self.getView(attributes.get(.texcoord).?, [2]f32);
 
+        //std.debug.print("MESH: {d}\n", .{index});
+        //std.debug.print("INDICES: {any}\n", .{data.indices});
+        //std.debug.print("POSITION: {any}\n", .{data.position});
+        //std.debug.print("NORMAL: {any}\n", .{data.normal});
+        //std.debug.print("TEXCOORD: {any}\n", .{data.texcoord});
+
         if (attributes.get(.joint)) |joint| {
             data.joints = self.getView(joint, [4]u8);
+            //std.debug.print("JOINTS: {any}\n", .{data.joints});
         }
 
         if (attributes.get(.weight)) |weight| {
             data.weights = self.getView(weight, [4]f32);
+            //std.debug.print("WEIGHTS: {any}\n", .{data.weights});
         }
 
         return data;
@@ -538,14 +556,14 @@ pub const Gltf = struct {
 
         compareType(T, accessor);
 
-        const size = @sizeOf(T) * accessor.count;
+        const size: u32 = @sizeOf(T) * accessor.count;
 
         std.debug.assert(size == buffer_view.byte_length);
 
         const buffer = self.buffers[buffer_view.buffer];
         const start = buffer_view.byte_offset + accessor.byte_offset;
-        const end = size + start;
 
+        const end = size + start;
         const view: []T = @ptrCast(@alignCast(buffer.content[start..end]));
 
         std.debug.assert(view.len == accessor.count);
@@ -553,8 +571,14 @@ pub const Gltf = struct {
         return view;
     }
 
-    pub fn init(self: *Gltf, path: []const u8, allocator: std.mem.Allocator) !void {
-        self.map = try JsonParser.parse(path, allocator);
+    pub fn init(self: *Gltf, dir_path: []const u8, path: []const u8, allocator: std.mem.Allocator) !void {
+        var dir = try std.fs.cwd().openDir(dir_path, .{});
+        defer dir.close();
+
+        var file = try dir.openFile(path, .{});
+        defer file.close();
+
+        self.map = try JsonParser.parse(file, allocator);
 
         try self.asset.init(self.map);
 
@@ -562,10 +586,19 @@ pub const Gltf = struct {
         self.nodes = try Node.initArray(self.map.get("nodes").?.array, allocator);
         self.meshes = try Mesh.initArray(self.map.get("meshes").?.array, allocator);
         self.accessors = try Accessor.initArray(self.map.get("accessors").?.array, allocator);
-        self.skins = try Skin.initArray(self.map.get("skins").?.array, allocator);
-        self.animations = try Animation.initArray(self.map.get("animations").?.array, allocator);
+        self.skins = try Skin.initArray(self.map.get("skins"), allocator);
+        self.animations = try Animation.initArray(self.map.get("animations"), allocator);
         self.buffer_views = try BufferView.initArray(self.map.get("bufferViews").?.array, allocator);
-        self.buffers = try Buffer.initArray(self.map.get("buffers").?.array, allocator);
+        self.buffers = try Buffer.initArray(self.map.get("buffers").?.array, dir, allocator);
+
+       // for (0..self.buffer_views.len) |i| {
+       //     const start = self.buffer_views[i].byte_offset;
+       //     const length = self.buffer_views[i].byte_length;
+       //     const buffer = self.buffers[self.buffer_views[i].buffer];
+
+       //     //std.debug.print("CONTENT: {d} -> {any}\n", .{i, buffer.content[start..start + length]});
+       // }
+
         self.complete_nodes = try self.getCompleteNodes(allocator);
     }
 };
