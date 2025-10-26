@@ -96,6 +96,9 @@ const DevicePointers = struct {
     vkQueueWaitIdle: @typeInfo(c.PFN_vkQueueWaitIdle).optional.child,
     vkCmdDrawIndexed: @typeInfo(c.PFN_vkCmdDrawIndexed).optional.child,
     vkCmdBindIndexBuffer: @typeInfo(c.PFN_vkCmdBindIndexBuffer).optional.child,
+    vkCreateDescriptorSetLayout: @typeInfo(c.PFN_vkCreateDescriptorSetLayout).optional.child,
+    vkCreateDescriptorPool: @typeInfo(c.PFN_vkCreateDescriptorPool).optional.child,
+    vkUpdateDescriptorSets: @typeInfo(c.PFN_vkUpdateDescriptorSets).optional.child,
 
     fn load(library: *Library, device: c.VkDevice) !void {
         inline for (@typeInfo(DevicePointers).@"struct".fields) |field| {
@@ -128,9 +131,9 @@ pub const Instance = struct {
     pub fn init(self: *Instance, library: *Library, allocator: *Allocator) !void {
         var layer_count: u32 = 0;
 
-        _ = library.pfn.vkEnumerateInstanceLayerProperties(&layer_count, null);
+        if (c.VK_SUCCESS != library.pfn.vkEnumerateInstanceLayerProperties(&layer_count, null)) return error.EnumerateInstanceLayerProperties;
         const layers = try allocator.tmp.alloc(c.VkLayerProperties, layer_count);
-        _ = library.pfn.vkEnumerateInstanceLayerProperties(&layer_count, layers.ptr);
+        if (c.VK_SUCCESS != library.pfn.vkEnumerateInstanceLayerProperties(&layer_count, layers.ptr)) return error.EnumerateInstanceLayerProperties;
 
         for (VALIDATION_LAYERS) |required| {
             for (layers) |layer| {
@@ -192,12 +195,12 @@ pub const Device = struct {
         self.surface = surface;
 
         var device_count: u32 = 0;
-        _ = library.instance.vkEnumeratePhysicalDevices(instance.handle, &device_count, null);
+        if (c.VK_SUCCESS != library.instance.vkEnumeratePhysicalDevices(instance.handle, &device_count, null)) return error.EnumeratePhysicalDevices;
 
         const devices = try allocator.tmp.alloc(c.VkPhysicalDevice, device_count);
         defer allocator.tmp.free(devices);
 
-        _ = library.instance.vkEnumeratePhysicalDevices(instance.handle, &device_count, devices.ptr);
+        if (c.VK_SUCCESS != library.instance.vkEnumeratePhysicalDevices(instance.handle, &device_count, devices.ptr)) return error.EnumeratePhysicalDevices;
 
         var physical_device_points: u8 = 0xFF;
 
@@ -210,17 +213,17 @@ pub const Device = struct {
             }
 
             var family_count: u32 = 0;
-            _ = library.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
+            library.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
 
             const family_properties = try allocator.tmp.alloc(c.VkQueueFamilyProperties, family_count);
             defer allocator.tmp.free(family_properties);
 
-            _ = library.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, family_properties.ptr);
+            library.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, family_properties.ptr);
 
             var index: u32 = 0;
             for (family_properties, 0..) |propertie, i| {
                 var present = c.VK_FALSE;
-                _ = library.instance.vkGetPhysicalDeviceSurfaceSupportKHR(device, @intCast(i), self.surface.handle, &present);
+                if (c.VK_SUCCESS != library.instance.vkGetPhysicalDeviceSurfaceSupportKHR(device, @intCast(i), self.surface.handle, &present)) return error.SurfaceSupport;
 
                 if (present == 0) continue;
                 if (propertie.queueFlags & c.VK_QUEUE_GRAPHICS_BIT == 0) continue;
@@ -248,12 +251,12 @@ pub const Device = struct {
         library.instance.vkGetPhysicalDeviceMemoryProperties(self.physical, &self.memory_properties);
 
         var extension_count: u32 = 0;
-        _ = library.instance.vkEnumerateDeviceExtensionProperties(self.physical, null, &extension_count, null);
+        if (c.VK_SUCCESS != library.instance.vkEnumerateDeviceExtensionProperties(self.physical, null, &extension_count, null)) return error.EnumerateExtensionProperties;
 
         const extensions = try allocator.tmp.alloc(c.VkExtensionProperties, extension_count);
         defer allocator.tmp.free(extensions);
 
-        _ = library.instance.vkEnumerateDeviceExtensionProperties(self.physical, null, &extension_count, extensions.ptr);
+        if (c.VK_SUCCESS != library.instance.vkEnumerateDeviceExtensionProperties(self.physical, null, &extension_count, extensions.ptr)) return error.EnumeratExtensionPropertiese;
 
         for (DEVICE_EXTENSIONS) |required| {
             for (extensions) |extension| {
@@ -322,6 +325,10 @@ pub const Manager = struct {
     acquire_semaphores: []c.VkSemaphore,
     release_semaphores: []c.VkSemaphore,
 
+    descriptor_pool: c.VkDescriptorPool,
+    descriptor_sets: []DescriptorSet,
+    descriptor_set_count: u32,
+
     pub fn init(self: *Manager, library: *Library, device: Device, allocator: *Allocator) !void {
         const pool_info = c.VkCommandPoolCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -361,6 +368,68 @@ pub const Manager = struct {
         }
 
         if (c.VK_SUCCESS != library.device.vkCreateSemaphore(device.handle, &semaphore_info, null, &self.acquire_semaphores[MAX_FRAMES])) return error.Semaphore;
+
+        const descriptor_count: u32 = 10;
+        self.descriptor_sets = try allocator.main.alloc(DescriptorSet, descriptor_count);
+
+        const descriptor_pool_sizes = &[_]c.VkDescriptorPoolSize{
+            .{
+                .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = descriptor_count,
+            },
+        };
+
+        const descriptor_pool_info = c.VkDescriptorPoolCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .poolSizeCount = @intCast(descriptor_pool_sizes.len),
+            .pPoolSizes = descriptor_pool_sizes.ptr,
+            .maxSets = 10,
+        };
+
+        self.descriptor_pool = undefined;
+
+        if (c.VK_SUCCESS != library.device.vkCreateDescriptorPool(device.handle, &descriptor_pool_info, null, &self.descriptor_pool)) return error.DescriptorPool;
+    }
+
+    fn addDescriptor(self: *Manager, library: *Library, device: Device, layout: DescriptorSetLayout) !u32 {
+        if (self.descriptor_set_count >= 10) return error.OutOfDescriptors;
+
+        const index = self.descriptor_set_count;
+        const descriptor_set = &self.descriptor_sets[index];
+        const allocate_info = c.VkDescriptorSetAllocateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = self.descriptor_pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &layout,
+        };
+
+        descriptor_set.layout = layout;
+        if (c.VK_SUCCESS != library.device.vkAllocateDescriptorSets(device.handle, &allocate_info, &descriptor_set.handle)) return error.OutOfDescriptors;
+
+        return index;
+    }
+
+    fn updateDescriptorSet(self: *Manager, library: *Library, device: Device, index: u32, binding: u32, T: type, buffer: Buffer(T)) !void {
+        const size = @sizeOf(T) * buffer.count;
+
+        const buffer_info = c.VkDescriptorBufferInfo{
+            .buffer = buffer.handle,
+            .range = @intCast(size),
+            .offset = 0,
+        };
+
+        const set = self.descriptor_sets[index];
+
+        const write_set = c.VkWriteDescriptorSet{
+            .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = set.handle,
+            .dstBinding = binding,
+            .descriptorCount = 1,
+            .descriptorType = set.kind,
+            .pBufferInfo = &buffer_info,
+        };
+
+        library.device.vkUpdateDescriptorSets(device.handle, 1, &write_set, 0, null);
     }
 };
 
@@ -621,14 +690,37 @@ pub const Swapchain = struct {
 
 pub const Pipeline = struct {
     handle: c.VkPipeline,
+    set_layout: DescriptorSetLayout,
+    layout: c.VkPipelineLayout,
 
     pub fn init(self: *Pipeline, library: *Library, device: Device, format: c.VkFormat, T: type, allocator: *Allocator) !void {
-        const layout_info = c.VkPipelineLayoutCreateInfo{
-            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        const set_bindings = &[_]c.VkDescriptorSetLayoutBinding{
+            .{
+                .binding = 0,
+                .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
+                .descriptorCount = 1,
+            },
         };
 
-        var layout: c.VkPipelineLayout = undefined;
-        if (c.VK_SUCCESS != library.device.vkCreatePipelineLayout(device.handle, &layout_info, null, &layout)) return error.PipelineLayout;
+        self.set_layout.bindings = try allocator.main.alloc(c.VkDescriptorSetLayoutBinding, set_bindings.len);
+        @memcpy(self.set_layout.bindings, set_bindings);
+
+        const set_info = c.VkDescriptorSetLayoutCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = @intCast(self.set_layout.bindings.len),
+            .pBindings = self.set_layout.bindings.ptr,
+        };
+
+        if (c.VK_SUCCESS != library.device.vkCreateDescriptorSetLayout(device.handle, &set_info, null, &self.set_layout.handle)) return error.DescriptorSetLayout;
+
+        const layout_info = c.VkPipelineLayoutCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts = &self.set_layout.handle,
+        };
+
+        if (c.VK_SUCCESS != library.device.vkCreatePipelineLayout(device.handle, &layout_info, null, &self.layout)) return error.PipelineLayout;
 
         const vertex_data = try VertexData.init(&.{T}, allocator);
 
@@ -698,13 +790,13 @@ pub const Pipeline = struct {
             .{
                 .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
-                .module = try createShaderModule(library, device, "Asset/Shader/Vertex.spv", allocator),
+                .module = try createShaderModule(library, device, "Asset/Shader/VertexShader.spv", allocator),
                 .pName = "main",
             },
             .{
                 .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
-                .module = try createShaderModule(library, device, "Asset/Shader/Fragment.spv", allocator),
+                .module = try createShaderModule(library, device, "Asset/Shader/FragmentShader.spv", allocator),
                 .pName = "main",
             },
         };
@@ -728,7 +820,7 @@ pub const Pipeline = struct {
             .pDepthStencilState = &depth_stencil,
             .pColorBlendState = &blend,
             .pDynamicState = &dynamic_state,
-            .layout = layout,
+            .layout = self.layout,
             .renderPass = null,
             .subpass = 0,
         };
@@ -841,9 +933,9 @@ fn transitionImage(library: *Library, command_buffer: c.VkCommandBuffer, image: 
         .dstAccessMask = dst_access,
         .oldLayout = old_layout,
         .newLayout = new_layout,
+        .image = image,
         .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
-        .image = image,
         .subresourceRange = .{
             .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
             .baseMipLevel = 0,
@@ -864,19 +956,22 @@ fn transitionImage(library: *Library, command_buffer: c.VkCommandBuffer, image: 
 }
 
 fn createShaderModule(library: *Library, device: Device, path: []const u8, allocator: *Allocator) !c.VkShaderModule {
-    const file = try std.fs.cwd().openFile(path, .{});
+    const base_dir = try std.fs.selfExeDirPathAlloc(allocator.tmp);
+    const file_path = try std.fs.path.join(allocator.tmp, &.{ base_dir, "../", path });
+
+    const file = try std.fs.openFileAbsolute(file_path, .{});
     const size = try file.getEndPos();
-    const buffer = try allocator.tmp.alloc(u8, size);
-    const len = try file.readAll(buffer);
+    const buffer = try allocator.tmp.alloc(u32, (size + 3) / @sizeOf(u32));
+
+    const bytes: [*]u8 = @ptrCast(@alignCast(buffer.ptr));
+    const len = try file.readAll(bytes[0..size]);
 
     if (len != size) return error.ReadFile;
-
-    const data: [*]u32 = @ptrCast(@alignCast(buffer.ptr));
 
     const info = c.VkShaderModuleCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = @intCast(size),
-        .pCode = data,
+        .pCode = buffer.ptr,
     };
 
     var module: c.VkShaderModule = undefined;
@@ -906,11 +1001,13 @@ const VertexData = struct {
             };
 
             const FIELDS = @typeInfo(T).@"struct".fields;
+
             count += FIELDS.len;
         }
 
         var j: u32 = 0;
         var offset: u32 = 0;
+
         self.attributes = try allocator.tmp.alloc(c.VkVertexInputAttributeDescription, count);
 
         inline for (0..Ts.len) |i| {
@@ -962,6 +1059,16 @@ const VertexData = struct {
 
         @panic("NOT SUPPORTED");
     }
+};
+
+const DescriptorSetLayout = struct {
+    handle: c.VkDescriptorSetLayout,
+    bindings: []c.VkDescriptorSetLayoutBinding,
+};
+
+const DescriptorSet = struct {
+    handle: c.VkDescriptorSet,
+    layout: DescriptorSetLayout,
 };
 
 const std = @import("std");

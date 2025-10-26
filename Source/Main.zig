@@ -176,7 +176,7 @@ fn getIndices(gltf: GltfParser.Gltf, allocator: std.mem.Allocator) ![]u16 {
 pub const Vertex = struct {
     position: [3]f32,
     color: [3]f32,
-}
+};
 
 //const VERTICES = [_]Vertex{
 //    .{ .position = .{   0.5, - 0.5 }, .color = .{ 1.0, 0.0, 0.0 } },

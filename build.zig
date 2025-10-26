@@ -71,6 +71,13 @@ pub fn build(builder: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    const build_shaders = builder.option(bool, "shader", "Build shaders") orelse false;
+
+    if (build_shaders) {
+        compileShader(builder, "Asset/Shader", "FragmentShader.frag", "FragmentShader.spv");
+        compileShader(builder, "Asset/Shader", "VertexShader.vert", "VertexShader.spv");
+    }
+
     // const mod_tests = builder.addTest(.{
     //     .root_module = vulkan_module,
     // });
@@ -98,4 +105,17 @@ fn addModule(
         .target = target,
         .imports = imports,
     });
+}
+
+fn compileShader(builder: *std.Build, base_dir: []const u8, input_path: []const u8, output_path: []const u8) void {
+    const shader_build = builder.addSystemCommand(&.{"glslc"});
+
+    const input_file_path = builder.path(builder.pathJoin(&.{ base_dir, input_path }));
+    shader_build.addFileArg(input_file_path);
+    shader_build.addArg("-o");
+
+    const out = shader_build.addOutputFileArg(output_path);
+    const file = builder.addInstallFileWithDir(out, .prefix, builder.pathJoin(&.{ base_dir, output_path }));
+
+    builder.getInstallStep().dependOn(&file.step);
 }
