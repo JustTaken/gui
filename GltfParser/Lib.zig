@@ -58,16 +58,16 @@ pub const Gltf = struct {
         mesh: ?Index,
         skin: ?Index,
         children: []Index,
-        transform: Matrix,
+        transform: Matrix(4),
 
         fn init(self: *Node, map: JsonParser.Map, allocator: std.mem.Allocator) !void {
             self.name = map.get("name").?.string;
             self.mesh = if (map.get("mesh")) |i| @intCast(i.int) else null;
             self.skin = if (map.get("skin")) |s| @intCast(s.int) else null;
-            self.transform = Math.scale(.{ 1, 1, 1 });
+            self.transform = Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 }));
 
-            if (map.get("translation")) |t| self.transform = Math.multiply(self.transform, intoTranslationMatrix(t.array));
-            if (map.get("scale")) |s| self.transform = Math.multiply(self.transform, intoScaleMatrix(s.array));
+            if (map.get("translation")) |t| self.transform = self.transform.mult(intoTranslationMatrix(t.array));
+            if (map.get("scale")) |s| self.transform = self.transform.mult(intoScaleMatrix(s.array));
 
             if (map.get("children")) |c| {
                 const array = c.array;
@@ -413,7 +413,7 @@ pub const Gltf = struct {
     };
 
     const CompleteSkin = struct {
-        inverseBindingMatrices: Matrix,
+        inverseBindingMatrices: Matrix(4),
         joints: []Index,
     };
 
@@ -421,7 +421,7 @@ pub const Gltf = struct {
         children: []*CompleteNode,
         mesh: ?CompleteMesh,
         skin: ?CompleteSkin,
-        transform: Matrix,
+        transform: Matrix(4),
     };
 
     fn getCompleteNodes(self: *Gltf, allocator: std.mem.Allocator) ![]CompleteNode {
@@ -465,8 +465,9 @@ pub const Gltf = struct {
         return root_nodes[0..count];
     }
 
-    fn completeNodeTransform(self: *Gltf, node: *CompleteNode, complete_nodes: []CompleteNode, parent_transform: ?Matrix) void {
-        node.transform = Math.multiply(parent_transform orelse Math.scale(.{ 1, 1, 1 }), node.transform);
+    fn completeNodeTransform(self: *Gltf, node: *CompleteNode, complete_nodes: []CompleteNode, parent_transform: ?Matrix(4)) void {
+        const parent = parent_transform orelse Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 }));
+        node.transform = parent.mult(node.transform);
 
         for (0..node.children.len) |i| {
             self.completeNodeTransform(node.children[i], complete_nodes, node.transform);
@@ -478,7 +479,7 @@ pub const Gltf = struct {
             .children = &.{},
             .mesh = null,
             .skin = null,
-            .transform = Math.scale(.{ 1, 1, 1}),
+            .transform = Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 })),
         };
 
         complete_node.transform = node.transform;
@@ -504,7 +505,7 @@ pub const Gltf = struct {
 
         var complete_skin: CompleteSkin = undefined;
 
-        complete_skin.inverseBindingMatrices = self.getView(skin.inverseBindMatrices, Matrix)[0];
+        complete_skin.inverseBindingMatrices = self.getView(skin.inverseBindMatrices, Matrix(4))[0];
         complete_skin.joints = skin.joints;
 
         return complete_skin;
@@ -603,32 +604,32 @@ pub const Gltf = struct {
     }
 };
 
-fn intoTranslationMatrix(array: JsonParser.Array) Matrix {
-    var vec: [3]f32 = .{ 0, 0, 0 };
+fn intoTranslationMatrix(array: JsonParser.Array) Matrix(4) {
+    var vec = Vector(4).init(.{ 0, 0, 0, 1 });
 
     for (0..array.len) |i| {
         switch (array[i]) {
-            .float => |float| vec[i] = float,
-            .int => |int| vec[i] = @floatFromInt(int),
+            .float => |float| vec.items[i] = float,
+            .int => |int| vec.items[i] = @floatFromInt(int),
             else => @panic("TODO"),
         }
     }
 
-    return Math.translate(vec);
+    return Matrix(4).translate(vec);
 }
 
-fn intoScaleMatrix(array: JsonParser.Array) Matrix {
-    var vec: [3]f32 = .{ 0, 0, 0 };
+fn intoScaleMatrix(array: JsonParser.Array) Matrix(4) {
+    var vec = Vector(4).init(.{ 0, 0, 0, 1 });
 
     for (0..array.len) |i| {
         switch (array[i]) {
-            .float => |float| vec[i] = float,
-            .int => |int| vec[i] = @floatFromInt(int),
+            .float => |float| vec.items[i] = float,
+            .int => |int| vec.items[i] = @floatFromInt(int),
             else => @panic("TODO"),
         }
     }
 
-    return Math.scale(vec);
+    return Matrix(4).scale(vec);
 }
 
 fn compareType(T: type, accessor: Gltf.Accessor) void {
@@ -656,5 +657,5 @@ fn compareEnum(K: type, string: JsonParser.String) K {
 
 const JsonParser = @import("JsonParser");
 const Matrix = @import("Util").Matrix;
-const Math = @import("Util").Math;
+const Vector = @import("Util").Vector;
 const std = @import("std");

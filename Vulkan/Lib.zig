@@ -99,6 +99,8 @@ const DevicePointers = struct {
     vkCreateDescriptorSetLayout: @typeInfo(c.PFN_vkCreateDescriptorSetLayout).optional.child,
     vkCreateDescriptorPool: @typeInfo(c.PFN_vkCreateDescriptorPool).optional.child,
     vkUpdateDescriptorSets: @typeInfo(c.PFN_vkUpdateDescriptorSets).optional.child,
+    vkAllocateDescriptorSets: @typeInfo(c.PFN_vkAllocateDescriptorSets).optional.child,
+    vkCmdBindDescriptorSets: @typeInfo(c.PFN_vkCmdBindDescriptorSets).optional.child,
 
     fn load(library: *Library, device: c.VkDevice) !void {
         inline for (@typeInfo(DevicePointers).@"struct".fields) |field| {
@@ -202,7 +204,7 @@ pub const Device = struct {
 
         if (c.VK_SUCCESS != library.instance.vkEnumeratePhysicalDevices(instance.handle, &device_count, devices.ptr)) return error.EnumeratePhysicalDevices;
 
-        var physical_device_points: u8 = 0xFF;
+        var physical_device_points: u8 = 0;
 
         for (devices) |device| {
             var properties: c.VkPhysicalDeviceProperties = undefined;
@@ -234,14 +236,14 @@ pub const Device = struct {
             } else continue;
 
             const points: u8 = switch (properties.deviceType) {
-                c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU => 1,
-                c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU => 2,
+                c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU => 5,
+                c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU => 4,
                 c.VK_PHYSICAL_DEVICE_TYPE_CPU => 3,
-                c.VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU => 4,
-                else => 5,
+                c.VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU => 2,
+                else => 1,
             };
 
-            if (points < physical_device_points) {
+            if (points > physical_device_points) {
                 physical_device_points = points;
                 self.physical = device;
                 self.family_index = index;
@@ -371,8 +373,13 @@ pub const Manager = struct {
 
         const descriptor_count: u32 = 10;
         self.descriptor_sets = try allocator.main.alloc(DescriptorSet, descriptor_count);
+        self.descriptor_set_count = 0;
 
         const descriptor_pool_sizes = &[_]c.VkDescriptorPoolSize{
+            .{
+                .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = descriptor_count,
+            },
             .{
                 .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                 .descriptorCount = descriptor_count,
@@ -391,8 +398,9 @@ pub const Manager = struct {
         if (c.VK_SUCCESS != library.device.vkCreateDescriptorPool(device.handle, &descriptor_pool_info, null, &self.descriptor_pool)) return error.DescriptorPool;
     }
 
-    fn addDescriptor(self: *Manager, library: *Library, device: Device, layout: DescriptorSetLayout) !u32 {
+    pub fn addDescriptorSet(self: *Manager, library: *Library, device: Device, layout: DescriptorSetLayout) !u32 {
         if (self.descriptor_set_count >= 10) return error.OutOfDescriptors;
+        defer self.descriptor_set_count += 1;
 
         const index = self.descriptor_set_count;
         const descriptor_set = &self.descriptor_sets[index];
@@ -400,7 +408,7 @@ pub const Manager = struct {
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool = self.descriptor_pool,
             .descriptorSetCount = 1,
-            .pSetLayouts = &layout,
+            .pSetLayouts = &layout.handle,
         };
 
         descriptor_set.layout = layout;
@@ -409,23 +417,20 @@ pub const Manager = struct {
         return index;
     }
 
-    fn updateDescriptorSet(self: *Manager, library: *Library, device: Device, index: u32, binding: u32, T: type, buffer: Buffer(T)) !void {
-        const size = @sizeOf(T) * buffer.count;
-
+    pub fn updateDescriptorSet(self: *Manager, library: *Library, device: Device, index: u32, binding: u32, range: Buffer.Range) !void {
         const buffer_info = c.VkDescriptorBufferInfo{
-            .buffer = buffer.handle,
-            .range = @intCast(size),
-            .offset = 0,
+            .buffer = range.handle,
+            .range = range.size,
+            .offset = range.offset,
         };
 
         const set = self.descriptor_sets[index];
-
         const write_set = c.VkWriteDescriptorSet{
             .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = set.handle,
             .dstBinding = binding,
             .descriptorCount = 1,
-            .descriptorType = set.kind,
+            .descriptorType = set.layout.bindings[binding].descriptorType,
             .pBufferInfo = &buffer_info,
         };
 
@@ -441,10 +446,12 @@ pub const Swapchain = struct {
     format: c.VkSurfaceFormatKHR,
     present_mode: c.VkPresentModeKHR,
     extent: c.VkExtent2D,
+    suboptimal: bool,
 
     pub fn startup(self: *Swapchain, library: *Library, device: Device, allocator: *Allocator) !void {
         self.images = try allocator.main.alloc(c.VkImage, MAX_FRAMES);
         self.image_views = try allocator.main.alloc(c.VkImageView, MAX_FRAMES);
+        self.suboptimal = false;
 
         @memset(self.images, null);
         @memset(self.image_views, null);
@@ -511,6 +518,7 @@ pub const Swapchain = struct {
             .imageFormat = self.format.format,
             .imageColorSpace = self.format.colorSpace,
             .imageExtent = self.extent,
+            .presentMode = self.present_mode,
             .imageArrayLayers = 1,
             .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
             .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
@@ -559,15 +567,25 @@ pub const Swapchain = struct {
     }
 
     pub fn nextImage(self: *Swapchain, library: *Library, device: Device, manager: *Manager) !u32 {
+        if (self.suboptimal) {
+            try self.new(library, device, self.extent.width, self.extent.height);
+        }
+
         var image: u32 = 0;
 
         const last_index = manager.acquire_semaphores.len - 1;
         const semaphore = manager.acquire_semaphores[last_index];
 
-        if (c.VK_SUCCESS != library.device.vkAcquireNextImageKHR(device.handle, self.handle, 1000000, semaphore, null, &image)) return error.AcquireImage;
+        const result = library.device.vkAcquireNextImageKHR(device.handle, self.handle, 1000000, semaphore, null, &image);
 
         manager.acquire_semaphores[last_index] = manager.acquire_semaphores[image];
         manager.acquire_semaphores[image] = semaphore;
+
+        switch (result) {
+            c.VK_SUCCESS => {},
+            c.VK_SUBOPTIMAL_KHR => self.suboptimal = true,
+            else => return error.AcquireImage,
+        }
 
         const fence = manager.fences[image];
 
@@ -577,15 +595,26 @@ pub const Swapchain = struct {
         return image;
     }
 
-    pub fn renderToImage(self: *Swapchain, library: *Library, device: Device, pipeline: Pipeline, manager: *Manager, image: u32, T: type, vertices: Buffer(T), indices: Buffer(u16)) !void {
+    pub fn renderToImage(
+        self: *Swapchain,
+        library: *Library,
+        device: Device,
+        pipeline: Pipeline,
+        manager: *Manager,
+        image: u32,
+        renders: []const RenderGroup,
+        allocator: *Allocator,
+    ) !void {
         const command_buffer = manager.command_buffers[image];
         const begin_info = c.VkCommandBufferBeginInfo{
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         };
 
+        const background_color = .{ 0.0, 0.0, 0.0, 1.0 };
+
         const clear_color = c.VkClearValue{
-            .color = .{ .float32 = .{ 1.0, 1.0, 1.0, 1.0 } },
+            .color = .{ .float32 = background_color },
         };
 
         const color_attachment = c.VkRenderingAttachmentInfo{
@@ -639,9 +668,31 @@ pub const Swapchain = struct {
         library.device.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle);
         library.device.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         library.device.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-        library.device.vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertices.handle, &offset);
-        library.device.vkCmdBindIndexBuffer(command_buffer, indices.handle, 0, c.VK_INDEX_TYPE_UINT16);
-        library.device.vkCmdDrawIndexed(command_buffer, indices.count, 1, 0, 0, 0);
+
+        for (0..renders.len) |i| {
+            const render = renders[i];
+
+            const sets = try allocator.tmp.alloc(c.VkDescriptorSet, render.descriptor_sets.len);
+
+            for (0..sets.len) |j| {
+                sets[j] = manager.descriptor_sets[render.descriptor_sets[j]].handle;
+            }
+
+            library.device.vkCmdBindVertexBuffers(command_buffer, 0, 1, &render.vertices.handle, &offset);
+            library.device.vkCmdBindIndexBuffer(command_buffer, render.indices.handle, 0, c.VK_INDEX_TYPE_UINT16);
+            library.device.vkCmdBindDescriptorSets(
+                command_buffer,
+                c.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                pipeline.layout,
+                0,
+                @intCast(sets.len),
+                sets.ptr,
+                0,
+                null
+            );
+            library.device.vkCmdDrawIndexed(command_buffer, render.indices.count, @intCast(sets.len), 0, 0, 0);
+        }
+
         library.device.vkCmdEndRendering(command_buffer);
 
         transitionImage(
@@ -690,39 +741,35 @@ pub const Swapchain = struct {
 
 pub const Pipeline = struct {
     handle: c.VkPipeline,
-    set_layout: DescriptorSetLayout,
+    set_layouts: []DescriptorSetLayout,
     layout: c.VkPipelineLayout,
 
-    pub fn init(self: *Pipeline, library: *Library, device: Device, format: c.VkFormat, T: type, allocator: *Allocator) !void {
-        const set_bindings = &[_]c.VkDescriptorSetLayoutBinding{
-            .{
-                .binding = 0,
-                .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
-                .descriptorCount = 1,
-            },
-        };
+    pub fn init(
+        self: *Pipeline,
+        library: *Library,
+        device: Device,
+        format: c.VkFormat,
+        T: type,
+        set_layout_bindings: []const []const c.VkDescriptorSetLayoutBinding,
+        allocator: *Allocator
+    ) !void {
+        self.set_layouts = try allocator.main.alloc(DescriptorSetLayout, set_layout_bindings.len);
+        const set_layout_handles = try allocator.tmp.alloc(c.VkDescriptorSetLayout, set_layout_bindings.len);
 
-        self.set_layout.bindings = try allocator.main.alloc(c.VkDescriptorSetLayoutBinding, set_bindings.len);
-        @memcpy(self.set_layout.bindings, set_bindings);
-
-        const set_info = c.VkDescriptorSetLayoutCreateInfo{
-            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = @intCast(self.set_layout.bindings.len),
-            .pBindings = self.set_layout.bindings.ptr,
-        };
-
-        if (c.VK_SUCCESS != library.device.vkCreateDescriptorSetLayout(device.handle, &set_info, null, &self.set_layout.handle)) return error.DescriptorSetLayout;
+        for (set_layout_bindings, 0..) |layout, i| {
+            self.set_layouts[i] = try DescriptorSetLayout.init(library, device, layout, allocator.main);
+            set_layout_handles[i] = self.set_layouts[i].handle;
+        }
 
         const layout_info = c.VkPipelineLayoutCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-            .setLayoutCount = 1,
-            .pSetLayouts = &self.set_layout.handle,
+            .setLayoutCount = @intCast(set_layout_handles.len),
+            .pSetLayouts = set_layout_handles.ptr,
         };
 
         if (c.VK_SUCCESS != library.device.vkCreatePipelineLayout(device.handle, &layout_info, null, &self.layout)) return error.PipelineLayout;
 
-        const vertex_data = try VertexData.init(&.{T}, allocator);
+        const vertex_data = try VertexData.init(&.{T}, allocator.tmp);
 
         const vertex_input = c.VkPipelineVertexInputStateCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -790,13 +837,13 @@ pub const Pipeline = struct {
             .{
                 .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
-                .module = try createShaderModule(library, device, "Asset/Shader/VertexShader.spv", allocator),
+                .module = try createShaderModule(library, device, "Asset/Shader/VertexShader.spv", allocator.tmp),
                 .pName = "main",
             },
             .{
                 .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
-                .module = try createShaderModule(library, device, "Asset/Shader/FragmentShader.spv", allocator),
+                .module = try createShaderModule(library, device, "Asset/Shader/FragmentShader.spv", allocator.tmp),
                 .pName = "main",
             },
         };
@@ -833,96 +880,126 @@ pub const Pipeline = struct {
     }
 };
 
-pub fn Buffer(T: type) type {
-    return struct {
+pub const Buffer = struct {
+    handle: c.VkBuffer,
+    memory: c.VkDeviceMemory,
+    count: u32,
+    kind_size: u32,
+
+    pub const Range = struct {
         handle: c.VkBuffer,
-        memory: c.VkDeviceMemory,
+        offset: u32,
+        size: u32,
+    };
+
+    pub fn init(
+        T: type,
+        library: *Library,
+        device: Device,
+        usage: c.VkBufferUsageFlags,
+        sharing_mode: c.VkSharingMode,
+        memory_properties: c.VkMemoryPropertyFlags,
         count: u32,
+    ) !Buffer {
+        var self: Buffer = undefined;
+        self.kind_size = @sizeOf(T);
+        self.count = count;
 
-        const Self = @This();
-
-        pub const BufferData = union(enum) {
-            count: u32,
-            data: []const T,
+        const buffer_size = @sizeOf(T) * self.count;
+        const info = c.VkBufferCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .flags = 0,
+            .size = buffer_size,
+            .usage = usage,
+            .sharingMode = sharing_mode,
         };
 
-        pub fn init(library: *Library, device: Device, usage: c.VkBufferUsageFlags, sharing_mode: c.VkSharingMode, data: BufferData) !Self {
-            var self: Self = undefined;
+        if (c.VK_SUCCESS != library.device.vkCreateBuffer(device.handle, &info, null, &self.handle)) return error.CreateBuffer;
 
-            self.count = switch (data) {
-                .count => |count| count,
-                .data => |d| @intCast(d.len),
-            };
+        var memory_requirements: c.VkMemoryRequirements = undefined;
+        library.device.vkGetBufferMemoryRequirements(device.handle, self.handle, &memory_requirements);
 
-            const buffer_size = @sizeOf(T) * self.count;
-            const info = c.VkBufferCreateInfo{
-                .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                .flags = 0,
-                .size = buffer_size,
-                .usage = usage,
-                .sharingMode = sharing_mode,
-            };
+        const index = try findMemory(
+            device,
+            memory_requirements.memoryTypeBits,
+            memory_properties,
+        );
 
-            if (c.VK_SUCCESS != library.device.vkCreateBuffer(device.handle, &info, null, &self.handle)) return error.CreateBuffer;
+        const alloc_info = c.VkMemoryAllocateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memory_requirements.size,
+            .memoryTypeIndex = index,
+        };
 
-            var memory_requirements: c.VkMemoryRequirements = undefined;
-            library.device.vkGetBufferMemoryRequirements(device.handle, self.handle, &memory_requirements);
+        if (c.VK_SUCCESS != library.device.vkAllocateMemory(device.handle, &alloc_info, null, &self.memory)) return error.AllocateMemory;
+        if (c.VK_SUCCESS != library.device.vkBindBufferMemory(device.handle, self.handle, self.memory, 0)) return error.BindBuffer;
 
-            const index = try findMemory(
-                device,
-                memory_requirements.memoryTypeBits,
-                c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            );
+        return self;
+    }
 
-            const alloc_info = c.VkMemoryAllocateInfo{
-                .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-                .allocationSize = memory_requirements.size,
-                .memoryTypeIndex = index,
-            };
+    pub fn getRange(self: *Buffer, offset: u32, count: u32) !Range {
+        if (offset + count > self.count) return error.OutOfBounds;
 
-            if (c.VK_SUCCESS != library.device.vkAllocateMemory(device.handle, &alloc_info, null, &self.memory)) return error.AllocateMemory;
-            if (c.VK_SUCCESS != library.device.vkBindBufferMemory(device.handle, self.handle, self.memory, 0)) return error.BindBuffer;
+        const size = self.kind_size;
 
-            switch (data) {
-                .data => |d| {
-                    const remap = try self.map(library, device);
-                    @memcpy(remap[0..d.len], d);
-                    self.unmap(library, device);
-                },
-                else => {},
-            }
+        return Range{
+            .handle = self.handle,
+            .offset = size * offset,
+            .size = size * count,
+        };
+    }
 
-            return self;
-        }
+    pub fn update(
+        self: *Buffer,
+        T: type,
+        library: *Library,
+        device: Device,
+        offset: u32,
+        data: []const T,
+    ) !void {
+        if (offset + data.len > self.count) return error.OutOfMemory;
 
-        fn map(self: *Self, library: *Library, device: Device) ![*]T {
-            var data: [*]T = undefined;
+        const remap = try self.map(T, library, device, offset, @intCast(data.len));
+        @memcpy(remap, data);
+        self.unmap(library, device);
+    }
 
-            if (c.VK_SUCCESS != library.device.vkMapMemory(device.handle, self.memory, 0, self.count * @sizeOf(T), 0, @ptrCast(&data))) return error.MapMemory;
+    pub fn map(
+        self: *Buffer,
+        T: type,
+        library: *Library,
+        device: Device,
+        offset: u32,
+        count: u32,
+    ) ![]T {
+        var data: []T = undefined;
 
-            return data;
-        }
+        data.len = count;
 
-        fn unmap(self: *Self, library: *Library, device: Device) void {
-            library.device.vkUnmapMemory(device.handle, self.memory);
-        }
+        if (c.VK_SUCCESS != library.device.vkMapMemory(device.handle, self.memory, offset * @sizeOf(T), count * @sizeOf(T), 0, @ptrCast(&data.ptr))) return error.MapMemory;
 
-        fn findMemory(device: Device, type_filter: u32, properties: c.VkMemoryPropertyFlags) !u32 {
-            for (0..device.memory_properties.memoryTypeCount) |i| {
-                const index: u5 = @intCast(i);
-                const base: u32 = 1;
+        return data;
+    }
 
-                if (type_filter & (base << index) > 0) {
-                    if (device.memory_properties.memoryTypes[i].propertyFlags & properties == properties) {
-                        return index;
-                    }
+    pub fn unmap(self: *Buffer, library: *Library, device: Device) void {
+        library.device.vkUnmapMemory(device.handle, self.memory);
+    }
+
+    fn findMemory(device: Device, type_filter: u32, properties: c.VkMemoryPropertyFlags) !u32 {
+        for (0..device.memory_properties.memoryTypeCount) |i| {
+            const index: u5 = @intCast(i);
+            const base: u32 = 1;
+
+            if (type_filter & (base << index) > 0) {
+                if (device.memory_properties.memoryTypes[i].propertyFlags & properties == properties) {
+                    return index;
                 }
             }
-
-            return error.MemoryTypeIndex;
         }
-    };
-}
+
+        return error.MemoryTypeIndex;
+    }
+};
 
 fn transitionImage(library: *Library, command_buffer: c.VkCommandBuffer, image: c.VkImage, old_layout: c.VkImageLayout, new_layout: c.VkImageLayout, src_stage: c.VkPipelineStageFlags2, dst_stage: c.VkPipelineStageFlags2, src_access: c.VkAccessFlags2, dst_access: c.VkAccessFlags2) void {
     const barrier = c.VkImageMemoryBarrier2{
@@ -955,13 +1032,13 @@ fn transitionImage(library: *Library, command_buffer: c.VkCommandBuffer, image: 
     library.device.vkCmdPipelineBarrier2(command_buffer, &dependency_info);
 }
 
-fn createShaderModule(library: *Library, device: Device, path: []const u8, allocator: *Allocator) !c.VkShaderModule {
-    const base_dir = try std.fs.selfExeDirPathAlloc(allocator.tmp);
-    const file_path = try std.fs.path.join(allocator.tmp, &.{ base_dir, "../", path });
+fn createShaderModule(library: *Library, device: Device, path: []const u8, allocator: std.mem.Allocator) !c.VkShaderModule {
+    const base_dir = try std.fs.selfExeDirPathAlloc(allocator);
+    const file_path = try std.fs.path.join(allocator, &.{ base_dir, "../", path });
 
     const file = try std.fs.openFileAbsolute(file_path, .{});
     const size = try file.getEndPos();
-    const buffer = try allocator.tmp.alloc(u32, (size + 3) / @sizeOf(u32));
+    const buffer = try allocator.alloc(u32, (size + 3) / @sizeOf(u32));
 
     const bytes: [*]u8 = @ptrCast(@alignCast(buffer.ptr));
     const len = try file.readAll(bytes[0..size]);
@@ -984,10 +1061,10 @@ const VertexData = struct {
     bindings: []c.VkVertexInputBindingDescription,
     attributes: []c.VkVertexInputAttributeDescription,
 
-    fn init(Ts: []const type, allocator: *Allocator) !VertexData {
+    fn init(Ts: []const type, allocator: std.mem.Allocator) !VertexData {
         var self: VertexData = undefined;
 
-        self.bindings = try allocator.tmp.alloc(c.VkVertexInputBindingDescription, Ts.len);
+        self.bindings = try allocator.alloc(c.VkVertexInputBindingDescription, Ts.len);
 
         var count: u32 = 0;
 
@@ -1008,7 +1085,7 @@ const VertexData = struct {
         var j: u32 = 0;
         var offset: u32 = 0;
 
-        self.attributes = try allocator.tmp.alloc(c.VkVertexInputAttributeDescription, count);
+        self.attributes = try allocator.alloc(c.VkVertexInputAttributeDescription, count);
 
         inline for (0..Ts.len) |i| {
             const T = Ts[i];
@@ -1055,7 +1132,7 @@ const VertexData = struct {
                 }
             },
             else => @panic("NOT SUPPORTED"),
-        }
+                    }
 
         @panic("NOT SUPPORTED");
     }
@@ -1064,6 +1141,28 @@ const VertexData = struct {
 const DescriptorSetLayout = struct {
     handle: c.VkDescriptorSetLayout,
     bindings: []c.VkDescriptorSetLayoutBinding,
+
+    fn init(
+        library: *Library,
+        device: Device,
+        set_bindings: []const c.VkDescriptorSetLayoutBinding,
+        allocator: std.mem.Allocator
+    ) !DescriptorSetLayout {
+        var self: DescriptorSetLayout = undefined;
+
+        self.bindings = try allocator.alloc(c.VkDescriptorSetLayoutBinding, set_bindings.len);
+        @memcpy(self.bindings, set_bindings);
+
+        const set_info = c.VkDescriptorSetLayoutCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = @intCast(self.bindings.len),
+            .pBindings = self.bindings.ptr,
+        };
+
+        if (c.VK_SUCCESS != library.device.vkCreateDescriptorSetLayout(device.handle, &set_info, null, &self.handle)) return error.DescriptorSetLayout;
+
+        return self;
+    }
 };
 
 const DescriptorSet = struct {
@@ -1071,6 +1170,73 @@ const DescriptorSet = struct {
     layout: DescriptorSetLayout,
 };
 
+pub const RenderGroup = struct {
+    vertices: Buffer,
+    indices: Buffer,
+    descriptor_sets: []u32,
+
+    pub fn init(
+        self: *RenderGroup,
+        V: type,
+        I: type,
+        library: *Library,
+        device: Device,
+        pipeline: Pipeline,
+        manager: *Manager,
+        vertices: []const V,
+        indices: []const I,
+        set_buffers: []Buffer,
+        allocator: *Allocator,
+    ) !void {
+        self.vertices = try Buffer.init(
+            V,
+            library,
+            device,
+            c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            c.VK_SHARING_MODE_EXCLUSIVE,
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            @intCast(vertices.len),
+        );
+
+        try self.vertices.update(V, library, device, 0, vertices);
+
+        self.indices = try Buffer.init(
+            I,
+            library,
+            device,
+            c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            c.VK_SHARING_MODE_EXCLUSIVE,
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            @intCast(indices.len),
+        );
+
+        try self.indices.update(I, library, device, 0, indices);
+
+        self.descriptor_sets = try allocator.main.alloc(u32, set_buffers.len);
+        try self.update(library, device, pipeline, manager, set_buffers);
+    }
+
+    fn update(self: *RenderGroup, library: *Library, device: Device, pipeline: Pipeline, manager: *Manager, set_buffers: []Buffer) !void {
+        for (0..set_buffers.len) |i| {
+            self.descriptor_sets[i] = try manager.addDescriptorSet(
+                library,
+                device,
+                pipeline.set_layouts[i],
+            );
+
+            try manager.updateDescriptorSet(
+                library,
+                device,
+                self.descriptor_sets[i],
+                0,
+                try set_buffers[i].getRange(0, set_buffers[i].count),
+            );
+        }
+
+    }
+};
+
 const std = @import("std");
 const c = @import("Util").c;
 const Allocator = @import("Util").Allocator;
+

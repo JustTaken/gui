@@ -5,11 +5,15 @@ layout(location = 1) in vec3 in_color;
 
 layout(location = 0) out vec3 out_color;
 
-layout(set = 0, binding = 0) uniform UniformTest {
-    mat4 vector;
+layout(set = 0, binding = 0) buffer WorldTransform {
+    mat4 world_transforms[];
+};
+
+layout(set = 1, binding = 0) uniform ViewTransform {
+    mat4 view;
 };
 
 void main() {
-    gl_Position = vec4(in_position, 1.0);
+    gl_Position = vec4(in_position, 1.0) * view * world_transforms[gl_InstanceIndex];
     out_color = in_color;
 }

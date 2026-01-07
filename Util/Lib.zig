@@ -25,47 +25,155 @@ pub const Allocator = struct {
 
     pub fn deinit(self: *Allocator) void {
         std.heap.page_allocator.free(self.tmp_buffer.buffer);
-        std.heap.page_allocator.free(self.main_buffer.buffer);
+            std.heap.page_allocator.free(self.main_buffer.buffer);
     }
 };
 
-pub const Matrix = [16]f32;
+pub fn Vector(N: usize) type {
+    return struct {
+        items: [N]f32,
 
-pub const Math = struct {
-    pub fn scale(vec: [3]f32) Matrix {
-        return .{
-            vec[0], 0,      0,      0,
-            0,      vec[1], 0,      0,
-            0,      0,      vec[2], 0,
-            0,      0,      0,      1,
-        };
-    }
+        const Self = @This();
 
-    pub fn translate(vec: [3]f32) Matrix {
-        return .{
-            1, 0, 0, vec[0],
-            0, 1, 0, vec[1],
-            0, 0, 1, vec[2],
-            0, 0, 0, 1,
-        };
-    }
+        pub fn init(items: [N]f32) Self {
+            var self: Self = undefined;
 
-    pub fn multiply(first: Matrix, second: Matrix) Matrix {
-        var matrix: Matrix = .{
-            0, 0, 0, 0,
-            0, 0, 0, 0,
-            0, 0, 0, 0,
-            0, 0, 0, 0,
-        };
-
-        for (0..4) |i| {
-            for (0..4) |j| {
-                for (0..4) |k| {
-                    matrix[j + i * 4] += first[j + k * 4] * second[i * 4 + k];
-                }
+            inline for (0..N) |i| {
+                self.items[i]  = items[i];
             }
+
+            return self;
+        }
+    };
+}
+
+pub fn Matrix(N: usize) type {
+    return struct {
+        items: [N * N]f32,
+
+        const Self = @This();
+
+        pub fn scale(vec: Vector(N)) Self {
+            var self: Self = undefined;
+
+            inline for (0..N) |i| {
+                self.items[N * i + i] = vec.items[i];
+            }
+
+            return self;
         }
 
-        return matrix;
+        pub fn translate(vec: Vector(N)) Self {
+            var self: Self = undefined;
+            inline for (0..N) |i| {
+                self.items[N * (i + 1) - 1] = vec.items[i];
+            }
+
+            return self;
+        }
+
+        pub fn mult(self: Self, other: Self) Self {
+            var result: Self = undefined;
+
+            inline for (0..N) |i| {
+                inline for (0..N) |j| {
+                    for (0..N) |k| {
+                        result.items[j + i * N] += self.items[j + k * N] * other.items[i * N + k];
+                    }
+                }
+            }
+
+            return result;
+        }
+    };
+}
+
+pub const Quaternion = struct {
+    w: f32,
+    x: f32,
+    y: f32,
+    z: f32,
+
+    pub fn init(vector: Vector(3), angle: f32) Quaternion {
+        const a = angle / 2.0;
+        const cos = @cos(a);
+        const sin = @sin(a);
+
+        return .{
+            .w = cos,
+            .x = vector.items[0] * sin,
+            .y = vector.items[1] * sin,
+            .z = vector.items[2] * sin,
+        };
+    }
+
+    pub fn inverse(self: Quaternion) Quaternion {
+        const length = self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z;
+        const inv = 1.0 / length;
+
+        return .{
+            .w = self.w * inv,
+            .x = - self.x * inv,
+            .y = - self.y * inv,
+            .z = - self.z * inv,
+        };
+    }
+
+    pub fn mult(self: Quaternion, other: Quaternion) Quaternion {
+        // a = w
+        // b = x
+        // c = y
+        // d = z
+
+        const w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z;
+        const x = self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y;
+        const y = self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x;
+        const z = self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w;
+
+        return .{
+            .w = w,
+            .x = x,
+            .y = y,
+            .z = z,
+        };
+    }
+
+    pub fn apply(self: Quaternion, vec: Vector(3)) Vector(3) {
+        const other = Quaternion {
+            .w = 0,
+            .x = vec.items[0],
+            .y = vec.items[1],
+            .z = vec.items[2],
+        };
+
+        const first = self.mult(other);
+        const inv = self.inverse();
+        const result = first.mult(inv);
+
+        return Vector(3).init(.{ result.x, result.y, result.z });
+    }
+
+    pub fn matrix(self: Quaternion) Matrix {
+        return .{
+              self.w * self.w - self.x * self.x - self.y * self.y - self.z * self.z,
+            - self.w * self.x - self.x * self.w - self.y * self.z + self.z * self.y,
+            - self.w * self.y + self.x * self.z - self.y * self.w - self.z * self.x,
+            - self.w * self.z - self.x * self.y + self.y * self.x - self.z * self.x,
+
+              self.x * self.w + self.w * self.x + self.z * self.y - self.y * self.z,
+            - self.x * self.x + self.w * self.w + self.z * self.z + self.y * self.y,
+            - self.x * self.y - self.w * self.z + self.z * self.w - self.y * self.x,
+            - self.x * self.z + self.w * self.y - self.z * self.x - self.y * self.w,
+
+              self.y * self.w - self.z * self.x + self.w * self.y + self.x * self.z,
+            - self.y * self.x - self.z * self.w + self.w * self.z - self.x * self.y,
+            - self.y * self.y + self.z * self.z + self.w * self.w + self.x * self.x,
+            - self.y * self.z - self.z * self.y - self.w * self.x + self.x * self.w,
+
+              self.z * self.w + self.y * self.x - self.x * self.y + self.w * self.z,
+            - self.z * self.x + self.y * self.w - self.x * self.z - self.w * self.y,
+            - self.z * self.y - self.y * self.z - self.x * self.w + self.w * self.x,
+            - self.z * self.z + self.y * self.y + self.x * self.x + self.w * self.w,
+        };
     }
 };
