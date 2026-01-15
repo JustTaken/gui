@@ -1,6 +1,6 @@
 {
 	"asset":{
-		"generator":"Khronos glTF Blender I/O v4.5.48",
+		"generator":"Khronos glTF Blender I/O v5.0.21",
 		"version":"2.0"
 	},
 	"scene":0,
@@ -8,328 +8,275 @@
 		{
 			"name":"Scene",
 			"nodes":[
-				2
+				0
 			]
 		}
 	],
 	"nodes":[
 		{
-			"name":"Bone"
-		},
-		{
 			"mesh":0,
-			"name":"Cube",
-			"skin":0
-		},
-		{
-			"children":[
-				1,
-				0
-			],
-			"name":"Armature",
-			"translation":[
-				0,
-				0,
-				-0.7415633201599121
-			]
+			"name":"Cube"
 		}
 	],
-	"animations":[
+	"materials":[
 		{
-			"channels":[
-				{
-					"sampler":0,
-					"target":{
-						"node":0,
-						"path":"translation"
-					}
-				},
-				{
-					"sampler":1,
-					"target":{
-						"node":0,
-						"path":"rotation"
-					}
-				},
-				{
-					"sampler":2,
-					"target":{
-						"node":0,
-						"path":"scale"
-					}
-				},
-				{
-					"sampler":3,
-					"target":{
-						"node":2,
-						"path":"translation"
-					}
-				},
-				{
-					"sampler":4,
-					"target":{
-						"node":2,
-						"path":"rotation"
-					}
-				},
-				{
-					"sampler":5,
-					"target":{
-						"node":2,
-						"path":"scale"
-					}
-				}
-			],
-			"name":"ArmatureAction",
-			"samplers":[
-				{
-					"input":7,
-					"interpolation":"LINEAR",
-					"output":8
-				},
-				{
-					"input":9,
-					"interpolation":"STEP",
-					"output":10
-				},
-				{
-					"input":9,
-					"interpolation":"STEP",
-					"output":11
-				},
-				{
-					"input":7,
-					"interpolation":"LINEAR",
-					"output":12
-				},
-				{
-					"input":9,
-					"interpolation":"STEP",
-					"output":13
-				},
-				{
-					"input":9,
-					"interpolation":"STEP",
-					"output":11
-				}
-			]
+			"doubleSided":true,
+			"name":"Yellow",
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.8000156879425049,
+					0.6329184770584106,
+					0.018378909677267075,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0.5
+			}
+		},
+		{
+			"doubleSided":true,
+			"name":"Red",
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.8000074625015259,
+					0.02810916304588318,
+					0.03471962362527847,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0.5
+			}
+		},
+		{
+			"doubleSided":true,
+			"name":"Blue",
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0,
+					0.09228971600532532,
+					0.8000229597091675,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0.5
+			}
 		}
 	],
 	"meshes":[
 		{
-			"name":"Cube",
+			"name":"Cube.001",
 			"primitives":[
 				{
 					"attributes":{
 						"POSITION":0,
 						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"JOINTS_0":3,
-						"WEIGHTS_0":4
+						"TEXCOORD_0":2
 					},
-					"indices":5
+					"indices":3,
+					"material":0
+				},
+				{
+					"attributes":{
+						"POSITION":4,
+						"NORMAL":5,
+						"TEXCOORD_0":6
+					},
+					"indices":7,
+					"material":1
+				},
+				{
+					"attributes":{
+						"POSITION":8,
+						"NORMAL":9,
+						"TEXCOORD_0":10
+					},
+					"indices":11,
+					"material":2
 				}
 			]
-		}
-	],
-	"skins":[
-		{
-			"inverseBindMatrices":6,
-			"joints":[
-				0
-			],
-			"name":"Armature"
 		}
 	],
 	"accessors":[
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":24,
+			"count":8,
 			"max":[
 				1,
 				1,
-				0.2584366798400879
+				1
 			],
 			"min":[
 				-1,
 				-1,
-				-1.741563320159912
+				-1
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":24,
+			"count":8,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":24,
+			"count":8,
 			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
-			"componentType":5121,
-			"count":24,
-			"type":"VEC4"
+			"componentType":5123,
+			"count":12,
+			"type":"SCALAR"
 		},
 		{
 			"bufferView":4,
 			"componentType":5126,
-			"count":24,
-			"type":"VEC4"
+			"count":8,
+			"max":[
+				1,
+				1,
+				1
+			],
+			"min":[
+				-1,
+				-1,
+				-1
+			],
+			"type":"VEC3"
 		},
 		{
 			"bufferView":5,
-			"componentType":5123,
-			"count":36,
-			"type":"SCALAR"
+			"componentType":5126,
+			"count":8,
+			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":1,
-			"type":"MAT4"
+			"count":8,
+			"type":"VEC2"
 		},
 		{
 			"bufferView":7,
-			"componentType":5126,
-			"count":41,
-			"max":[
-				1.6666666666666667
-			],
-			"min":[
-				0
-			],
+			"componentType":5123,
+			"count":12,
 			"type":"SCALAR"
 		},
 		{
 			"bufferView":8,
 			"componentType":5126,
-			"count":41,
+			"count":8,
+			"max":[
+				1,
+				1,
+				1
+			],
+			"min":[
+				-1,
+				-1,
+				-1
+			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":9,
 			"componentType":5126,
-			"count":2,
-			"max":[
-				1.6666666666666667
-			],
-			"min":[
-				0
-			],
-			"type":"SCALAR"
+			"count":8,
+			"type":"VEC3"
 		},
 		{
 			"bufferView":10,
 			"componentType":5126,
-			"count":2,
-			"type":"VEC4"
+			"count":8,
+			"type":"VEC2"
 		},
 		{
 			"bufferView":11,
-			"componentType":5126,
-			"count":2,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":12,
-			"componentType":5126,
-			"count":41,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":13,
-			"componentType":5126,
-			"count":2,
-			"type":"VEC4"
+			"componentType":5123,
+			"count":12,
+			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":288,
+			"byteLength":96,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":288,
-			"byteOffset":288,
+			"byteLength":96,
+			"byteOffset":96,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":192,
-			"byteOffset":576,
+			"byteLength":64,
+			"byteOffset":192,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":24,
+			"byteOffset":256,
+			"target":34963
+		},
+		{
+			"buffer":0,
+			"byteLength":96,
+			"byteOffset":280,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":96,
-			"byteOffset":768,
+			"byteOffset":376,
 			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":384,
-			"byteOffset":864,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":72,
-			"byteOffset":1248,
-			"target":34963
 		},
 		{
 			"buffer":0,
 			"byteLength":64,
-			"byteOffset":1320
-		},
-		{
-			"buffer":0,
-			"byteLength":164,
-			"byteOffset":1384
-		},
-		{
-			"buffer":0,
-			"byteLength":492,
-			"byteOffset":1548
-		},
-		{
-			"buffer":0,
-			"byteLength":8,
-			"byteOffset":2040
-		},
-		{
-			"buffer":0,
-			"byteLength":32,
-			"byteOffset":2048
+			"byteOffset":472,
+			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":24,
-			"byteOffset":2080
+			"byteOffset":536,
+			"target":34963
 		},
 		{
 			"buffer":0,
-			"byteLength":492,
-			"byteOffset":2104
+			"byteLength":96,
+			"byteOffset":560,
+			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":32,
-			"byteOffset":2596
+			"byteLength":96,
+			"byteOffset":656,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":64,
+			"byteOffset":752,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":24,
+			"byteOffset":816,
+			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":2628,
+			"byteLength":840,
 			"uri":"Cube.bin"
 		}
 	]

@@ -25,9 +25,46 @@ pub const Allocator = struct {
 
     pub fn deinit(self: *Allocator) void {
         std.heap.page_allocator.free(self.tmp_buffer.buffer);
-            std.heap.page_allocator.free(self.main_buffer.buffer);
+        std.heap.page_allocator.free(self.main_buffer.buffer);
     }
 };
+
+pub fn List(T: type) type {
+    return struct {
+        free: std.DoublyLinkedList,
+        use: std.DoublyLinkedList,
+
+        const Self = @This();
+
+        pub fn init(self: *Self) void {
+            self.free = .{};
+            self.use = .{};
+        }
+
+        pub fn add(self: *Self) ?*T {
+            if (self.free.pop()) |p| {
+                self.use.append(p);
+                return @fieldParentPtr("node", p);
+            }
+
+            return null;
+        }
+
+        pub fn create(self: *Self, allocator: std.mem.Allocator) !*T {
+            const child = try allocator.create(T);
+            self.use.append(&child.node);
+
+            return child;
+        }
+
+        pub fn remove(self: *Self, child: ?*T) void {
+            if (child) |ch| {
+                self.use.remove(&ch.node);
+                self.free.prepend(&ch.node);
+            }
+        }
+    };
+}
 
 pub fn Vector(N: usize) type {
     return struct {
@@ -39,7 +76,7 @@ pub fn Vector(N: usize) type {
             var self: Self = undefined;
 
             inline for (0..N) |i| {
-                self.items[i]  = items[i];
+                self.items[i] = items[i];
             }
 
             return self;
@@ -74,12 +111,30 @@ pub fn Matrix(N: usize) type {
 
         pub fn mult(self: Self, other: Self) Self {
             var result: Self = undefined;
+            for (0..N * N) |i| {
+                result.items[i] = 0;
+            }
 
             inline for (0..N) |i| {
                 inline for (0..N) |j| {
-                    for (0..N) |k| {
+                    inline for (0..N) |k| {
                         result.items[j + i * N] += self.items[j + k * N] * other.items[i * N + k];
                     }
+                }
+            }
+
+            return result;
+        }
+
+        pub fn apply(self: Self, vec: Vector(N)) Vector(N) {
+            var result: Vector(N) = undefined;
+            for (0..N) |i| {
+                result.items[i] = 0;
+            }
+
+            inline for (0..N) |i| {
+                inline for (0..N) |j| {
+                    result.items[i] += vec.items[j] * self.items[i * N + j];
                 }
             }
 
@@ -113,18 +168,13 @@ pub const Quaternion = struct {
 
         return .{
             .w = self.w * inv,
-            .x = - self.x * inv,
-            .y = - self.y * inv,
-            .z = - self.z * inv,
+            .x = -self.x * inv,
+            .y = -self.y * inv,
+            .z = -self.z * inv,
         };
     }
 
     pub fn mult(self: Quaternion, other: Quaternion) Quaternion {
-        // a = w
-        // b = x
-        // c = y
-        // d = z
-
         const w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z;
         const x = self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y;
         const y = self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x;
@@ -139,7 +189,7 @@ pub const Quaternion = struct {
     }
 
     pub fn apply(self: Quaternion, vec: Vector(3)) Vector(3) {
-        const other = Quaternion {
+        const other = Quaternion{
             .w = 0,
             .x = vec.items[0],
             .y = vec.items[1],
@@ -153,27 +203,66 @@ pub const Quaternion = struct {
         return Vector(3).init(.{ result.x, result.y, result.z });
     }
 
-    pub fn matrix(self: Quaternion) Matrix {
+    pub fn apply_quaternion(self: Quaternion, vec: Vector(3)) Quaternion {
+        const other = Quaternion{
+            .w = 0,
+            .x = vec.items[0],
+            .y = vec.items[1],
+            .z = vec.items[2],
+        };
+
+        const first = self.mult(other);
+        const inv = self.inverse();
+        return first.mult(inv);
+    }
+
+    pub fn matrix(self: Quaternion) Matrix(4) {
         return .{
-              self.w * self.w - self.x * self.x - self.y * self.y - self.z * self.z,
-            - self.w * self.x - self.x * self.w - self.y * self.z + self.z * self.y,
-            - self.w * self.y + self.x * self.z - self.y * self.w - self.z * self.x,
-            - self.w * self.z - self.x * self.y + self.y * self.x - self.z * self.x,
+            .items = .{
+                2 * (self.w * self.w + self.x * self.x) - 1,
+                2 * (self.x * self.y - self.w * self.z),
+                2 * (self.x * self.z + self.w * self.y),
+                0,
 
-              self.x * self.w + self.w * self.x + self.z * self.y - self.y * self.z,
-            - self.x * self.x + self.w * self.w + self.z * self.z + self.y * self.y,
-            - self.x * self.y - self.w * self.z + self.z * self.w - self.y * self.x,
-            - self.x * self.z + self.w * self.y - self.z * self.x - self.y * self.w,
+                2 * (self.x * self.y + self.w * self.z),
+                2 * (self.w * self.w + self.y * self.y) - 1,
+                2 * (self.y * self.z - self.w * self.x),
+                0,
 
-              self.y * self.w - self.z * self.x + self.w * self.y + self.x * self.z,
-            - self.y * self.x - self.z * self.w + self.w * self.z - self.x * self.y,
-            - self.y * self.y + self.z * self.z + self.w * self.w + self.x * self.x,
-            - self.y * self.z - self.z * self.y - self.w * self.x + self.x * self.w,
+                2 * (self.x * self.z - self.w * self.y),
+                2 * (self.y * self.z + self.w * self.x),
+                2 * (self.w * self.w + self.z * self.z) - 1,
+                0,
 
-              self.z * self.w + self.y * self.x - self.x * self.y + self.w * self.z,
-            - self.z * self.x + self.y * self.w - self.x * self.z - self.w * self.y,
-            - self.z * self.y - self.y * self.z - self.x * self.w + self.w * self.x,
-            - self.z * self.z + self.y * self.y + self.x * self.x + self.w * self.w,
+                0,
+                0,
+                0,
+                1,
+            },
         };
     }
 };
+
+pub const Data = struct { indices: []u16, vertices: [][3]f32 };
+
+test "Quaternion Test" {
+    const quaternion = Quaternion.init(Vector(3).init(.{ 0, 0, 1 }), std.math.pi / 2.0);
+    const result = quaternion.apply(Vector(3).init(.{ 0, 1, 0 }));
+    const expect: [3]f32 = .{ -1, 0, 0 };
+
+    const matrix = quaternion.matrix();
+    const result_matrix = matrix.apply(Vector(4).init(.{ 0, 1, 0, 0 }));
+
+    for (0..expect.len) |i| {
+        const value = std.math.round(result.items[i]);
+        const value_matrix = std.math.round(result_matrix.items[i]);
+
+        std.debug.print("|{d}| ", .{value});
+        std.debug.print("|{d}|\n", .{value_matrix});
+
+        try std.testing.expectEqual(expect[i], value);
+        try std.testing.expectEqual(expect[i], value_matrix);
+    }
+
+    std.debug.print("\n", .{});
+}

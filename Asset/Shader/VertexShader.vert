@@ -14,6 +14,7 @@ layout(set = 1, binding = 0) uniform ViewTransform {
 };
 
 void main() {
-    gl_Position = vec4(in_position, 1.0) * view * world_transforms[gl_InstanceIndex];
+    mat4 transform = world_transforms[gl_InstanceIndex];
+    gl_Position = vec4(in_position, 1.0) * view * transform;
     out_color = in_color;
 }

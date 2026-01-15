@@ -1,6 +1,5 @@
-
-const NODE_INDEX: u32 = 0;
-const MESH_PATH: []const u8 = "Geometry.gltf";
+const NODE_INDEX: u32 = 1;
+const MESH_PATH: []const u8 = "Cube.gltf";
 const Index = u16;
 
 pub fn main() !void {
@@ -12,16 +11,11 @@ pub fn main() !void {
 }
 
 pub const Application = struct {
-    library: VulkanLibrary,
     wayland: Wayland,
-    instance: VulkanInstance,
-    surface: VulkanSurface,
-    device: VulkanDevice,
-    manager: VulkanManager,
-    swapchain: VulkanSwapchain,
-    pipeline: VulkanPipeline,
-    descriptor_buffers: [2]VulkanBuffer,
-    render_groups: []VulkanRenderGroup,
+    vulkan: Vulkan,
+    render: *VulkanRenderGroup,
+    sets: [2]*VulkanSet,
+    buffers: [2]VulkanBuffer,
 
     allocator: Allocator,
 
@@ -32,122 +26,32 @@ pub const Application = struct {
     ) !*Application {
         const self = try allocator.create(Application);
 
-        try self.allocator.init(10, 100, allocator);
+        try self.allocator.init(50, 100, allocator);
         try self.wayland.init();
-        try self.library.init();
-        try self.instance.init(&self.library, &self.allocator);
-
-        try self
-            .surface
-            .init(
-                &self.library,
-                self.instance,
-                self.wayland.handle.display,
-                self.wayland.handle.surface
-            );
-
-        try self
-            .device
-            .init(
-                &self.library,
-                self.instance,
-                self.surface,
-                &self.allocator
-            );
-
-        try self.manager.init(&self.library, self.device, &self.allocator);
-        try self.swapchain.startup(&self.library, self.device, &self.allocator);
-        try self.swapchain.new(&self.library, self.device, width, height);
-
-        try self
-            .pipeline
-            .init(
-                &self.library,
-                self.device,
-                self.swapchain.format.format,
-                Vertex,
-                &.{
-                    &.{.{
-                        .binding = 0,
-                        .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                        .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
-                        .descriptorCount = 1,
-                    }},
-                    &.{.{
-                        .binding = 0,
-                        .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                        .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
-                        .descriptorCount = 1,
-                    }},
-                },
-                &self.allocator
-            );
 
         var gltf: GltfParser.Gltf = undefined;
         try gltf.init("Asset/Mesh", MESH_PATH, self.allocator.tmp);
 
-        self.descriptor_buffers[0] = try VulkanBuffer.init(
-            Transform,
-            &self.library,
-            self.device,
-            c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            c.VK_SHARING_MODE_EXCLUSIVE,
-            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            1,
-        );
+        const display = self.wayland.handle.display;
+        const surface = self.wayland.handle.surface;
+        try self.vulkan.init(display, surface, width, height, &self.allocator);
 
-        self.descriptor_buffers[1] = try VulkanBuffer.init(
-            View,
-            &self.library,
-            self.device,
-            c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            c.VK_SHARING_MODE_EXCLUSIVE,
-            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            1,
-        );
+        self.buffers[0] = try self.vulkan.addPublicBuffer(Transform, .storage, 1);
+        self.sets[0] = try self.vulkan.addDescriptorSet(0);
 
-        const position = getTransform(@floatFromInt(width), @floatFromInt(height));
-        const view = getView();
+        try self.buffers[0].append(Transform, &self.vulkan, &.{getTransform(width, height)});
+        try self.sets[0].update(&self.vulkan, try self.buffers[0].range(0, null), 0);
 
-        try self.descriptor_buffers[0].update(
-            Transform,
-            &self.library,
-            self.device,
-            0,
-            &.{position},
-        );
+        self.buffers[1] = try self.vulkan.addPublicBuffer(View, .uniform, 1);
+        self.sets[1] = try self.vulkan.addDescriptorSet(1);
 
-        try self.descriptor_buffers[1].update(
-            View,
-            &self.library,
-            self.device,
-            0,
-            &.{view},
-        );
+        try self.buffers[1].append(View, &self.vulkan, &.{getView()});
+        try self.sets[1].update(&self.vulkan, try self.buffers[1].range(0, null), 0);
 
         const vertices = try getVertices(gltf, self.allocator.tmp);
         const indices = try getIndices(gltf, self.allocator.tmp);
 
-        self.render_groups = try self
-            .allocator
-            .main
-            .alloc(VulkanRenderGroup, 1);
-
-        try self.render_groups[0].init(
-            Vertex,
-            u16,
-            &self.library,
-            self.device,
-            self.pipeline,
-            &self.manager,
-            vertices,
-            indices,
-            &self.descriptor_buffers,
-            &self.allocator,
-        );
-
+        self.render = try self.vulkan.addRenderGroup(vertices, indices, &.{ self.sets[0], self.sets[1] });
         self.wayland.setListener(self, .{ .resize = resize });
 
         return self;
@@ -158,48 +62,27 @@ pub const Application = struct {
             self.allocator.tmp_buffer.reset();
             self.wayland.dispatch() catch break;
 
-            const image = try self.swapchain.nextImage(
-                &self.library,
-                self.device,
-                &self.manager,
-            );
-
-            try self.swapchain.renderToImage(
-                &self.library,
-                self.device,
-                self.pipeline,
-                &self.manager,
-                image,
-                self.render_groups,
-                &self.allocator,
-            );
+            try self.vulkan.renderFrame();
         }
     }
 
     fn resize(ptr: *anyopaque, width: u32, height: u32) void {
         const self: *Application = @ptrCast(@alignCast(ptr));
-        const world_transform = getTransform(@floatFromInt(width), @floatFromInt(height));
+        const world_transform = getTransform(width, height);
 
-        self.descriptor_buffers[0].update(
-            Transform,
-            &self.library,
-            self.device,
-            0,
-            &.{world_transform},
-        ) catch unreachable;
+        self.buffers[0].clear();
+        self.buffers[0].append(Transform, &self.vulkan, &.{world_transform}) catch @panic("RESIZE BUFFER");
 
-        self.swapchain.new(
-            &self.library,
-            self.device,
-            width,
-            height,
-        ) catch unreachable;
+        const range = self.buffers[0].range(0, null) catch @panic("OUT OF BOUNDS");
+
+        self.vulkan.updateDescriptorSet(self.sets[0], range, 0);
+        self.vulkan.changeRenderSize(width, height) catch @panic("RESIZE RENDERER");
     }
 };
 
 fn getVertices(gltf: GltfParser.Gltf, allocator: std.mem.Allocator) ![]Vertex {
-    const mesh = gltf.complete_nodes[NODE_INDEX].mesh.?;
-    const position = mesh.position;
+    const mesh = gltf.meshes[0];
+    const position = mesh.getPosition(gltf);
 
     const vertices = try allocator.alloc(Vertex, position.len);
 
@@ -214,38 +97,47 @@ fn getVertices(gltf: GltfParser.Gltf, allocator: std.mem.Allocator) ![]Vertex {
 }
 
 fn getIndices(gltf: GltfParser.Gltf, allocator: std.mem.Allocator) ![]u16 {
-    const mesh = gltf.complete_nodes[NODE_INDEX].mesh.?;
-    const indices = try allocator.alloc(u16, mesh.indices.len);
+    const mesh_indices = gltf.meshes[0].getIndices(gltf);
+    const indices = try allocator.alloc(u16, mesh_indices.len);
 
-    for (0..mesh.indices.len) |i| {
-        indices[i] = mesh.indices[i];
+    for (0..mesh_indices.len) |i| {
+        indices[i] = mesh_indices[i];
     }
 
     return indices;
 }
 
-fn getTransform(width: f32, height: f32) Transform {
-    const a: f32 = height / width;
+fn getTransform(width: u32, height: u32) Transform {
+    const w: f32 = @floatFromInt(width);
+    const h: f32 = @floatFromInt(height);
+
+    const a: f32 = h / w;
+    const matrix = Matrix(4).scale(Vector(4).init(.{ a, 1, 1.0 / 10.0 + 0.1, 1 }));
 
     return .{
-        .transform = Matrix(4).scale(Vector(4).init(.{ a, 1, 1, 1 })),
+        .transform = matrix,
     };
 }
 
 fn getView() View {
+    const length = 1.0 / 1.41;
+    const quaternion = Quaternion.init(Vector(3).init(.{ length, length, 0 }), std.math.pi / 2.0);
+    const matrix = quaternion.matrix();
+
+    // for (0..4) |i| {
+    //     for (0..4) |j| {
+    //         std.debug.print("{d} ", .{matrix.items[i * 4 + j]});
+    //     }
+    //     std.debug.print("\n", .{});
+    // }
+
     return .{
-        .transform = Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 })),
+        .transform = matrix,
     };
 }
 
-pub const Vertex = struct {
-    position: [3]f32,
-    color: [3]f32,
-};
-
 pub const Transform = struct {
     transform: Matrix(4),
-
 };
 
 pub const View = struct {
@@ -253,21 +145,18 @@ pub const View = struct {
 };
 
 const std = @import("std");
+const c = @import("Util").c;
 
 const Wayland = @import("Wayland").Wayland;
-const VulkanLibrary = @import("Vulkan").Library;
-const VulkanInstance = @import("Vulkan").Instance;
-const VulkanDevice = @import("Vulkan").Device;
-const VulkanSurface = @import("Vulkan").Surface;
-const VulkanSwapchain = @import("Vulkan").Swapchain;
-const VulkanPipeline = @import("Vulkan").Pipeline;
-const VulkanManager = @import("Vulkan").Manager;
-const VulkanBuffer = @import("Vulkan").Buffer;
+const Vulkan = @import("Vulkan").Context;
 const VulkanRenderGroup = @import("Vulkan").RenderGroup;
+const VulkanSet = @import("Vulkan").Descriptor.Set;
+const VulkanBuffer = @import("Vulkan").Buffer;
+const Vertex = Vulkan.Vertex;
+
 const GltfParser = @import("GltfParser");
 
-const c = @import("Util").c;
 const Allocator = @import("Util").Allocator;
 const Matrix = @import("Util").Matrix;
 const Vector = @import("Util").Vector;
-
+const Quaternion = @import("Util").Quaternion;

@@ -1,5 +1,7 @@
 pub const Char = u8;
 pub const String = []const Char;
+pub const Identifier = []const Char;
+pub const Boolean = bool;
 pub const Object = struct {
     name: String,
     value: Value,
@@ -11,6 +13,8 @@ pub const Map = std.StringHashMap(Value);
 const ValueKind = enum {
     string,
     array,
+    identifier,
+    boolean,
     map,
     int,
     float,
@@ -19,6 +23,8 @@ const ValueKind = enum {
 pub const Value = union(ValueKind) {
     string: String,
     array: Array,
+    identifier: Identifier,
+    boolean: Boolean,
     map: Map,
     int: i32,
     float: f32,
@@ -64,6 +70,7 @@ const Context = struct {
         }
 
         const end = self.index;
+
         try self.assert('"');
 
         return self.content[start..end];
@@ -120,6 +127,35 @@ const Context = struct {
         return array.items;
     }
 
+    fn parseIdentifier(self: *Context) Error!Value {
+        if (isNumber(self.peek(0) orelse return error.Assertion)) {
+            return try self.parseNumber();
+        }
+
+        const start = self.index;
+        while (self.peek(0)) |c| {
+            if (!isLetter(c)) break;
+            self.advance();
+        }
+
+        const end = self.index;
+        const content = self.content[start..end];
+
+        if (std.mem.eql(u8, content, "true")) {
+            return .{
+                .boolean = true,
+            };
+        } else if (std.mem.eql(u8, content, "false")) {
+            return .{
+                .boolean = false,
+            };
+        }
+
+        return .{
+            .identifier = content,
+        };
+    }
+
     fn parseNumber(self: *Context) Error!Value {
         var is_float = false;
         const start = self.index;
@@ -161,7 +197,7 @@ const Context = struct {
             '[' => .{
                 .array = try self.parseArray(),
             },
-            else => try self.parseNumber(),
+            else => try self.parseIdentifier(),
         };
 
         return value;
@@ -206,8 +242,21 @@ const Context = struct {
 
     fn assert(self: *Context, char: Char) Error!void {
         self.skipWhitespace();
+        var index: u32 = 0;
 
         if (!self.match(char)) {
+            const start = self.index;
+            while (self.peek(index)) |c| {
+                if (isLetter(c)) break;
+                index += 1;
+            }
+
+            const end = start + index;
+
+            const string = self.content[start..end];
+
+            std.debug.print("ASSERT: {s}, start: {d}, end: {d}, len: {d}\n", .{string, start, end, self.content.len});
+
             return error.Assertion;
         }
     }
@@ -217,8 +266,13 @@ fn isNumber(c: Char) bool {
     return (c >= '0' and c <= '9') or c == '-';
 }
 
+
+fn isLetter(c: Char) bool {
+    return (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or isNumber(c);
+}
+
 fn isAlpha(c: Char) bool {
-    return c != '"' and std.ascii.isAscii(c); //(c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or isNumber(c);
+    return c != '"' and std.ascii.isAscii(c);
 }
 
 pub fn parse(file: std.fs.File, allocator: std.mem.Allocator) Error!Map {

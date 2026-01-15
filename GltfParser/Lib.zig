@@ -6,13 +6,12 @@ pub const Gltf = struct {
     scenes: []Scene,
     nodes: []Node,
     meshes: []Mesh,
+    materials: []Material,
     accessors: []Accessor,
     skins: []Skin,
     animations: []Animation,
     buffer_views: []BufferView,
     buffers: []Buffer,
-
-    complete_nodes: []CompleteNode,
 
     const Asset = struct {
         generator: JsonParser.String,
@@ -42,7 +41,8 @@ pub const Gltf = struct {
             }
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]Scene {
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Scene {
+            const array = (value orelse return error.MissingScenes).array;
             const scenes = try allocator.alloc(Scene, array.len);
 
             for (0..array.len) |i| {
@@ -79,7 +79,8 @@ pub const Gltf = struct {
             } else self.children = &.{};
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]Node {
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Node {
+            const array = (value orelse return error.MissingNodes).array;
             const nodes = try allocator.alloc(Node, array.len);
 
             for (0..array.len) |i| {
@@ -97,6 +98,16 @@ pub const Gltf = struct {
         const Primitive = struct {
             attributes: AttributeMap,
             indices: Index,
+
+            const AttributeMap = std.EnumMap(AttributeKind, Index);
+
+            const AttributeKind = enum {
+                position,
+                normal,
+                texcoord,
+                joint,
+                weight,
+            };
 
             fn init(self: *Primitive, map: JsonParser.Map) !void {
                 const attributes = map.get("attributes").?.map;
@@ -122,22 +133,13 @@ pub const Gltf = struct {
             }
         };
 
-        const AttributeMap = std.EnumMap(AttributeKind, Index);
-
-        const AttributeKind = enum {
-            position,
-            normal,
-            texcoord,
-            joint,
-            weight,
-        };
-
         fn init(self: *Mesh, map: JsonParser.Map, allocator: std.mem.Allocator) !void {
             self.name = map.get("name").?.string;
             self.primitives = try Primitive.initArray(map.get("primitives").?.array, allocator);
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]Mesh {
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Mesh {
+            const array = (value orelse return error.MissingMeshes).array;
             const meshes = try allocator.alloc(Mesh, array.len);
 
             for (0..array.len) |i| {
@@ -145,6 +147,69 @@ pub const Gltf = struct {
             }
 
             return meshes;
+        }
+
+        pub fn getIndices(self: *const Mesh, gltf: Gltf) []Index {
+            return gltf.getView(self.primitives[0].indices, Index);
+        }
+
+        pub fn getPosition(self: *const Mesh, gltf: Gltf) [][3]f32 {
+            const position_index = self.primitives[0].attributes.get(.position).?;
+            return gltf.getView(position_index, [3]f32);
+        }
+    };
+
+    const Material = struct {
+        name: JsonParser.String,
+        double_sided: bool,
+        pbr_metallic_roughness: PbrMetallicRoughness,
+
+        const PbrMetallicRoughness = struct {
+            base_color_factor: [4]f32,
+            metallic_factor: f32,
+            roughness_factor: f32,
+
+            pub fn init(self: *PbrMetallicRoughness, map: JsonParser.Map) !void {
+                const base_color_factor = map.get("baseColorFactor").?.array;
+                std.debug.assert(base_color_factor.len == self.base_color_factor.len);
+
+                for (0..base_color_factor.len) |i| {
+                    const factor: f32 = switch (base_color_factor[i]) {
+                        .int => |int| @floatFromInt(int),
+                        .float => |float| float,
+                        else => return error.MaterialMetallicFactor,
+                    };
+
+                    self.base_color_factor[i] = factor;
+                }
+
+                switch (map.get("metallicFactor").?) {
+                    .int => |i| self.metallic_factor = @floatFromInt(i),
+                    .float => |f| self.metallic_factor = f,
+                    else => return error.MaterialMetallicFactor,
+                }
+
+                self.roughness_factor = map.get("roughnessFactor").?.float;
+            }
+        };
+
+        pub fn init(self: *Material, map: JsonParser.Map) !void {
+            self.name = map.get("name").?.string;
+
+            self.double_sided = map.get("doubleSided").?.boolean;
+            try self.pbr_metallic_roughness.init(map.get("pbrMetallicRoughness").?.map);
+        }
+
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Material {
+            const array = if (value) |a| a.array else return &.{};
+
+            var materials = try allocator.alloc(Material, array.len);
+
+            for (0..array.len) |i| {
+                try materials[i].init(array[i].map);
+            }
+
+            return materials;
         }
     };
 
@@ -217,7 +282,8 @@ pub const Gltf = struct {
             if (map.get("sparse")) |_| return error.Assertion;
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]Accessor {
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Accessor {
+            const array = (value orelse return error.MissingAccessor).array;
             const accessors = try allocator.alloc(Accessor, array.len);
 
             for (0..array.len) |i| {
@@ -232,7 +298,6 @@ pub const Gltf = struct {
         buffer: u32,
         byte_length: u32,
         byte_offset: u32,
-        // target: Index,
 
         fn init(self: *BufferView, map: JsonParser.Map) !void {
             self.buffer = @intCast(map.get("buffer").?.int);
@@ -240,11 +305,10 @@ pub const Gltf = struct {
             self.byte_offset = @intCast(map.get("byteOffset").?.int);
 
             if (map.get("byteStride")) |_| return error.Assertion;
-
-            // self.target = @intCast(map.get("target").?.int);
         }
 
-        fn initArray(array: JsonParser.Array, allocator: std.mem.Allocator) ![]BufferView {
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]BufferView {
+            const array = (value orelse return error.MissingBufferView).array;
             const buffer_views = try allocator.alloc(BufferView, array.len);
 
             for (0..array.len) |i| {
@@ -266,7 +330,8 @@ pub const Gltf = struct {
             _ = try dir.readFile(uri, self.content);
         }
 
-        fn initArray(array: JsonParser.Array, dir: std.fs.Dir, allocator: std.mem.Allocator) ![]Buffer {
+        fn initArray(value: ?JsonParser.Value, dir: std.fs.Dir, allocator: std.mem.Allocator) ![]Buffer {
+            const array = (value orelse return error.MissingBuffers).array;
             const buffers = try allocator.alloc(Buffer, array.len);
 
             for (0..array.len) |i| {
@@ -295,8 +360,8 @@ pub const Gltf = struct {
             }
         }
 
-        fn initArray(array_opt: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Skin {
-            const array = if (array_opt) |a| a.array else return &.{};
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Skin {
+            const array = if (value) |a| a.array else return &.{};
 
             const skins = try allocator.alloc(Skin, array.len);
 
@@ -391,8 +456,9 @@ pub const Gltf = struct {
             self.samplers = try Sampler.initArray(map.get("samplers").?.array, allocator);
         }
 
-        fn initArray(array_opt: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Animation {
-            const array = if (array_opt) |a| a.array else return &.{};
+        fn initArray(value: ?JsonParser.Value, allocator: std.mem.Allocator) ![]Animation {
+            const array = if (value) |a| a.array else return &.{};
+
             const animations = try allocator.alloc(Animation, array.len);
 
             for (0..array.len) |i| {
@@ -403,42 +469,42 @@ pub const Gltf = struct {
         }
     };
 
-    const CompleteMesh = struct {
-        indices: []Index,
-        position: [][3]f32,
-        normal: [][3]f32,
-        texcoord: [][2]f32,
-        joints: [][4]u8,
-        weights: [][4]f32,
-    };
+    //const CompleteMesh = struct {
+    //    indices: []Index,
+    //    position: [][3]f32,
+    //    normal: [][3]f32,
+    //    texcoord: [][2]f32,
+    //    joints: [][4]u8,
+    //    weights: [][4]f32,
+    //};
 
-    const CompleteSkin = struct {
-        inverseBindingMatrices: Matrix(4),
-        joints: []Index,
-    };
+    //const CompleteSkin = struct {
+    //    inverseBindingMatrices: Matrix(4),
+    //    joints: []Index,
+    //};
 
-    const CompleteNode = struct {
-        children: []*CompleteNode,
-        mesh: ?CompleteMesh,
-        skin: ?CompleteSkin,
-        transform: Matrix(4),
-    };
+    //const CompleteNode = struct {
+    //    children: []*CompleteNode,
+    //    mesh: ?CompleteMesh,
+    //    skin: ?CompleteSkin,
+    //    transform: Matrix(4),
+    //};
 
-    fn getCompleteNodes(self: *Gltf, allocator: std.mem.Allocator) ![]CompleteNode {
-        const complete_nodes = try allocator.alloc(CompleteNode, self.nodes.len);
+    //fn getCompleteNodes(self: *Gltf, allocator: std.mem.Allocator) ![]CompleteNode {
+    //    const complete_nodes = try allocator.alloc(CompleteNode, self.nodes.len);
 
-        for (0..self.nodes.len) |i| {
-            complete_nodes[i] = try self.getCompleteNode(self.nodes[i], complete_nodes, allocator);
-        }
+    //    for (0..self.nodes.len) |i| {
+    //        complete_nodes[i] = try self.getCompleteNode(self.nodes[i], complete_nodes, allocator);
+    //    }
 
-        const root_node_indices = try self.findRootNodes(allocator);
+    //    const root_node_indices = try self.findRootNodes(allocator);
 
-        for (root_node_indices) |i| {
-            self.completeNodeTransform(&complete_nodes[i], complete_nodes, null);
-        }
+    //    for (root_node_indices) |i| {
+    //        self.completeNodeTransform(&complete_nodes[i], complete_nodes, null);
+    //    }
 
-        return complete_nodes;
-    }
+    //    return complete_nodes;
+    //}
 
     fn findRootNodes(self: *Gltf, allocator: std.mem.Allocator) ![]Index {
         const root_nodes_flag = try allocator.alloc(bool, self.nodes.len);
@@ -465,93 +531,83 @@ pub const Gltf = struct {
         return root_nodes[0..count];
     }
 
-    fn completeNodeTransform(self: *Gltf, node: *CompleteNode, complete_nodes: []CompleteNode, parent_transform: ?Matrix(4)) void {
-        const parent = parent_transform orelse Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 }));
-        node.transform = parent.mult(node.transform);
+    //fn completeNodeTransform(self: *Gltf, node: *CompleteNode, complete_nodes: []CompleteNode, parent_transform: ?Matrix(4)) void {
+    //    const parent = parent_transform orelse Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 }));
+    //    node.transform = parent.mult(node.transform);
 
-        for (0..node.children.len) |i| {
-            self.completeNodeTransform(node.children[i], complete_nodes, node.transform);
-        }
-    }
+    //    for (0..node.children.len) |i| {
+    //        self.completeNodeTransform(node.children[i], complete_nodes, node.transform);
+    //    }
+    //}
 
-    fn getCompleteNode(self: *Gltf, node: Node, nodes: []CompleteNode, allocator: std.mem.Allocator) !CompleteNode {
-        var complete_node = CompleteNode {
-            .children = &.{},
-            .mesh = null,
-            .skin = null,
-            .transform = Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 })),
-        };
+    //fn getCompleteNode(self: *Gltf, node: Node, nodes: []CompleteNode, allocator: std.mem.Allocator) !CompleteNode {
+    //    var complete_node = CompleteNode {
+    //        .children = &.{},
+    //        .mesh = null,
+    //        .skin = null,
+    //        .transform = Matrix(4).scale(Vector(4).init(.{ 1, 1, 1, 1 })),
+    //    };
 
-        complete_node.transform = node.transform;
-        complete_node.children = try allocator.alloc(*CompleteNode, node.children.len);
+    //    complete_node.transform = node.transform;
+    //    complete_node.children = try allocator.alloc(*CompleteNode, node.children.len);
 
-        for (0..node.children.len) |i| {
-            complete_node.children[i] = &nodes[node.children[i]];
-        }
+    //    for (0..node.children.len) |i| {
+    //        complete_node.children[i] = &nodes[node.children[i]];
+    //    }
 
-        if (node.mesh) |mesh| {
-            complete_node.mesh = self.getCompleteMesh(mesh);
-        }
+    //    if (node.mesh) |mesh| {
+    //        complete_node.mesh = self.getCompleteMesh(mesh);
+    //    }
 
-        if (node.skin) |skin| {
-            complete_node.skin = self.getCompleteSkin(skin);
-        }
+    //    if (node.skin) |skin| {
+    //        complete_node.skin = self.getCompleteSkin(skin);
+    //    }
 
-        return complete_node;
-    }
+    //    return complete_node;
+    //}
 
-    fn getCompleteSkin(self: *Gltf, index: Index) CompleteSkin {
-        const skin = self.skins[index];
+    //fn getCompleteSkin(self: *Gltf, index: Index) CompleteSkin {
+    //    const skin = self.skins[index];
 
-        var complete_skin: CompleteSkin = undefined;
+    //    var complete_skin: CompleteSkin = undefined;
 
-        complete_skin.inverseBindingMatrices = self.getView(skin.inverseBindMatrices, Matrix(4))[0];
-        complete_skin.joints = skin.joints;
+    //    complete_skin.inverseBindingMatrices = self.getView(skin.inverseBindMatrices, Matrix(4))[0];
+    //    complete_skin.joints = skin.joints;
 
-        return complete_skin;
-    }
+    //    return complete_skin;
+    //}
 
-    fn getCompleteMesh(self: *Gltf, index: Index) CompleteMesh {
-        const mesh = self.meshes[index];
-        const primitives = mesh.primitives[0];
-        const attributes = primitives.attributes;
+    //fn getCompleteMesh(self: *Gltf, index: Index) CompleteMesh {
+    //    const mesh = self.meshes[index];
+    //    const primitives = mesh.primitives[0];
+    //    const attributes = primitives.attributes;
 
-        var data = CompleteMesh {
-            .indices = &.{},
-            .position = &.{},
-            .normal = &.{},
-            .texcoord = &.{},
-            .joints = &.{},
-            .weights = &.{},
-        };
+    //    var data = CompleteMesh {
+    //        .indices = &.{},
+    //        .position = &.{},
+    //        .normal = &.{},
+    //        .texcoord = &.{},
+    //        .joints = &.{},
+    //        .weights = &.{},
+    //    };
 
-        //std.debug.print("PRIMITIVE INDICES: {any}\n", .{primitives.indices});
+    //    data.indices = self.getView(primitives.indices, Index);
+    //    data.position = self.getView(attributes.get(.position).?, [3]f32);
+    //    data.normal = self.getView(attributes.get(.normal).?, [3]f32);
+    //    data.texcoord = self.getView(attributes.get(.texcoord).?, [2]f32);
 
-        data.indices = self.getView(primitives.indices, Index);
-        data.position = self.getView(attributes.get(.position).?, [3]f32);
-        data.normal = self.getView(attributes.get(.normal).?, [3]f32);
-        data.texcoord = self.getView(attributes.get(.texcoord).?, [2]f32);
+    //    if (attributes.get(.joint)) |joint| {
+    //        data.joints = self.getView(joint, [4]u8);
+    //    }
 
-        //std.debug.print("MESH: {d}\n", .{index});
-        //std.debug.print("INDICES: {any}\n", .{data.indices});
-        //std.debug.print("POSITION: {any}\n", .{data.position});
-        //std.debug.print("NORMAL: {any}\n", .{data.normal});
-        //std.debug.print("TEXCOORD: {any}\n", .{data.texcoord});
+    //    if (attributes.get(.weight)) |weight| {
+    //        data.weights = self.getView(weight, [4]f32);
+    //    }
 
-        if (attributes.get(.joint)) |joint| {
-            data.joints = self.getView(joint, [4]u8);
-            //std.debug.print("JOINTS: {any}\n", .{data.joints});
-        }
+    //    return data;
+    //}
 
-        if (attributes.get(.weight)) |weight| {
-            data.weights = self.getView(weight, [4]f32);
-            //std.debug.print("WEIGHTS: {any}\n", .{data.weights});
-        }
-
-        return data;
-    }
-
-    fn getView(self: *Gltf, accessor_index: Index, T: type) []T {
+    fn getView(self: Gltf, accessor_index: Index, T: type) []T {
         const accessor = self.accessors[accessor_index];
         const buffer_view = self.buffer_views[accessor.buffer_view];
 
@@ -583,14 +639,15 @@ pub const Gltf = struct {
 
         try self.asset.init(self.map);
 
-        self.scenes = try Scene.initArray(self.map.get("scenes").?.array, allocator);
-        self.nodes = try Node.initArray(self.map.get("nodes").?.array, allocator);
-        self.meshes = try Mesh.initArray(self.map.get("meshes").?.array, allocator);
-        self.accessors = try Accessor.initArray(self.map.get("accessors").?.array, allocator);
+        self.scenes = try Scene.initArray(self.map.get("scenes"), allocator);
+        self.nodes = try Node.initArray(self.map.get("nodes"), allocator);
+        self.materials = try Material.initArray(self.map.get("materials"), allocator);
+        self.meshes = try Mesh.initArray(self.map.get("meshes"), allocator);
+        self.accessors = try Accessor.initArray(self.map.get("accessors"), allocator);
         self.skins = try Skin.initArray(self.map.get("skins"), allocator);
         self.animations = try Animation.initArray(self.map.get("animations"), allocator);
-        self.buffer_views = try BufferView.initArray(self.map.get("bufferViews").?.array, allocator);
-        self.buffers = try Buffer.initArray(self.map.get("buffers").?.array, dir, allocator);
+        self.buffer_views = try BufferView.initArray(self.map.get("bufferViews"), allocator);
+        self.buffers = try Buffer.initArray(self.map.get("buffers"), dir, allocator);
 
        // for (0..self.buffer_views.len) |i| {
        //     const start = self.buffer_views[i].byte_offset;
@@ -600,7 +657,7 @@ pub const Gltf = struct {
        //     //std.debug.print("CONTENT: {d} -> {any}\n", .{i, buffer.content[start..start + length]});
        // }
 
-        self.complete_nodes = try self.getCompleteNodes(allocator);
+        //self.complete_nodes = try self.getCompleteNodes(allocator);
     }
 };
 
@@ -640,6 +697,9 @@ fn compareType(T: type, accessor: Gltf.Accessor) void {
         },
         .int => |i| {
             std.debug.assert(i.bits == accessor.component_type.size());
+        },
+        .@"struct" => |s| {
+            compareType(s.fields[0].type, accessor);
         },
         else => @panic("TODO"),
     }
