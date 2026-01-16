@@ -3,6 +3,7 @@ const std = @import("std");
 pub const c = @cImport({
     @cDefine("VK_USE_PLATFORM_WAYLAND_KHR", "1");
     @cInclude("Include.h");
+    @cInclude("xkbcommon/xkbcommon.h");
 });
 
 pub const Allocator = struct {

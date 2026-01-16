@@ -10,11 +10,12 @@ layout(set = 0, binding = 0) buffer WorldTransform {
 };
 
 layout(set = 1, binding = 0) uniform ViewTransform {
+    mat4 projection;
     mat4 view;
 };
 
 void main() {
     mat4 transform = world_transforms[gl_InstanceIndex];
-    gl_Position = vec4(in_position, 1.0) * view * transform;
+    gl_Position = vec4(in_position, 1.0) * view * transform * projection;
     out_color = in_color;
 }

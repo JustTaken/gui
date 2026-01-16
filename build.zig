@@ -53,6 +53,7 @@ pub fn build(builder: *std.Build) void {
 
     util_module.addIncludePath(builder.path("Asset/Include/"));
     wayland_module.linkSystemLibrary("wayland-client", .{});
+    wayland_module.linkSystemLibrary("xkbcommon", .{});
     wayland_module.addCSourceFile(.{ .file = builder.path("Asset/Include/XdgShell.c") });
 
     const exe = builder.addExecutable(.{

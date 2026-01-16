@@ -98,6 +98,7 @@ pub const Gltf = struct {
         const Primitive = struct {
             attributes: AttributeMap,
             indices: Index,
+            material: ?Index,
 
             const AttributeMap = std.EnumMap(AttributeKind, Index);
 
@@ -107,6 +108,8 @@ pub const Gltf = struct {
                 texcoord,
                 joint,
                 weight,
+                indices,
+                material,
             };
 
             fn init(self: *Primitive, map: JsonParser.Map) !void {
@@ -115,6 +118,7 @@ pub const Gltf = struct {
                 self.attributes = AttributeMap.init(.{});
 
                 self.indices = @intCast(map.get("indices").?.int);
+                if (map.get("material")) |material| self.material = @intCast(material.int);
                 if (attributes.get("POSITION")) |position| self.attributes.put(.position, @intCast(position.int));
                 if (attributes.get("NORMAL")) |normal| self.attributes.put(.normal, @intCast(normal.int));
                 if (attributes.get("TEXCOORD_0")) |texcoord| self.attributes.put(.texcoord, @intCast(texcoord.int));
@@ -149,13 +153,68 @@ pub const Gltf = struct {
             return meshes;
         }
 
-        pub fn getIndices(self: *const Mesh, gltf: Gltf) []Index {
-            return gltf.getView(self.primitives[0].indices, Index);
+        // fn getData(self: *const Mesh, T: type, gltf: Gltf, kind: Primitive.AttributeKind, allocator: std.mem.Allocator) ![]T {
+        //     switch (kind) {
+        //         .indices => {
+        //             var array = try std.ArrayList(T).initCapacity(allocator, 100);
+        //             var len = array.len;
+
+        //             for (self.primitives) |primitive| {
+        //                 const attributes = primitive.getAttribute(.indices, gltf, Index) orelse return error.MissingAttribute;
+        //                 defer len += attributes.len;
+
+        //                 for (attributes) |index| {
+        //                     try array.append(allocator, index + len);
+        //                 }
+        //             }
+
+        //             return array.items;
+        //         },
+        //         else => return try getInvariantData(T, gltf, kind, allocator),
+        //     }
+        // }
+
+        pub fn getPrimitiveData(
+            self: *const Mesh,
+            gltf: Gltf,
+            kind: Primitive.AttributeKind,
+            allocator: std.mem.Allocator,
+        ) ![]?BufferData {
+            const primitives = try allocator.alloc(?BufferData, self.primitives.len);
+
+            for (self.primitives, 0..) |primitive, i| {
+                if (primitive.attributes.get(kind)) |attribute| {
+                    primitives[i] = gltf.getBufferData(attribute);
+                } else {
+                    primitives[i] = null;
+                }
+            }
+
+            return primitives;
         }
 
-        pub fn getPosition(self: *const Mesh, gltf: Gltf) [][3]f32 {
-            const position_index = self.primitives[0].attributes.get(.position).?;
-            return gltf.getView(position_index, [3]f32);
+        pub fn getIndices(self: *const Mesh, gltf: Gltf, allocator: std.mem.Allocator) ![]BufferData {
+            const indices = try allocator.alloc(BufferData, self.primitives.len);
+
+            for (self.primitives, 0..) |primitive, i| {
+                indices[i] = gltf.getBufferData(primitive.indices);
+            }
+
+            return indices;
+        }
+
+        pub fn getMaterials(self: *const Mesh, gltf: Gltf, allocator: std.mem.Allocator) ![]?Material {
+            const materials = try allocator.alloc(?Material, self.primitives.len);
+
+            for (self.primitives, 0..) |primitive, i| {
+                if (primitive.material) |material| {
+                    materials[i] = gltf.materials[material];
+                } else {
+                    materials[i] = null;
+                }
+            }
+
+            return materials;
         }
     };
 
@@ -222,56 +281,6 @@ pub const Gltf = struct {
         min: []u8,
         max: []u8,
 
-        const ComponentType = enum(u16) {
-            float32 = 5126,
-            int8 = 5120,
-            int16 = 5122,
-            uint8 = 5121,
-            uint16 = 5123,
-            uint32 = 5125,
-
-            fn init(int: i32) ComponentType {
-                return std.enums.fromInt(ComponentType, int).?;
-            }
-
-            fn size(self: ComponentType) u32 {
-                return switch (self) {
-                    .float32 => 32,
-                    .int8 => 8,
-                    .int16 => 16,
-                    .uint8 => 8,
-                    .uint16 => 16,
-                    .uint32 => 32,
-                };
-            }
-        };
-
-        const Kind = enum {
-            VEC2,
-            VEC3,
-            VEC4,
-            MAT2,
-            MAT3,
-            MAT4,
-            SCALAR,
-
-            fn init(string: JsonParser.String) Kind {
-                return compareEnum(Kind, string);
-            }
-
-            fn len(self: Kind) u32 {
-                return switch (self) {
-                    .SCALAR => 1,
-                    .VEC2 => 2,
-                    .VEC3 => 3,
-                    .VEC4 => 4,
-                    .MAT2 => 4,
-                    .MAT3 => 9,
-                    .MAT4 => 16,
-                };
-            }
-        };
-
         fn init(self: *Accessor, map: JsonParser.Map) !void {
             self.buffer_view = @intCast(map.get("bufferView").?.int);
             self.component_type = ComponentType.init(map.get("componentType").?.int);
@@ -291,6 +300,91 @@ pub const Gltf = struct {
             }
 
             return accessors;
+        }
+    };
+
+    pub const BufferData = struct {
+        data: []u8,
+        length: u32,
+        component_type: ComponentType,
+        kind: Kind,
+
+        pub fn into(self: BufferData, T: type) []T {
+            compareType(T, self.component_type, self.kind);
+
+            const size: u32 = @sizeOf(T) * self.length;
+
+            std.debug.assert(size == self.data.len);
+
+            const start = 0;
+            const end = size + start;
+            const view: []T = @ptrCast(@alignCast(self.data[start..end]));
+
+            std.debug.assert(view.len == self.length);
+
+            return view;
+        }
+    };
+
+    pub fn compareEnum(K: type, string: []const u8) K {
+        const FIELDS = @typeInfo(K).@"enum".fields;
+
+        inline for (FIELDS) |field| {
+            if (std.mem.eql(u8, field.name, string)) return @enumFromInt(field.value);
+        }
+
+        std.debug.print("MISSING: {s}\n", .{string});
+
+        @panic("TODO");
+    }
+
+    pub const Kind = enum {
+        VEC2,
+        VEC3,
+        VEC4,
+        MAT2,
+        MAT3,
+        MAT4,
+        SCALAR,
+
+        pub fn init(string: []const u8) Kind {
+            return compareEnum(Kind, string);
+        }
+
+        pub fn len(self: Kind) u32 {
+            return switch (self) {
+                .SCALAR => 1,
+                .VEC2 => 2,
+                .VEC3 => 3,
+                .VEC4 => 4,
+                .MAT2 => 4,
+                .MAT3 => 9,
+                .MAT4 => 16,
+            };
+        }
+    };
+
+    pub const ComponentType = enum(u16) {
+        float32 = 5126,
+        int8 = 5120,
+        int16 = 5122,
+        uint8 = 5121,
+        uint16 = 5123,
+        uint32 = 5125,
+
+        pub fn init(int: i32) ComponentType {
+            return std.enums.fromInt(ComponentType, int).?;
+        }
+
+        pub fn size(self: ComponentType) u32 {
+            return switch (self) {
+                .float32 => 4,
+                .int8 => 1,
+                .int16 => 2,
+                .uint8 => 1,
+                .uint16 => 2,
+                .uint32 => 4,
+            };
         }
     };
 
@@ -607,25 +701,45 @@ pub const Gltf = struct {
     //    return data;
     //}
 
-    fn getView(self: Gltf, accessor_index: Index, T: type) []T {
+    // fn getView(self: Gltf, accessor_index: Index, T: type) []T {
+    //     const accessor = self.accessors[accessor_index];
+    //     const buffer_view = self.buffer_views[accessor.buffer_view];
+
+    //     compareType(T, accessor);
+
+    //     const size: u32 = @sizeOf(T) * accessor.count;
+
+    //     std.debug.assert(size == buffer_view.byte_length);
+
+    //     const buffer = self.buffers[buffer_view.buffer];
+    //     const start = buffer_view.byte_offset + accessor.byte_offset;
+
+    //     const end = size + start;
+    //     const view: []T = @ptrCast(@alignCast(buffer.content[start..end]));
+
+    //     std.debug.assert(view.len == accessor.count);
+
+    //     return view;
+    // }
+
+    fn getBufferData(self: Gltf, accessor_index: Index) BufferData {
         const accessor = self.accessors[accessor_index];
         const buffer_view = self.buffer_views[accessor.buffer_view];
-
-        compareType(T, accessor);
-
-        const size: u32 = @sizeOf(T) * accessor.count;
-
-        std.debug.assert(size == buffer_view.byte_length);
-
         const buffer = self.buffers[buffer_view.buffer];
         const start = buffer_view.byte_offset + accessor.byte_offset;
 
+        var data: BufferData = undefined;
+
+        data.kind = accessor.kind;
+        data.component_type = accessor.component_type;
+        data.length = accessor.count;
+
+        const size = accessor.count * data.kind.len() * data.component_type.size();
         const end = size + start;
-        const view: []T = @ptrCast(@alignCast(buffer.content[start..end]));
 
-        std.debug.assert(view.len == accessor.count);
+        data.data = buffer.content[start..end];
 
-        return view;
+        return data;
     }
 
     pub fn init(self: *Gltf, dir_path: []const u8, path: []const u8, allocator: std.mem.Allocator) !void {
@@ -649,13 +763,13 @@ pub const Gltf = struct {
         self.buffer_views = try BufferView.initArray(self.map.get("bufferViews"), allocator);
         self.buffers = try Buffer.initArray(self.map.get("buffers"), dir, allocator);
 
-       // for (0..self.buffer_views.len) |i| {
-       //     const start = self.buffer_views[i].byte_offset;
-       //     const length = self.buffer_views[i].byte_length;
-       //     const buffer = self.buffers[self.buffer_views[i].buffer];
+        // for (0..self.buffer_views.len) |i| {
+        //     const start = self.buffer_views[i].byte_offset;
+        //     const length = self.buffer_views[i].byte_length;
+        //     const buffer = self.buffers[self.buffer_views[i].buffer];
 
-       //     //std.debug.print("CONTENT: {d} -> {any}\n", .{i, buffer.content[start..start + length]});
-       // }
+        //     //std.debug.print("CONTENT: {d} -> {any}\n", .{i, buffer.content[start..start + length]});
+        // }
 
         //self.complete_nodes = try self.getCompleteNodes(allocator);
     }
@@ -689,33 +803,24 @@ fn intoScaleMatrix(array: JsonParser.Array) Matrix(4) {
     return Matrix(4).scale(vec);
 }
 
-fn compareType(T: type, accessor: Gltf.Accessor) void {
+fn compareType(T: type, component_type: Gltf.ComponentType, kind: Gltf.Kind) void {
     switch (@typeInfo(T)) {
         .array => |a| {
-            std.debug.assert(a.len == accessor.kind.len());
-            std.debug.assert(@sizeOf(a.child) * 8 == accessor.component_type.size());
+            std.debug.assert(a.len == kind.len());
+            std.debug.assert(@sizeOf(a.child) == component_type.size());
         },
         .int => |i| {
-            std.debug.assert(i.bits == accessor.component_type.size());
+            std.debug.assert(i.bits == component_type.size() * 8);
         },
-        .@"struct" => |s| {
-            compareType(s.fields[0].type, accessor);
-        },
+        // .@"struct" => |s| {
+        //     compareType(s.fields[0].type, accessor);
+        // },
         else => @panic("TODO"),
     }
 }
 
-fn compareEnum(K: type, string: JsonParser.String) K {
-    const FIELDS = @typeInfo(K).@"enum".fields;
-
-    inline for (FIELDS) |field| {
-        if (std.mem.eql(JsonParser.Char, field.name, string)) return @enumFromInt(field.value);
-    }
-
-    @panic("TODO");
-}
-
 const JsonParser = @import("JsonParser");
-const Matrix = @import("Util").Matrix;
-const Vector = @import("Util").Vector;
+const Util = @import("Util");
+const Matrix = Util.Matrix;
+const Vector = Util.Vector;
 const std = @import("std");

@@ -25,15 +25,47 @@ const VTable = struct {
     resize: *const fn (*anyopaque, width: u32, height: u32) void,
 };
 
+const Keymap = struct {
+    context: *c.xkb_context,
+    handle: *c.xkb_keymap,
+    state: *c.xkb_state,
+
+    fn init(self: *Keymap) void {
+        self.context = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS) orelse unreachable;
+    }
+
+    fn setKeymap(self: *Keymap, string: [*c]const u8) void {
+        self.handle = c.xkb_keymap_new_from_string(self.context, string, c.XKB_KEYMAP_FORMAT_TEXT_V1, c.XKB_KEYMAP_COMPILE_NO_FLAGS,) orelse unreachable;
+        self.state = c.xkb_state_new(self.handle) orelse unreachable;
+    }
+
+    fn setModifiers(self: *Keymap, depressed: u32, latched: u32, locked: u32, group: u32) void {
+        const changed = c.xkb_state_update_mask(self.state, depressed, latched, locked, group, group, group);
+        _ = changed;
+    }
+
+    fn getSym(self: *Keymap, code: u32) u32 {
+        return c.xkb_state_key_get_one_sym(self.state, code);
+    }
+
+    fn deinit(self: *Keymap) void {
+        c.xkb_state_unref(self.state);
+        c.xkb_keymap_unref(self.handle);
+        c.xkb_context_unref(self.context);
+    }
+};
+
 const WaylandHandle = struct {
     display: ?*c.wl_display = null,
     registry: ?*c.wl_registry = null,
     compositor: ?*c.wl_compositor = null,
     surface: ?*c.wl_surface = null,
-    shm: ?*c.wl_shm = null,
+    seat: ?*c.wl_seat = null,
+    keyboard: ?*c.wl_keyboard = null,
     xdg_base: ?*c.xdg_wm_base = null,
     xdg_surface: ?*c.xdg_surface = null,
     xdg_toplevel: ?*c.xdg_toplevel = null,
+    keymap: Keymap,
     running: bool,
 
     listener_ptr: ?*anyopaque,
@@ -41,6 +73,7 @@ const WaylandHandle = struct {
 
     fn connect(self: *WaylandHandle) !void {
         self.listener_ptr = null;
+        self.keymap.init();
 
         self.display = c.wl_display_connect(null) orelse return error.Connect;
         self.registry = c.wl_display_get_registry(self.display) orelse return error.GetRegistry;
@@ -55,6 +88,11 @@ const WaylandHandle = struct {
 
         self.xdg_toplevel = c.xdg_surface_get_toplevel(self.xdg_surface) orelse return error.XdgToplevel;
         _ = c.xdg_toplevel_add_listener(self.xdg_toplevel, &xdg_toplevel_listener, self);
+
+        _ = c.wl_seat_add_listener(self.seat, &seat_listener, self);
+
+        self.keyboard = c.wl_seat_get_keyboard(self.seat) orelse return error.Keyboard;
+        _ = c.wl_keyboard_add_listener(self.keyboard, &keyboard_listener, self);
 
         c.wl_surface_commit(self.surface);
         self.running = true;
@@ -94,54 +132,24 @@ const xdg_toplevel_listener = c.xdg_toplevel_listener{
     .wm_capabilities = toplevel_wm_capabilities,
 };
 
-// fn draw(wayland: *WaylandHandle) void {
-//     const name = "/wl_shm_Gui";
-//     const flags = std.c.O{ .CREAT = true, .ACCMODE = .RDWR, .EXCL = true };
-//     const fd = std.c.shm_open(name, @bitCast(flags), 600);
+const seat_listener = c.wl_seat_listener {
+    .capabilities = seat_capabilities,
+    .name = seat_name,
+};
 
-//     if (fd > 0) {
-//         if (std.c.shm_unlink(name) != 0) @panic("FAILED TO UNLINK SHARED MEMORY");
-//     } else {
-//         @panic("FAILED TO OPEN SHARED MEMORY");
-//     }
-
-//     const stride = wayland.width * wayland.channels;
-//     const size = wayland.height * stride;
-//     _ = std.c.ftruncate(fd, size);
-
-//     const data = std.c.mmap(null, size, std.c.PROT.READ | std.c.PROT.WRITE, std.c.MAP{ .TYPE = .SHARED }, fd, 0);
-//     const pool = c.wl_shm_create_pool(wayland.shm, fd, @intCast(size));
-//     const buffer = c.wl_shm_pool_create_buffer(pool, 0, @intCast(wayland.width), @intCast(wayland.height), @intCast(stride), c.WL_SHM_FORMAT_XRGB8888);
-
-//     c.wl_shm_pool_destroy(pool);
-//     _ = std.c.close(fd);
-//     {
-//         const pixels: [*]u32 = @ptrCast(@alignCast(data));
-
-//         const w = wayland.width / 3;
-//         for (0..wayland.height) |i| {
-//             for (0..wayland.width) |j| {
-//                 const ww: u5 = @truncate(j / w);
-//                 const color = (@as(u32, 0xFF) << (ww * 8));
-
-//                 pixels[i * wayland.width + j] = 0xFF000000 | color;
-//             }
-//         }
-
-//         _ = std.c.munmap(@alignCast(data), size);
-//     }
-
-//     _ = c.wl_buffer_add_listener(buffer, &buffer_listener, wayland);
-
-//     c.wl_surface_attach(wayland.surface, buffer, 0, 0);
-// }
+const keyboard_listener = c.wl_keyboard_listener {
+    .keymap = keyboard_keymap,
+    .enter = keyboard_enter,
+    .leave = keyboard_leave,
+    .key = keyboard_key,
+    .modifiers = keyboard_modifiers,
+    .repeat_info = keyboard_repeat_info,
+};
 
 fn surface_configure(data: ?*anyopaque, surface: ?*c.xdg_surface, serial: u32) callconv(.c) void {
     const wayland: *WaylandHandle = @ptrCast(@alignCast(data.?));
     c.xdg_surface_ack_configure(surface, serial);
     c.wl_surface_commit(wayland.surface);
-
-    //draw(wayland);
 }
 
 fn buffer_release(data: ?*anyopaque, buffer: ?*c.wl_buffer) callconv(.c) void {
@@ -187,22 +195,89 @@ fn toplevel_wm_capabilities(data: ?*anyopaque, toplevel: ?*c.xdg_toplevel, capab
     _ = capabilities;
 }
 
+fn seat_capabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) callconv(.c) void {
+    _ = data;
+    _ = seat;
+    _ = capabilities;
+}
+
+fn seat_name(data: ?*anyopaque, seat: ?*c.wl_seat, name: [*c]const u8) callconv(.c) void {
+    _ = data;
+    _ = seat;
+    _ = name;
+}
+
+fn keyboard_keymap(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
+    const self: *WaylandHandle = @ptrCast(@alignCast(data.?));
+    _ = keyboard;
+
+    if (format == 0) @panic("DON'T KNOW HOW TO HANDLE RAW KEY CODES");
+
+    const ptr = std.posix.mmap(null, size, std.posix.PROT.READ, .{ .TYPE = .PRIVATE }, fd, 0) catch unreachable;
+    const content: [*c]const u8 = @ptrCast(@alignCast(ptr));
+
+    self.keymap.setKeymap(content);
+
+    //std.debug.print("DATA: {d}, {s}\n", .{fd, ptr});
+}
+
+fn keyboard_enter(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, surface: ?*c.wl_surface, keys: [*c]c.wl_array) callconv(.c) void {
+    _ = data;
+    _ = keyboard;
+    _ = surface;
+    _ = serial;
+    _ = keys;
+}
+
+fn keyboard_leave(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, surface: ?*c.wl_surface) callconv(.c) void {
+    _ = data;
+    _ = keyboard;
+    _ = serial;
+    _ = surface;
+}
+
+fn keyboard_key(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, time: u32, key: u32, state: u32) callconv(.c) void {
+    _ = keyboard;
+    _ = serial;
+    _ = time;
+    _ = state; // 0 -> release, 1 -> pressed, 2 -> repeat
+
+    const self: *WaylandHandle = @ptrCast(@alignCast(data.?));
+    const sym = self.keymap.getSym(key);
+    _ = sym;
+    //_ = key;
+}
+
+fn keyboard_modifiers(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, depressed: u32, latched: u32, locked: u32, group: u32) callconv(.c) void {
+    _ = keyboard;
+    _ = serial;
+
+    const self: *WaylandHandle = @ptrCast(@alignCast(data.?));
+    self.keymap.setModifiers(depressed, latched, locked, group);
+}
+
+fn keyboard_repeat_info(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
+    _ = data;
+    _ = keyboard;
+    _ = rate;
+    _ = delay;
+}
+
 fn registry_handle_global(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
     const wayland: *WaylandHandle = @ptrCast(@alignCast(data.?));
-
     const interface_name: []const u8 = std.mem.span(@as([*:0]const u8, interface));
 
     if (std.mem.eql(u8, interface_name, std.mem.span(@as([*:0]const u8, c.wl_compositor_interface.name)))) {
         const ptr = c.wl_registry_bind(registry, name, &c.wl_compositor_interface, version);
         wayland.compositor = @ptrCast(@alignCast(ptr.?));
-    } else if (std.mem.eql(u8, interface_name, std.mem.span(@as([*:0]const u8, c.wl_shm_interface.name)))) {
-        const ptr = c.wl_registry_bind(registry, name, &c.wl_shm_interface, version);
-        wayland.shm = @ptrCast(@alignCast(ptr.?));
     } else if (std.mem.eql(u8, interface_name, std.mem.span(@as([*:0]const u8, c.xdg_wm_base_interface.name)))) {
         const ptr = c.wl_registry_bind(registry, name, &c.xdg_wm_base_interface, version);
         wayland.xdg_base = @ptrCast(@alignCast(ptr.?));
 
         _ = c.xdg_wm_base_add_listener(wayland.xdg_base, &xdg_base_listener, wayland);
+    } else if (std.mem.eql(u8, interface_name, std.mem.span(@as([*:0]const u8, c.wl_seat_interface.name)))) {
+        const ptr = c.wl_registry_bind(registry, name, &c.wl_seat_interface, version);
+        wayland.seat = @ptrCast(@alignCast(ptr.?));
     }
 }
 

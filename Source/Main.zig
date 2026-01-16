@@ -19,11 +19,7 @@ pub const Application = struct {
 
     allocator: Allocator,
 
-    fn init(
-        width: u32,
-        height: u32,
-        allocator: std.mem.Allocator,
-    ) !*Application {
+    fn init(width: u32, height: u32, allocator: std.mem.Allocator) !*Application {
         const self = try allocator.create(Application);
 
         try self.allocator.init(50, 100, allocator);
@@ -39,19 +35,18 @@ pub const Application = struct {
         self.buffers[0] = try self.vulkan.addPublicBuffer(Transform, .storage, 1);
         self.sets[0] = try self.vulkan.addDescriptorSet(0);
 
-        try self.buffers[0].append(Transform, &self.vulkan, &.{getTransform(width, height)});
+        try self.buffers[0].append(Transform, &self.vulkan, &.{.{ .transform = Matrix(4).scale(Vector(4).init(.{ 1.0, 1.0, 1.0, 1 })) }});
         try self.sets[0].update(&self.vulkan, try self.buffers[0].range(0, null), 0);
 
-        self.buffers[1] = try self.vulkan.addPublicBuffer(View, .uniform, 1);
+        self.buffers[1] = try self.vulkan.addPublicBuffer(World, .uniform, 1);
         self.sets[1] = try self.vulkan.addDescriptorSet(1);
 
-        try self.buffers[1].append(View, &self.vulkan, &.{getView()});
+        try self.buffers[1].append(World, &self.vulkan, &.{getWorld(width, height)});
         try self.sets[1].update(&self.vulkan, try self.buffers[1].range(0, null), 0);
 
-        const vertices = try getVertices(gltf, self.allocator.tmp);
-        const indices = try getIndices(gltf, self.allocator.tmp);
+        const data = try getVertices(gltf, &self.allocator);
 
-        self.render = try self.vulkan.addRenderGroup(vertices, indices, &.{ self.sets[0], self.sets[1] });
+        self.render = try self.vulkan.addRenderGroup(data.vertices, data.indices, &.{ self.sets[0], self.sets[1] });
         self.wayland.setListener(self, .{ .resize = resize });
 
         return self;
@@ -68,71 +63,69 @@ pub const Application = struct {
 
     fn resize(ptr: *anyopaque, width: u32, height: u32) void {
         const self: *Application = @ptrCast(@alignCast(ptr));
-        const world_transform = getTransform(width, height);
+        const world_transform = getWorld(width, height);
 
-        self.buffers[0].clear();
-        self.buffers[0].append(Transform, &self.vulkan, &.{world_transform}) catch @panic("RESIZE BUFFER");
+        self.buffers[1].clear();
+        self.buffers[1].append(World, &self.vulkan, &.{world_transform}) catch @panic("RESIZE BUFFER");
 
-        const range = self.buffers[0].range(0, null) catch @panic("OUT OF BOUNDS");
+        const range = self.buffers[1].range(0, null) catch @panic("OUT OF BOUNDS");
 
-        self.vulkan.updateDescriptorSet(self.sets[0], range, 0);
+        self.vulkan.updateDescriptorSet(self.sets[1], range, 0);
         self.vulkan.changeRenderSize(width, height) catch @panic("RESIZE RENDERER");
     }
 };
 
-fn getVertices(gltf: GltfParser.Gltf, allocator: std.mem.Allocator) ![]Vertex {
+const MeshData = struct {
+    vertices: []Vertex,
+    indices: []u16,
+};
+
+fn getVertices(gltf: GltfParser.Gltf, allocator: *Allocator) !MeshData {
     const mesh = gltf.meshes[0];
-    const position = mesh.getPosition(gltf);
+    const position_data = try mesh.getPrimitiveData(gltf, .position, allocator.tmp);
+    const index_data = try mesh.getIndices(gltf, allocator.tmp);
+    const material_data = try mesh.getMaterials(gltf, allocator.tmp);
 
-    const vertices = try allocator.alloc(Vertex, position.len);
+    var vertex = try std.ArrayList(Vertex).initCapacity(allocator.tmp, 100);
+    var index = try std.ArrayList(u16).initCapacity(allocator.tmp, 100);
 
-    for (0..position.len) |i| {
-        vertices[i] = .{
-            .position = .{ position[i][0], position[i][1], position[i][2] },
-            .color = .{ 1, 1, 1 },
-        };
+    var position_elements: usize = 0;
+    for (0..mesh.primitives.len) |i| {
+        const color: [4]f32 = material_data[i].?.pbr_metallic_roughness.base_color_factor;
+        const positions = position_data[i].?.into([3]f32);
+        const indices = index_data[i].into(u16);
+
+        for (0..positions.len) |j| {
+            try vertex.append(allocator.tmp, .{
+                .position = .{ positions[j][0], positions[j][1], positions[j][2] },
+                .color = .{ color[0], color[1], color[2] },
+            });
+        }
+
+        for (0..indices.len) |j| {
+            try index.append(allocator.tmp, @intCast(indices[j] + position_elements));
+        }
+
+        position_elements += positions.len;
     }
 
-    return vertices;
+    return .{
+        .vertices = vertex.items,
+        .indices = index.items,
+    };
 }
 
-fn getIndices(gltf: GltfParser.Gltf, allocator: std.mem.Allocator) ![]u16 {
-    const mesh_indices = gltf.meshes[0].getIndices(gltf);
-    const indices = try allocator.alloc(u16, mesh_indices.len);
+fn getWorld(width: u32, height: u32) World {
+    const quaternion = Quaternion.init(Vector(3).init(.{ 1, 0, 0 }), -std.math.pi / 1.0);
 
-    for (0..mesh_indices.len) |i| {
-        indices[i] = mesh_indices[i];
-    }
-
-    return indices;
-}
-
-fn getTransform(width: u32, height: u32) Transform {
     const w: f32 = @floatFromInt(width);
     const h: f32 = @floatFromInt(height);
 
     const a: f32 = h / w;
-    const matrix = Matrix(4).scale(Vector(4).init(.{ a, 1, 1.0 / 10.0 + 0.1, 1 }));
 
     return .{
-        .transform = matrix,
-    };
-}
-
-fn getView() View {
-    const length = 1.0 / 1.41;
-    const quaternion = Quaternion.init(Vector(3).init(.{ length, length, 0 }), std.math.pi / 2.0);
-    const matrix = quaternion.matrix();
-
-    // for (0..4) |i| {
-    //     for (0..4) |j| {
-    //         std.debug.print("{d} ", .{matrix.items[i * 4 + j]});
-    //     }
-    //     std.debug.print("\n", .{});
-    // }
-
-    return .{
-        .transform = matrix,
+        .view = quaternion.matrix(),
+        .projection = Matrix(4).scale(Vector(4).init(.{ a, -1.0, 1.0 / 10.0 + 0.1, 1 })),
     };
 }
 
@@ -140,8 +133,9 @@ pub const Transform = struct {
     transform: Matrix(4),
 };
 
-pub const View = struct {
-    transform: Matrix(4),
+pub const World = struct {
+    view: Matrix(4),
+    projection: Matrix(4),
 };
 
 const std = @import("std");
