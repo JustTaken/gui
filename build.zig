@@ -10,8 +10,8 @@ pub fn build(builder: *std.Build) void {
 		.optimize = optimize,
 	});
 
-	const wayland_writer_module = builder.addModule("wayland_writer", .{
-		.root_source_file = builder.path("wayland/writer.zig"),
+	const wayland_generator_module = builder.addModule("wayland_generator", .{
+		.root_source_file = builder.path("wayland/generator.zig"),
 		.target = target,
 		.optimize = optimize,
 		.imports = &.{
@@ -20,31 +20,30 @@ pub fn build(builder: *std.Build) void {
 	});
 
 	const module = builder.addModule("exe", .{
-		.root_source_file = builder.path("src/main.zig"),
+		.root_source_file = builder.path("wayland/root.zig"),
 		.target = target,
 		.optimize = optimize,
+		.link_libc = true,
 		.imports = &.{
 			.{ .name = "xml", .module = xml_module },
 		},
 	});
 
-	const wayland_writer_exe = builder.addExecutable(.{
-		.name = "wayland_writer",
-		.root_module = wayland_writer_module,
+	const wayland_generator_exe = builder.addExecutable(.{
+		.name = "wayland_generator",
+		.root_module = wayland_generator_module,
 	});
 
-	const wayland_writer_step = builder.step("make", "Build wayland protocol from xml");
-	const run_wayland_writer = builder.addRunArtifact(wayland_writer_exe);
+	const wayland_generator_step = builder.step("make", "Build wayland protocol from xml");
+	const run_wayland_generator = builder.addRunArtifact(wayland_generator_exe);
 
-	wayland_writer_step.dependOn(&run_wayland_writer.step);
-	run_wayland_writer.step.dependOn(builder.getInstallStep());
+	wayland_generator_step.dependOn(&run_wayland_generator.step);
+	run_wayland_generator.step.dependOn(builder.getInstallStep());
 
 	const exe = builder.addExecutable(.{
 		.name = "exe",
 		.root_module = module,
 	});
-
-//  builder.installArtifact(exe);
 
 	const run_step = builder.step("run", "Run the app");
 	const run_cmd = builder.addRunArtifact(exe);
