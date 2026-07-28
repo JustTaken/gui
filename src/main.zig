@@ -1,16 +1,23 @@
 const std = @import("std");
-const xml = @import("xml");
+const wayland = @import("wayland");
+const Allocator = @import("util").Allocator;
+
+const Protocol = wayland.Protocol(Context);
+
+const Context = struct {
+	protocol: Protocol,
+};
 
 pub fn main() !void {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	const gpa_allocator = gpa.allocator();
-	const gpa_bytes = try gpa_allocator.alloc(u8, 1024 * 1024);
-
 	defer _ = gpa.deinit();
-	defer gpa_allocator.free(gpa_bytes);
 
-	var fixed_buffer = std.heap.FixedBufferAllocator.init(gpa_bytes);
+	const gpa_allocator = gpa.allocator();
 
-	const parser = try xml.Parser.parse(fixed_buffer.allocator(), "asset/wayland_protocol/xdg_shell.xml");
-	_ = parser;
+	const allocator = try Allocator.init(10, 10, gpa_allocator);
+	defer allocator.deinit(gpa_allocator);
+
+	const context = try allocator.main.create(Context);
+	try Protocol.init(allocator, context);
 }
+

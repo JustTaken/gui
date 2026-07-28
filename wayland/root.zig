@@ -1,9 +1,6 @@
 const std = @import("std");
 const Interface = @import("interface.zig");
-
-const wl = Interface.Wl(Context);
-const xdg = Interface.Xdg(Context);
-const zwp = Interface.Zwp(Context);
+const Allocator = @import("util").Allocator;
 
 const c = @cImport({
     @cInclude("sys/socket.h");
@@ -27,24 +24,6 @@ pub const UnboundedNewId = struct {
 	id: Id,
 };
 
-const Context = struct {
-	protocol: Protocol(Context),
-};
-
-pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	const gpa_allocator = gpa.allocator();
-	const gpa_bytes = try gpa_allocator.alloc(u8, 1024 * 1024);
-
-	defer _ = gpa.deinit();
-	defer gpa_allocator.free(gpa_bytes);
-	var fixed_buffer = std.heap.FixedBufferAllocator.init(gpa_bytes);
-	const allocator = fixed_buffer.allocator();
-
-	const context = try allocator.create(Context);
-	try Protocol(Context).init(allocator, context);
-}
-
 pub fn Protocol(T: type) type {
 	return struct {
 		functions: std.ArrayList(Function),
@@ -54,19 +33,29 @@ pub fn Protocol(T: type) type {
 		writer: Writer,
 		reader: Reader,
 		socket: std.posix.socket_t,
-		allocator: std.mem.Allocator,
+
+		display: *wl.Display,
+		registry: *wl.Registry,
+		wm_base: *xdg.WmBase,
+		compositor: *wl.Compositor,
+		seat: *wl.Seat,
+		dma: *zwp.LinuxDmabufV1,
+
+		const wl = Interface.Wl(T);
+		const xdg = Interface.Xdg(T);
+		const zwp = Interface.Zwp(T);
 
 		const Function = *const fn (*anyopaque, *T, buffer: *Reader) void;
 
 		const Self = @This();
 
-		pub fn init(allocator: std.mem.Allocator, context: *T) !void {
-			const env_map = try std.process.getEnvMap(allocator);
+		pub fn init(allocator: *Allocator, context: *T) !void {
+			const env_map = try std.process.getEnvMap(allocator.tmp);
 
 			const xdg_path = env_map.get("XDG_RUNTIME_DIR") orelse return error.EnvFailed;
 			const wayland_display = env_map.get("WAYLAND_DISPLAY") orelse return error.DisplayFailed;
 
-			const path = try std.fs.path.join(allocator, &.{xdg_path, wayland_display});
+			const path = try std.fs.path.join(allocator.tmp, &.{xdg_path, wayland_display});
 
 			const socket = try std.posix.socket(std.c.AF.UNIX, std.c.SOCK.STREAM, 0);
 			defer std.posix.close(socket);
@@ -80,45 +69,61 @@ pub fn Protocol(T: type) type {
 
 			try std.posix.connect(socket, @ptrCast(@alignCast(&sockaddr)), @sizeOf(std.posix.sockaddr.un));
 
-			context.protocol = .{
-				.functions = try std.ArrayList(Function).initCapacity(allocator, 50),
-				.ptrs = try std.ArrayList(*anyopaque).initCapacity(allocator, 50),
-				.in_fds = try std.ArrayList(Fd).initCapacity(allocator, 10),
-				.out_fds = try std.ArrayList(Fd).initCapacity(allocator, 10),
-				.writer = Writer.init(try allocator.alloc(u8, 4096)),
-				.reader = Reader.init(try allocator.alloc(u8, 4096)),
-				.socket = socket,
-				.allocator = allocator,
-			};
-
-			const display = try context.protocol.alloc(wl.Display);
+			const display = try allocator.main.create(wl.Display);
+			const registry = try allocator.main.create(wl.Registry);
+			const wm_base = try allocator.main.create(xdg.WmBase);
+			const compositor = try allocator.main.create(wl.Compositor);
+			const seat = try allocator.main.create(wl.Seat);
+			const dma = try allocator.main.create(zwp.LinuxDmabufV1);
 
 			display.error_callback = display_error;
 			display.delete_id_callback = display_delete_id;
 
-			const registry = try context.protocol.alloc(wl.Registry);
-
 			registry.global_callback = registry_global;
 			registry.global_remove_callback = registry_global_remove;
 
+			wm_base.ping_callback = wm_base_ping;
+
+			seat.capabilities_callback = seat_capabilities;
+			seat.name_callback = seat_name;
+
+			dma.format_callback = linux_dmabuf_v1_format;
+			dma.modifier_callback = linux_dmabuf_v1_modifier;
+
+			context.protocol = .{
+				.functions = try std.ArrayList(Function).initCapacity(allocator.main, 100),
+				.ptrs = try std.ArrayList(*anyopaque).initCapacity(allocator.main, 50),
+				.in_fds = try std.ArrayList(Fd).initCapacity(allocator.main, 10),
+				.out_fds = try std.ArrayList(Fd).initCapacity(allocator.main, 10),
+				.writer = Writer.init(try allocator.main.alloc(u8, 4096)),
+				.reader = Reader.init(try allocator.main.alloc(u8, 4096)),
+				.socket = socket,
+				.display = display,
+				.registry = registry,
+				.wm_base = wm_base,
+				.compositor = compositor,
+				.seat = seat,
+				.dma = dma,
+			};
+
+			try context.protocol.alloc(wl.Display, display);
+			try context.protocol.alloc(wl.Registry, registry);
+
 			display.get_registry_request(&context.protocol.writer, registry.id);
 
-			try context.protocol.send_message();
-			try context.protocol.read_message(context);
-			try context.protocol.send_message();
+			try context.protocol.send_message(allocator);
+			try context.protocol.read_message(allocator, context);
+			try context.protocol.send_message(allocator);
 		}
 
-		pub fn alloc(self: *Self, K: type) !*K {
-			const ptr = try self.allocator.create(K);
-			ptr.id = @intCast(self.ptrs.items.len + 1);
+		pub fn alloc(self: *Self, K: type, item: *K) !void {
+			item.id = @intCast(self.ptrs.items.len + 1);
 
-			try self.functions.append(self.allocator, K.event);
-			try self.ptrs.append(self.allocator, ptr);
-
-			return ptr;
+			try self.functions.appendBounded(K.event);
+			try self.ptrs.appendBounded(item);
 		}
 
-		pub fn read_message(self: *Self, payload: *T) !void {
+		pub fn read_message(self: *Self, allocator: *Allocator, payload: *T) !void {
 			var io = std.posix.iovec {
 				.base = self.reader.data[self.reader.offset..].ptr,
 				.len = @intCast(self.reader.data.len - self.reader.offset),
@@ -127,7 +132,7 @@ pub fn Protocol(T: type) type {
 			const fd_align = std.mem.alignForward(usize, @sizeOf(Fd) * self.in_fds.capacity / 2, @sizeOf(usize));
 			const cmsg_align = std.mem.alignForward(usize, @sizeOf(cmsghdr), @sizeOf(usize));
 
-			var header = Writer.init(try self.allocator.alloc(u8, cmsg_align + fd_align));
+			var header = Writer.init(try allocator.tmp.alignedAlloc(u8, .of(cmsghdr), cmsg_align + fd_align));
 			const ioptr: *[1]std.posix.iovec = &io;
 
 			var msg = std.posix.msghdr {
@@ -152,13 +157,13 @@ pub fn Protocol(T: type) type {
 				const fd_ptrs: [*]Fd = @ptrCast(@alignCast(header.data[msg_header_size..msg_header_size + @sizeOf(Fd) * fd_count].ptr));
 				const fds = fd_ptrs[0..fd_count];
 
-				try self.in_fds.appendSlice(self.allocator, fds);
+				try self.in_fds.appendSlice(allocator.main, fds);
 			}
 
 			while (try self.decode(payload)) {}
 		}
 
-		pub fn send_message(self: *Self) !void {
+		pub fn send_message(self: *Self, allocator: *Allocator) !void {
 			if (self.writer.offset == 0) {
 				return;
 			}
@@ -176,7 +181,7 @@ pub fn Protocol(T: type) type {
 			cmsg.type = c.SCM_RIGHTS;
 			cmsg.level = c.SOL_SOCKET;
 
-			var header = Writer.init(try self.allocator.alloc(u8, 1024));
+			var header = Writer.init(try allocator.tmp.alloc(u8, 1024));
 			header.write_raw(cmsghdr, cmsg);
 			header.padd(cmsg_align - @sizeOf(cmsghdr));
 			header.append(Fd, self.out_fds.items);
@@ -202,7 +207,6 @@ pub fn Protocol(T: type) type {
 
 		fn decode(self: *Self, payload: *T) !bool {
 			if (self.reader.size <= @sizeOf(usize) + self.reader.offset) return false;
-			//std.debug.print("{any}\n", .{self.reader.data[0..self.reader.offset]});
 
 			const obj = self.reader.read_object() - 1;
 
@@ -212,6 +216,84 @@ pub fn Protocol(T: type) type {
 
 			self.functions.items[obj](self.ptrs.items[obj], payload, &self.reader);
 			return true;
+		}
+
+		fn display_error(context: *T, display: *wl.Display, object: Object, code: Uint, message: String) void {
+			std.debug.print("display_error\n", .{});
+			_ = context;
+			_ = display;
+			_ = object;
+			_ = code;
+			_ = message;
+
+			std.debug.print("An error has occured\n", .{});	
+		}
+
+		fn display_delete_id(context: *T, display: *wl.Display, id: Uint) void {
+			std.debug.print("display_delete_id\n", .{});
+			_ = context;
+			_ = display;
+			_ = id;
+		}
+
+		fn registry_global(context: *T, registry: *wl.Registry, name: Uint, interface: String, version: Uint) void {
+			// std.debug.print("hello global: name: {d}, version: {d}, interface: {s} -> ", .{name, version, interface});
+
+			if (std.mem.eql(u8, interface, xdg.WmBase.interface_name)) {
+				context.protocol.alloc(xdg.WmBase, context.protocol.wm_base) catch @panic("OUT OF MEMORY");
+				registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = context.protocol.wm_base.id, .version = version});
+			} else if (std.mem.eql(u8, interface, wl.Compositor.interface_name)) {
+				context.protocol.alloc(wl.Compositor, context.protocol.compositor) catch @panic("OUT OF MEMORY");
+				registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = context.protocol.compositor.id, .version = version});
+			} else if (std.mem.eql(u8, interface, wl.Seat.interface_name)) {
+				context.protocol.alloc(wl.Seat, context.protocol.seat) catch @panic("OUT OF MEMORY");
+				registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = context.protocol.seat.id, .version = version});
+			} else if (std.mem.eql(u8, interface, zwp.LinuxDmabufV1.interface_name)) {
+				context.protocol.alloc(zwp.LinuxDmabufV1, context.protocol.dma) catch @panic("OUT OF MEMORY");
+				registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = context.protocol.dma.id, .version = version});
+			}
+		}
+
+		fn registry_global_remove(context: *T, registry: *wl.Registry, name: Uint) void {
+			std.debug.print("registry_global_remove\n", .{});
+			_ = context;
+			_ = registry;
+			_ = name;
+		}
+
+		fn wm_base_ping(context: *T, wm_base: *xdg.WmBase, serial: Uint) void {
+			std.debug.print("wm_base_ping\n", .{});
+			wm_base.pong_request(&context.protocol.writer, serial);
+		}
+
+		fn seat_capabilities(context: *T, seat: *wl.Seat, capabilities: Uint) void {
+			std.debug.print("seat_capabilities\n", .{});
+			_ = context;
+			_ = seat;
+			_ = capabilities;
+		}
+
+		fn seat_name(context: *T, seat: *wl.Seat, name: String) void {
+			std.debug.print("seat_name\n", .{});
+			_ = context;
+			_ = seat;
+			_ = name;
+		}
+
+		fn linux_dmabuf_v1_format(context: *T, linux_dmabuf_v1: *zwp.LinuxDmabufV1, format: Uint) void {
+			std.debug.print("linux_dmabuf_v1_format\n", .{});
+			_ = context;
+			_ = linux_dmabuf_v1;
+			_ = format;
+		}
+
+		fn linux_dmabuf_v1_modifier(context: *T, linux_dmabuf_v1: *zwp.LinuxDmabufV1, format: Uint, modifier_hi: Uint, modifier_lo: Uint) void {
+			std.debug.print("linux_dmabuf_v1_modifier\n", .{});
+			_ = context;
+			_ = linux_dmabuf_v1;
+			_ = format;
+			_ = modifier_hi;
+			_ = modifier_lo;
 		}
 	};
 }
@@ -377,99 +459,6 @@ pub const Writer = struct {
 	}
 };
 
-fn display_error(context: *Context, display: *wl.Display, object: Object, code: Uint, message: String) void {
-	std.debug.print("display_error\n", .{});
-	_ = context;
-	_ = display;
-	_ = object;
-	_ = code;
-	_ = message;
-
-	std.debug.print("An error has occured\n", .{});	
-}
-
-fn display_delete_id(context: *Context, display: *wl.Display, id: Uint) void {
-	std.debug.print("display_delete_id\n", .{});
-	_ = context;
-	_ = display;
-	_ = id;
-}
-
-fn registry_global(context: *Context, registry: *wl.Registry, name: Uint, interface: String, version: Uint) void {
-	//std.debug.print("registry_global\n", .{});
-	//std.debug.print("hello global: name: {d}, version: {d}, interface: {s} -> ", .{name, version, interface});
-
-	// xdg_wm_base
-	// wl_compositor
-	// wl_seat
-	// zwp_linux_dmabuf_v1
-
-	if (std.mem.eql(u8, interface, xdg.WmBase.interface_name)) {
-		const wm_base = context.protocol.alloc(xdg.WmBase) catch @panic("OUT OF MEMORY");
-		wm_base.ping_callback = wm_base_ping;
-		registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = wm_base.id, .version = version});
-	} else if (std.mem.eql(u8, interface, wl.Compositor.interface_name)) {
-		const compositor = context.protocol.alloc(wl.Compositor) catch @panic("OUT OF MEMORY");
-		registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = compositor.id, .version = version});
-	} else if (std.mem.eql(u8, interface, wl.Seat.interface_name)) {
-		const seat = context.protocol.alloc(wl.Seat) catch @panic("OUT OF MEMORY");
-		seat.capabilities_callback = seat_capabilities;
-		seat.name_callback = seat_name;
-		registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = seat.id, .version = version});
-	} else if (std.mem.eql(u8, interface, zwp.LinuxDmabufV1.interface_name)) {
-		const dma = context.protocol.alloc(zwp.LinuxDmabufV1) catch @panic("OUT OF MEMORY");
-		dma.format_callback = linux_dmabuf_v1_format;
-		dma.modifier_callback = linux_dmabuf_v1_modifier;
-		registry.bind_request(&context.protocol.writer, name, .{.interface = interface, .id = dma.id, .version = version});
-	} else {
-		std.debug.print("NOT BOUND\n", .{});
-		return;
-	}
-
-	std.debug.print("BOUND\n", .{});
-}
-
-fn registry_global_remove(context: *Context, registry: *wl.Registry, name: Uint) void {
-	std.debug.print("registry_global_remove\n", .{});
-	_ = context;
-	_ = registry;
-	_ = name;
-}
-
-fn wm_base_ping(context: *Context, wm_base: *xdg.WmBase, serial: Uint) void {
-	std.debug.print("wm_base_ping\n", .{});
-	wm_base.pong_request(&context.protocol.writer, serial);
-}
-
-fn seat_capabilities(context: *Context, seat: *wl.Seat, capabilities: Uint) void {
-	std.debug.print("seat_capabilities\n", .{});
-	_ = context;
-	_ = seat;
-	_ = capabilities;
-}
-
-fn seat_name(context: *Context, seat: *wl.Seat, name: String) void {
-	std.debug.print("seat_name\n", .{});
-	_ = context;
-	_ = seat;
-	_ = name;
-}
-
-fn linux_dmabuf_v1_format(context: *Context, linux_dmabuf_v1: *zwp.LinuxDmabufV1, format: Uint) void {
-	std.debug.print("linux_dmabuf_v1_format\n", .{});
-	_ = context;
-	_ = linux_dmabuf_v1;
-	_ = format;
-}
-
-fn linux_dmabuf_v1_modifier(context: *Context, linux_dmabuf_v1: *zwp.LinuxDmabufV1, format: Uint, modifier_hi: Uint, modifier_lo: Uint) void {
-	std.debug.print("linux_dmabuf_v1_modifier\n", .{});
-	_ = context;
-	_ = linux_dmabuf_v1;
-	_ = format;
-	_ = modifier_hi;
-	_ = modifier_lo;
-}
 
 const cmsghdr = extern struct {
 	len: usize,
@@ -477,5 +466,3 @@ const cmsghdr = extern struct {
 	type: i32,
 };
 
-// object, opcode, size, name, interface, version
-// u32, u16, u16, u32, string, u32

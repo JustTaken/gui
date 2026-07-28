@@ -4,10 +4,20 @@ pub fn build(builder: *std.Build) void {
 	const target = builder.standardTargetOptions(.{});
 	const optimize = builder.standardOptimizeOption(.{});
 
+	const util_module = builder.addModule("util", .{
+		.root_source_file = builder.path("util/root.zig"),
+		.target = target,
+		.optimize = optimize,
+		.link_libc = true,
+	});
+
 	const xml_module = builder.addModule("xml", .{
 		.root_source_file = builder.path("xml/root.zig"),
 		.target = target,
 		.optimize = optimize,
+		.imports = &.{
+			.{ .name = "util", .module = util_module },
+		},
 	});
 
 	const wayland_generator_module = builder.addModule("wayland_generator", .{
@@ -19,13 +29,36 @@ pub fn build(builder: *std.Build) void {
 		},
 	});
 
-	const module = builder.addModule("exe", .{
+	const wayland_module = builder.addModule("wayland", .{
 		.root_source_file = builder.path("wayland/root.zig"),
 		.target = target,
 		.optimize = optimize,
 		.link_libc = true,
 		.imports = &.{
 			.{ .name = "xml", .module = xml_module },
+			.{ .name = "util", .module = util_module },
+		},
+	});
+
+	const vulkan_module = builder.addModule("vulkan", .{
+		.root_source_file = builder.path("vulkan/root.zig"),
+		.target = target,
+		.optimize = optimize,
+		.link_libc = true,
+		.imports = &.{
+			.{ .name = "util", .module = util_module },
+		},
+	});
+
+	const module = builder.addModule("exe", .{
+		.root_source_file = builder.path("src/main.zig"),
+		.target = target,
+		.optimize = optimize,
+		.link_libc = true,
+		.imports = &.{
+			.{ .name = "util", .module = util_module },
+			.{ .name = "wayland", .module = wayland_module },
+			.{ .name = "vulkan", .module = vulkan_module },
 		},
 	});
 
