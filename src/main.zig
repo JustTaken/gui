@@ -1,11 +1,14 @@
 const std = @import("std");
 const wayland = @import("wayland");
+const vulkan = @import("vulkan");
 const Allocator = @import("util").Allocator;
 
-const Protocol = wayland.Protocol(Context);
+const Wayland = wayland.Wayland(Context);
+const Vulkan = vulkan.Vulkan;
 
 const Context = struct {
-	protocol: Protocol,
+	//wayland: Wayland,
+	vulkan: Vulkan,
 };
 
 pub fn main() !void {
@@ -14,10 +17,14 @@ pub fn main() !void {
 
 	const gpa_allocator = gpa.allocator();
 
-	const allocator = try Allocator.init(10, 10, gpa_allocator);
+	const allocator = try Allocator.init(20, 20, gpa_allocator);
 	defer allocator.deinit(gpa_allocator);
 
-	const context = try allocator.main.create(Context);
-	try Protocol.init(allocator, context);
+	const width: usize = 400;
+	const height: usize = 400;
+
+	_ = try allocator.main.create(Context);
+	// _ = try Vulkan.init(allocator, width, height);
+	_ = try Wayland.init(allocator, width, height);
 }
 

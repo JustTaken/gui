@@ -1,3 +1,5 @@
+// guix shell zig gcc vulkan-loader vulkan-validationlayers mesa pkg-config
+// LD_LIBRARY_PATH=$(pkg-config --variable=libdir vulkan) zig build run
 const std = @import("std");
 
 pub fn build(builder: *std.Build) void {
@@ -77,6 +79,8 @@ pub fn build(builder: *std.Build) void {
 		.name = "exe",
 		.root_module = module,
 	});
+
+	builder.installArtifact(exe);
 
 	const run_step = builder.step("run", "Run the app");
 	const run_cmd = builder.addRunArtifact(exe);

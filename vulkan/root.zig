@@ -9,6 +9,12 @@ const INSTANCE_EXTENSIONS: []const [*c]const u8 = &.{
 	"VK_KHR_wayland_surface",
 };
 
+const DEVICE_EXTENSIONS: []const [*c]const u8 = &.{
+  "VK_KHR_external_memory_fd",
+  "VK_EXT_external_memory_dma_buf",
+  "VK_EXT_image_drm_format_modifier",
+};
+
 const LibraryPointers = struct {
 	vkEnumerateInstanceLayerProperties: @typeInfo(c.PFN_vkEnumerateInstanceLayerProperties).optional.child,
 	vkCreateInstance: @typeInfo(c.PFN_vkCreateInstance).optional.child,
@@ -20,7 +26,7 @@ const InstancePointers = struct {
 	vkGetPhysicalDeviceProperties: @typeInfo(c.PFN_vkGetPhysicalDeviceProperties).optional.child,
 	vkGetPhysicalDeviceQueueFamilyProperties: @typeInfo(c.PFN_vkGetPhysicalDeviceQueueFamilyProperties).optional.child,
 	vkGetPhysicalDeviceSurfaceSupportKHR: @typeInfo(c.PFN_vkGetPhysicalDeviceSurfaceSupportKHR).optional.child,
-	vkCreateWaylandSurfaceKHR: @typeInfo(c.PFN_vkCreateWaylandSurfaceKHR).optional.child,
+	//vkCreateWaylandSurfaceKHR: @typeInfo(c.PFN_vkCreateWaylandSurfaceKHR).optional.child,
 	vkGetPhysicalDeviceFeatures2: @typeInfo(c.PFN_vkGetPhysicalDeviceFeatures2).optional.child,
 	vkEnumerateDeviceExtensionProperties: @typeInfo(c.PFN_vkEnumerateDeviceExtensionProperties).optional.child,
 	vkGetPhysicalDeviceMemoryProperties: @typeInfo(c.PFN_vkGetPhysicalDeviceMemoryProperties).optional.child,
@@ -28,6 +34,8 @@ const InstancePointers = struct {
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR: @typeInfo(c.PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR).optional.child,
 	vkGetPhysicalDeviceSurfaceFormatsKHR: @typeInfo(c.PFN_vkGetPhysicalDeviceSurfaceFormatsKHR).optional.child,
 	vkGetDeviceProcAddr: @typeInfo(c.PFN_vkGetDeviceProcAddr).optional.child,
+	vkGetPhysicalDeviceFormatProperties2: @typeInfo(c.PFN_vkGetPhysicalDeviceFormatProperties2).optional.child,
+	vkGetPhysicalDeviceImageFormatProperties2: @typeInfo(c.PFN_vkGetPhysicalDeviceImageFormatProperties2).optional.child,
 };
 
 const DevicePointers = struct {
@@ -39,9 +47,9 @@ const DevicePointers = struct {
 	vkBindBufferMemory: @typeInfo(c.PFN_vkBindBufferMemory).optional.child,
 	vkMapMemory: @typeInfo(c.PFN_vkMapMemory).optional.child,
 	vkUnmapMemory: @typeInfo(c.PFN_vkUnmapMemory).optional.child,
-	vkCreateSwapchainKHR: @typeInfo(c.PFN_vkCreateSwapchainKHR).optional.child,
-	vkDestroySwapchainKHR: @typeInfo(c.PFN_vkDestroySwapchainKHR).optional.child,
-	vkGetSwapchainImagesKHR: @typeInfo(c.PFN_vkGetSwapchainImagesKHR).optional.child,
+	// vkCreateSwapchainKHR: @typeInfo(c.PFN_vkCreateSwapchainKHR).optional.child,
+	// vkDestroySwapchainKHR: @typeInfo(c.PFN_vkDestroySwapchainKHR).optional.child,
+	// vkGetSwapchainImagesKHR: @typeInfo(c.PFN_vkGetSwapchainImagesKHR).optional.child,
 	vkCreateImageView: @typeInfo(c.PFN_vkCreateImageView).optional.child,
 	vkDestroyImageView: @typeInfo(c.PFN_vkDestroyImageView).optional.child,
 	vkCreatePipelineLayout: @typeInfo(c.PFN_vkCreatePipelineLayout).optional.child,
@@ -52,7 +60,7 @@ const DevicePointers = struct {
 	vkAllocateCommandBuffers: @typeInfo(c.PFN_vkAllocateCommandBuffers).optional.child,
 	vkCreateFence: @typeInfo(c.PFN_vkCreateFence).optional.child,
 	vkCreateSemaphore: @typeInfo(c.PFN_vkCreateSemaphore).optional.child,
-	vkAcquireNextImageKHR: @typeInfo(c.PFN_vkAcquireNextImageKHR).optional.child,
+	// vkAcquireNextImageKHR: @typeInfo(c.PFN_vkAcquireNextImageKHR).optional.child,
 	vkWaitForFences: @typeInfo(c.PFN_vkWaitForFences).optional.child,
 	vkResetFences: @typeInfo(c.PFN_vkResetFences).optional.child,
 	vkBeginCommandBuffer: @typeInfo(c.PFN_vkBeginCommandBuffer).optional.child,
@@ -65,7 +73,7 @@ const DevicePointers = struct {
 	vkCmdEndRendering: @typeInfo(c.PFN_vkCmdEndRendering).optional.child,
 	vkEndCommandBuffer: @typeInfo(c.PFN_vkEndCommandBuffer).optional.child,
 	vkQueueSubmit: @typeInfo(c.PFN_vkQueueSubmit).optional.child,
-	vkQueuePresentKHR: @typeInfo(c.PFN_vkQueuePresentKHR).optional.child,
+	// vkQueuePresentKHR: @typeInfo(c.PFN_vkQueuePresentKHR).optional.child,
 	vkCmdPipelineBarrier2: @typeInfo(c.PFN_vkCmdPipelineBarrier2).optional.child,
 	vkQueueWaitIdle: @typeInfo(c.PFN_vkQueueWaitIdle).optional.child,
 	vkCmdDrawIndexed: @typeInfo(c.PFN_vkCmdDrawIndexed).optional.child,
@@ -97,9 +105,9 @@ pub const Library = struct {
 		}
 	}
 
-	pub fn load_instance(self: *Library, instance: c.VkInstance) !void {
+	pub fn load_instance(self: *Library, instance: Instance) !void {
 		inline for (@typeInfo(InstancePointers).@"struct".fields) |field| {
-			if (self.pfn.vkGetInstanceProcAddr(instance, field.name)) |ptr| {
+			if (self.pfn.vkGetInstanceProcAddr(instance.handle, field.name)) |ptr| {
 				@field(&self.instance, field.name) = @ptrCast(ptr);
 			} else {
 				std.debug.print("Missing  symbol: {s}\n", .{field.name});
@@ -108,9 +116,9 @@ pub const Library = struct {
 		}
 	}
 
-	pub fn load_device(self: *Library, device: c.VkDevice) !void {
+	pub fn load_device(self: *Library, device: Device) !void {
 		inline for (@typeInfo(DevicePointers).@"struct".fields) |field| {
-			if (self.instance.vkGetDeviceProcAddr(device, field.name)) |ptr| {
+			if (self.instance.vkGetDeviceProcAddr(device.handle, field.name)) |ptr| {
 				@field(&self.device, field.name) = @ptrCast(ptr);
 			} else {
 				std.debug.print("Missing  symbol: {s}\n", .{field.name});
@@ -120,33 +128,55 @@ pub const Library = struct {
 	}
 };
 
-pub const Context = struct {
+fn check(code: i32) !void {
+	if (c.VK_SUCCESS != code) {
+		std.debug.print("Code: {d}\n", .{code});
+		return error.Failed;
+	}
+}
+
+pub const Vulkan = struct {
 	lib: Library,
 	instance: Instance,
-	surface: Surface,
-	device: Device,
+	//surface: Surface,
+	//device: Device,
 
-	swapchain: Swapchain,
-	pipeline: Pipeline,
-	command_allocator: Command.Allocator,
-	descriptor_allocator: Descriptor.Allocator,
+	//swapchain: Swapchain,
+	//pipeline: Pipeline,
+	//command_allocator: Command.Allocator,
+	//descriptor_allocator: Descriptor.Allocator,
 
-	set_layouts: Descriptor.Set.Layouts,
+	//set_layouts: Descriptor.Set.Layouts,
 
-	semaphores: Semaphores,
-	fences: Fences,
+	//semaphores: Semaphores,
+	//fences: Fences,
 
-	render_groups: std.ArrayList(RenderGroup),
-	sets_to_update: std.ArrayList(Descriptor.UpdateInfo),
+	//render_groups: std.ArrayList(RenderGroup),
+	//sets_to_update: std.ArrayList(Descriptor.UpdateInfo),
 
 	pub const Vertex = struct {
 		position: [3]f32,
 		color: [3]f32,
 	};
 
-	pub fn init(self: *Context, width: u32, height: u32, allocator: std.mem.Allocator) !void {
-		try self.lib.init();
-		try self.instance.init(self);
+	pub fn init(allocator: *Allocator, width: usize, height: usize) !*Vulkan {
+		_ = width;
+		_ = height;
+
+		const self = try allocator.main.create(Vulkan);
+		const lib = try allocator.main.create(Library);
+
+		try lib.init();
+
+		const instance = try Instance.init(allocator, lib);
+		const device = try Device.init(allocator, instance, lib);
+		const drm_modifiers = try get_drm_modifiers(allocator, lib, device);
+
+		for (drm_modifiers) |modifier| {
+			std.debug.print("modifier: {}\n", .{modifier});
+		}
+
+		return self;
 
 		// cons format = .B8R8G8A8_SRGB;
 		// const depth_format = .D32_SFLOAT_S8_UINT;
@@ -371,17 +401,18 @@ pub const Context = struct {
 pub const Instance = struct {
 	handle: c.VkInstance,
 
-	pub fn init(self: *Instance, context: *Context) !void {
+	pub fn init(allocator: *Allocator, lib: *Library) !Instance {
+		var self: Instance = undefined;
 		var layer_count: u32 = 0;
 
-		if (c.VK_SUCCESS != context.lib.pfn.vkEnumerateInstanceLayerProperties(&layer_count, null)) return error.EnumerateInstanceLayerProperties;
-		const layers = try context.allocator.tmp.alloc(c.VkLayerProperties, layer_count);
-		if (c.VK_SUCCESS != context.lib.pfn.vkEnumerateInstanceLayerProperties(&layer_count, layers.ptr)) return error.EnumerateInstanceLayerProperties;
+		if (c.VK_SUCCESS != lib.pfn.vkEnumerateInstanceLayerProperties(&layer_count, null)) return error.EnumerateInstanceLayerProperties;
+		const layers = try allocator.tmp.alloc(c.VkLayerProperties, layer_count);
+		if (c.VK_SUCCESS != lib.pfn.vkEnumerateInstanceLayerProperties(&layer_count, layers.ptr)) return error.EnumerateInstanceLayerProperties;
 
 		for (VALIDATION_LAYERS) |required| {
 			for (layers) |layer| {
-				const lay = @as([*c]const u8, &layer.layerName);
-				if (std.mem.eql(u8, std.mem.span(required), std.mem.span(lay))) break;
+				const name = @as([*c]const u8, &layer.layerName);
+				if (std.mem.eql(u8, std.mem.span(required), std.mem.span(name))) break;
 			} else return error.ValidationLayer;
 		}
 
@@ -403,117 +434,321 @@ pub const Instance = struct {
 			.ppEnabledExtensionNames = &INSTANCE_EXTENSIONS[0],
 		};
 
-		if (c.VK_SUCCESS != context.lib.pfn.vkCreateInstance(&create_info, null, &self.handle)) {
-			return error.CreateInstance;
-		}
+		try check(lib.pfn.vkCreateInstance(&create_info, null, &self.handle));
+		try lib.load_instance(self);
 
-		try context.lib.load_instance(self.handle);
+		return self;
 	}
 };
+
+pub const Device = struct {
+	handle: c.VkDevice,
+	physical: c.VkPhysicalDevice,
+	family_index: u32,
+	queue: c.VkQueue,
+	memory_properties: c.VkPhysicalDeviceMemoryProperties,
+
+	pub fn init(allocator: *Allocator, instance: Instance, lib: *Library) !Device {
+		var self: Device = undefined;
+
+		var device_count: u32 = 0;
+		try check(lib.instance.vkEnumeratePhysicalDevices(instance.handle, &device_count, null));
+
+		const devices = try allocator.tmp.alloc(c.VkPhysicalDevice, device_count);
+		defer allocator.tmp.free(devices);
+
+		try check(lib.instance.vkEnumeratePhysicalDevices(instance.handle, &device_count, devices.ptr));
+
+		var query_device_dynamic_state = c.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT{
+			.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+		};
+
+		var query_device_features_1_3 = c.VkPhysicalDeviceVulkan13Features{
+			.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+			.pNext = &query_device_dynamic_state,
+		};
+
+		var query_device_features = c.VkPhysicalDeviceFeatures2{
+			.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+			.pNext = &query_device_features_1_3,
+		};
+
+		var physical_device_points: u8 = 0;
+
+		outer: for (devices) |device| {
+			var properties: c.VkPhysicalDeviceProperties = undefined;
+			lib.instance.vkGetPhysicalDeviceProperties(device, &properties);
+
+			if (properties.apiVersion < c.VK_API_VERSION_1_3) {
+				continue;
+			}
+
+			lib.instance.vkGetPhysicalDeviceFeatures2(device, &query_device_features);
+
+			if (query_device_features_1_3.dynamicRendering != c.VK_TRUE) continue :outer;
+			if (query_device_features_1_3.synchronization2 != c.VK_TRUE) continue :outer;
+			if (query_device_dynamic_state.extendedDynamicState != c.VK_TRUE) continue :outer;
+
+			var extension_count: u32 = 0;
+			try check(lib.instance.vkEnumerateDeviceExtensionProperties(device, null, &extension_count, null));
+
+			const extensions = try allocator.tmp.alloc(c.VkExtensionProperties, extension_count);
+			defer allocator.tmp.free(extensions);
+
+			try check(lib.instance.vkEnumerateDeviceExtensionProperties(device, null, &extension_count, extensions.ptr));
+
+			for (DEVICE_EXTENSIONS) |required| {
+				for (extensions) |extension| {
+					const ext = @as([*c]const u8, &extension.extensionName);
+					if (std.mem.eql(u8, std.mem.span(required), std.mem.span(ext))) break;
+				} else continue :outer;
+			}
+
+			var family_count: u32 = 0;
+			lib.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
+
+			const family_properties = try allocator.tmp.alloc(c.VkQueueFamilyProperties, family_count);
+			defer allocator.tmp.free(family_properties);
+
+			lib.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, family_properties.ptr);
+
+			var index: u32 = 0;
+			for (family_properties, 0..) |property, i| {
+				if (property.queueFlags & c.VK_QUEUE_TRANSFER_BIT == 0) continue;
+				if (property.queueFlags & c.VK_QUEUE_GRAPHICS_BIT == 0) continue;
+
+				index = @intCast(i);
+
+				break;
+			} else continue :outer;
+
+			const points: u8 = switch (properties.deviceType) {
+				c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU => 5,
+				c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU => 4,
+				c.VK_PHYSICAL_DEVICE_TYPE_CPU => 3,
+				c.VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU => 2,
+				else => 1,
+			};
+
+			if (points > physical_device_points) {
+				physical_device_points = points;
+				self.physical = device;
+				self.family_index = index;
+			}
+		}
+
+		lib.instance.vkGetPhysicalDeviceMemoryProperties(self.physical, &self.memory_properties);
+
+		query_device_features_1_3 = .{
+			.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+			.pNext = &query_device_dynamic_state,
+			.synchronization2 = c.VK_TRUE,
+			.dynamicRendering = c.VK_TRUE,
+		};
+
+		const queue_priority: f32 = 1.0;
+
+		const queue_info = c.VkDeviceQueueCreateInfo{
+			.sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = self.family_index,
+			.queueCount = 1,
+			.pQueuePriorities = &queue_priority,
+		};
+
+		const info = c.VkDeviceCreateInfo{
+			.sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+			.pNext = &query_device_features,
+			.queueCreateInfoCount = 1,
+			.pQueueCreateInfos = &queue_info,
+			.ppEnabledExtensionNames = &DEVICE_EXTENSIONS[0],
+			.enabledExtensionCount = DEVICE_EXTENSIONS.len,
+		};
+
+		try check(lib.instance.vkCreateDevice(self.physical, &info, null, &self.handle));
+		try lib.load_device(self);
+
+		lib.device.vkGetDeviceQueue(self.handle, self.family_index, 0, &self.queue);
+
+		return self;
+	}
+};
+
+fn get_drm_modifiers(allocator: *Allocator, lib: *Library, device: Device) ![]c.VkDrmFormatModifierPropertiesEXT {
+	const render_features: c.VkFormatFeatureFlags = c.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | c.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
+
+	const texture_features: c.VkFormatFeatureFlags = c.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | c.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+
+	var modifier_property_list: c.VkDrmFormatModifierPropertiesListEXT = .{
+		.sType = c.VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
+	};
+
+	var properties: c.VkFormatProperties2 = .{
+		.sType = c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+		.pNext = &modifier_property_list,
+	};
+
+	const format = c.VK_FORMAT_B8G8R8A8_SRGB;
+
+	lib.instance.vkGetPhysicalDeviceFormatProperties2(device.physical, format, &properties);
+
+	const count = modifier_property_list.drmFormatModifierCount;
+
+	const modifiers = try allocator.tmp.alloc(c.VkDrmFormatModifierPropertiesEXT, count);
+	modifier_property_list.pDrmFormatModifierProperties = modifiers.ptr;
+
+	lib.instance.vkGetPhysicalDeviceFormatProperties2(device.physical, format, &properties);
+
+	const image_modifier_info: c.VkPhysicalDeviceImageDrmFormatModifierInfoEXT = .{
+		.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT,
+		.sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+	};
+
+	const external_image_info: c.VkPhysicalDeviceExternalImageFormatInfo = .{
+		.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+		.pNext = &image_modifier_info,
+		.handleType = c.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+	};
+
+	const image_info: c.VkPhysicalDeviceImageFormatInfo2 = .{
+		.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+		.pNext = &external_image_info,
+		.format = format,
+		.usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.type = c.VK_IMAGE_TYPE_2D,
+		.tiling = c.VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+	};
+
+	var external_image_properties: c.VkExternalImageFormatProperties = .{
+		.sType = c.VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+	};
+
+	var image_properties: c.VkImageFormatProperties2 = .{
+		.sType = c.VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+		.pNext = &external_image_properties,
+	};
+
+	try check(lib.instance.vkGetPhysicalDeviceImageFormatProperties2(device.physical, &image_info, &image_properties));
+
+	const memory_features = external_image_properties.externalMemoryProperties.externalMemoryFeatures;
+	if (memory_features & c.VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT_NV == 0) return error.MissingImport;
+	if (memory_features & c.VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT_NV == 0) return error.MissingExport;
+
+	var valid_modifiers = try std.ArrayList(c.VkDrmFormatModifierPropertiesEXT).initCapacity(allocator.main, count);
+
+	for (modifiers) |modifier| {
+		if (modifier.drmFormatModifierTilingFeatures & render_features == 0) continue;
+		if (modifier.drmFormatModifierTilingFeatures & texture_features == 0) continue;
+
+		try valid_modifiers.appendBounded(modifier);
+	}
+
+	return valid_modifiers.items;
+}
+
 //
 // pub const Manager = struct {
-//	   fences: []c.VkFence,
-//	   acquire_semaphores: []c.VkSemaphore,
-//	   release_semaphores: []c.VkSemaphore,
+//     fences: []c.VkFence,
+//     acquire_semaphores: []c.VkSemaphore,
+//     release_semaphores: []c.VkSemaphore,
 //
-//	   descriptor_pool: c.VkDescriptorPool,
-//	   descriptor_sets: []DescriptorSet,
-//	   descriptor_set_count: u32,
+//     descriptor_pool: c.VkDescriptorPool,
+//     descriptor_sets: []DescriptorSet,
+//     descriptor_set_count: u32,
 //
-//	   pub fn init(self: *Manager, library: *Library, device: Device, allocator: *Allocator) !void {
-//		   const fence_info = c.VkFenceCreateInfo{
-//			   .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-//			   .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
-//		   };
+//     pub fn init(self: *Manager, library: *Library, device: Device, allocator: *Allocator) !void {
+//       const fence_info = c.VkFenceCreateInfo{
+//         .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+//         .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
+//       };
 //
-//		   const command_info = c.VkCommandBufferAllocateInfo{
-//			   .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-//			   .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-//			   .commandPool = self.command_pool,
-//			   .commandBufferCount = MAX_FRAMES,
-//		   };
+//       const command_info = c.VkCommandBufferAllocateInfo{
+//         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+//         .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+//         .commandPool = self.command_pool,
+//         .commandBufferCount = MAX_FRAMES,
+//       };
 //
-//		   const semaphore_info = c.VkSemaphoreCreateInfo{
-//			   .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-//		   };
+//       const semaphore_info = c.VkSemaphoreCreateInfo{
+//         .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+//       };
 //
-//		   self.fences = try allocator.main.alloc(c.VkFence, MAX_FRAMES);
-//		   self.acquire_semaphores = try allocator.main.alloc(c.VkSemaphore, MAX_FRAMES + 1);
-//		   self.release_semaphores = try allocator.main.alloc(c.VkSemaphore, MAX_FRAMES);
+//       self.fences = try allocator.main.alloc(c.VkFence, MAX_FRAMES);
+//       self.acquire_semaphores = try allocator.main.alloc(c.VkSemaphore, MAX_FRAMES + 1);
+//       self.release_semaphores = try allocator.main.alloc(c.VkSemaphore, MAX_FRAMES);
 //
-//		   for (0..MAX_FRAMES) |i| {
-//			   if (c.VK_SUCCESS != library.device.vkCreateFence(device.handle, &fence_info, null, &self.fences[i])) return error.Fence;
-//			   if (c.VK_SUCCESS != library.device.vkCreateSemaphore(device.handle, &semaphore_info, null, &self.acquire_semaphores[i])) return error.Semaphore;
-//			   if (c.VK_SUCCESS != library.device.vkCreateSemaphore(device.handle, &semaphore_info, null, &self.release_semaphores[i])) return error.Semaphore;
-//		   }
+//       for (0..MAX_FRAMES) |i| {
+//         if (c.VK_SUCCESS != library.device.vkCreateFence(device.handle, &fence_info, null, &self.fences[i])) return error.Fence;
+//         if (c.VK_SUCCESS != library.device.vkCreateSemaphore(device.handle, &semaphore_info, null, &self.acquire_semaphores[i])) return error.Semaphore;
+//         if (c.VK_SUCCESS != library.device.vkCreateSemaphore(device.handle, &semaphore_info, null, &self.release_semaphores[i])) return error.Semaphore;
+//       }
 //
-//		   if (c.VK_SUCCESS != library.device.vkCreateSemaphore(device.handle, &semaphore_info, null, &self.acquire_semaphores[MAX_FRAMES])) return error.Semaphore;
+//       if (c.VK_SUCCESS != library.device.vkCreateSemaphore(device.handle, &semaphore_info, null, &self.acquire_semaphores[MAX_FRAMES])) return error.Semaphore;
 //
-//		   const descriptor_count: u32 = 10;
-//		   self.descriptor_sets = try allocator.main.alloc(DescriptorSet, descriptor_count);
-//		   self.descriptor_set_count = 0;
+//       const descriptor_count: u32 = 10;
+//       self.descriptor_sets = try allocator.main.alloc(DescriptorSet, descriptor_count);
+//       self.descriptor_set_count = 0;
 //
-//		   const descriptor_pool_sizes = &[_]c.VkDescriptorPoolSize{
-//			   .{
-//				   .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-//				   .descriptorCount = descriptor_count,
-//			   },
-//			   .{
-//				   .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-//				   .descriptorCount = descriptor_count,
-//			   },
-//		   };
+//       const descriptor_pool_sizes = &[_]c.VkDescriptorPoolSize{
+//         .{
+//           .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+//           .descriptorCount = descriptor_count,
+//         },
+//         .{
+//           .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+//           .descriptorCount = descriptor_count,
+//         },
+//       };
 //
-//		   const descriptor_pool_info = c.VkDescriptorPoolCreateInfo{
-//			   .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-//			   .poolSizeCount = @intCast(descriptor_pool_sizes.len),
-//			   .pPoolSizes = descriptor_pool_sizes.ptr,
-//			   .maxSets = 10,
-//		   };
+//       const descriptor_pool_info = c.VkDescriptorPoolCreateInfo{
+//         .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+//         .poolSizeCount = @intCast(descriptor_pool_sizes.len),
+//         .pPoolSizes = descriptor_pool_sizes.ptr,
+//         .maxSets = 10,
+//       };
 //
-//		   self.descriptor_pool = undefined;
+//       self.descriptor_pool = undefined;
 //
-//		   if (c.VK_SUCCESS != library.device.vkCreateDescriptorPool(device.handle, &descriptor_pool_info, null, &self.descriptor_pool)) return error.DescriptorPool;
-//	   }
+//       if (c.VK_SUCCESS != library.device.vkCreateDescriptorPool(device.handle, &descriptor_pool_info, null, &self.descriptor_pool)) return error.DescriptorPool;
+//     }
 //
-//	   pub fn addDescriptorSet(self: *Manager, library: *Library, device: Device, layout: DescriptorSetLayout) !u32 {
-//		   if (self.descriptor_set_count >= 10) return error.OutOfDescriptors;
-//		   defer self.descriptor_set_count += 1;
+//     pub fn addDescriptorSet(self: *Manager, library: *Library, device: Device, layout: DescriptorSetLayout) !u32 {
+//       if (self.descriptor_set_count >= 10) return error.OutOfDescriptors;
+//       defer self.descriptor_set_count += 1;
 //
-//		   const index = self.descriptor_set_count;
-//		   const descriptor_set = &self.descriptor_sets[index];
-//		   const allocate_info = c.VkDescriptorSetAllocateInfo{
-//			   .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-//			   .descriptorPool = self.descriptor_pool,
-//			   .descriptorSetCount = 1,
-//			   .pSetLayouts = &layout.handle,
-//		   };
+//       const index = self.descriptor_set_count;
+//       const descriptor_set = &self.descriptor_sets[index];
+//       const allocate_info = c.VkDescriptorSetAllocateInfo{
+//         .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+//         .descriptorPool = self.descriptor_pool,
+//         .descriptorSetCount = 1,
+//         .pSetLayouts = &layout.handle,
+//       };
 //
-//		   descriptor_set.layout = layout;
-//		   if (c.VK_SUCCESS != library.device.vkAllocateDescriptorSets(device.handle, &allocate_info, &descriptor_set.handle)) return error.OutOfDescriptors;
+//       descriptor_set.layout = layout;
+//       if (c.VK_SUCCESS != library.device.vkAllocateDescriptorSets(device.handle, &allocate_info, &descriptor_set.handle)) return error.OutOfDescriptors;
 //
-//		   return index;
-//	   }
+//       return index;
+//     }
 //
-//	   pub fn updateDescriptorSet(self: *Manager, library: *Library, device: Device, index: u32, binding: u32, range: Buffer.Range) !void {
-//		   const buffer_info = c.VkDescriptorBufferInfo{
-//			   .buffer = range.handle,
-//			   .range = range.size,
-//			   .offset = range.offset,
-//		   };
+//     pub fn updateDescriptorSet(self: *Manager, library: *Library, device: Device, index: u32, binding: u32, range: Buffer.Range) !void {
+//       const buffer_info = c.VkDescriptorBufferInfo{
+//         .buffer = range.handle,
+//         .range = range.size,
+//         .offset = range.offset,
+//       };
 //
-//		   const set = self.descriptor_sets[index];
-//		   const write_set = c.VkWriteDescriptorSet{
-//			   .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-//			   .dstSet = set.handle,
-//			   .dstBinding = binding,
-//			   .descriptorCount = 1,
-//			   .descriptorType = set.layout.bindings[binding].descriptorType,
-//			   .pBufferInfo = &buffer_info,
-//		   };
+//       const set = self.descriptor_sets[index];
+//       const write_set = c.VkWriteDescriptorSet{
+//         .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+//         .dstSet = set.handle,
+//         .dstBinding = binding,
+//         .descriptorCount = 1,
+//         .descriptorType = set.layout.bindings[binding].descriptorType,
+//         .pBufferInfo = &buffer_info,
+//       };
 //
-//		   library.device.vkUpdateDescriptorSets(device.handle, 1, &write_set, 0, null);
-//	   }
+//       library.device.vkUpdateDescriptorSets(device.handle, 1, &write_set, 0, null);
+//     }
 // };
 //
 // fn transitionImage(context: *Context, command_buffer: *Command.Buffer, image: c.VkImage, old_layout: c.VkImageLayout, new_layout: c.VkImageLayout, src_stage: c.VkPipelineStageFlags2, dst_stage: c.VkPipelineStageFlags2, src_access: c.VkAccessFlags2, dst_access: c.VkAccessFlags2) void {
@@ -676,20 +911,6 @@ pub const Instance = struct {
 	// }
 // };
 // 
-// pub const Surface = struct {
-	// handle: c.VkSurfaceKHR,
-// 
-	// pub fn init(self: *Surface, context: *Context, display: ?*c.wl_display, surface: ?*c.wl_surface) !void {
-		// const info = c.VkWaylandSurfaceCreateInfoKHR{
-			// .sType = c.VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR,
-			// .flags = 0,
-			// .display = display,
-			// .surface = surface,
-		// };
-// 
-		// if (c.VK_SUCCESS != context.lib.instance.vkCreateWaylandSurfaceKHR(context.instance.handle, &info, null, &self.handle)) return error.SurfaceCreate;
-	// }
-// };
 // 
 // pub const Buffer = struct {
 	// handle: c.VkBuffer,
@@ -834,7 +1055,7 @@ pub const Instance = struct {
 		// data: []const T,
 	// ) !void {
 		// if (self.type_size != @sizeOf(T)) return error.MissmatchTypeSize;
-		if (!(self.properties.properties.contains(.host_coherent) and self.properties.properties.contains(.host_visible))) return error.NotVisibleToHost; // TODO: copy from staging buffer
+		//if (!(self.properties.properties.contains(.host_coherent) and self.properties.properties.contains(.host_visible))) return error.NotVisibleToHost; // TODO: copy from staging buffer
 		// if (self.len + data.len > self.capacity) return error.OutOfMemory;
 // 
 		// const remap = try self.map(T, context, self.len, @intCast(data.len));
@@ -898,139 +1119,6 @@ pub const Instance = struct {
 	// return flag;
 // }
 // 
-// const DEVICE_EXTENSIONS: []const [*c]const u8 = &.{
-	// "VK_KHR_swapchain",
-// };
-// 
-// pub const Device = struct {
-	// handle: c.VkDevice,
-	// physical: c.VkPhysicalDevice,
-	// family_index: u32,
-	// queue: c.VkQueue,
-	// memory_properties: c.VkPhysicalDeviceMemoryProperties,
-// 
-	// pub fn init(self: *Device, context: *Context) !void {
-		// var device_count: u32 = 0;
-		// if (c.VK_SUCCESS != context.lib.instance.vkEnumeratePhysicalDevices(context.instance.handle, &device_count, null)) return error.EnumeratePhysicalDevices;
-// 
-		// const devices = try context.allocator.tmp.alloc(c.VkPhysicalDevice, device_count);
-		// defer context.allocator.tmp.free(devices);
-// 
-		// if (c.VK_SUCCESS != context.lib.instance.vkEnumeratePhysicalDevices(context.instance.handle, &device_count, devices.ptr)) return error.EnumeratePhysicalDevices;
-// 
-		// var physical_device_points: u8 = 0;
-// 
-		// for (devices) |device| {
-			// var properties: c.VkPhysicalDeviceProperties = undefined;
-			// context.lib.instance.vkGetPhysicalDeviceProperties(device, &properties);
-// 
-			// if (properties.apiVersion < c.VK_API_VERSION_1_3) {
-				// continue;
-			// }
-// 
-			// var family_count: u32 = 0;
-			// context.lib.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
-// 
-			// const family_properties = try context.allocator.tmp.alloc(c.VkQueueFamilyProperties, family_count);
-			// defer context.allocator.tmp.free(family_properties);
-// 
-			// context.lib.instance.vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, family_properties.ptr);
-// 
-			// var index: u32 = 0;
-			// for (family_properties, 0..) |propertie, i| {
-				// var present = c.VK_FALSE;
-				// if (c.VK_SUCCESS != context.lib.instance.vkGetPhysicalDeviceSurfaceSupportKHR(device, @intCast(i), context.surface.handle, &present)) return error.SurfaceSupport;
-// 
-				// if (present == 0) continue;
-				// if (propertie.queueFlags & c.VK_QUEUE_GRAPHICS_BIT == 0) continue;
-// 
-				// index = @intCast(i);
-// 
-				// break;
-			// } else continue;
-// 
-			// const points: u8 = switch (properties.deviceType) {
-				// c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU => 5,
-				// c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU => 4,
-				// c.VK_PHYSICAL_DEVICE_TYPE_CPU => 3,
-				// c.VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU => 2,
-				// else => 1,
-			// };
-// 
-			// if (points > physical_device_points) {
-				// physical_device_points = points;
-				// self.physical = device;
-				// self.family_index = index;
-			// }
-		// }
-// 
-		// context.lib.instance.vkGetPhysicalDeviceMemoryProperties(self.physical, &self.memory_properties);
-// 
-		// var extension_count: u32 = 0;
-		// if (c.VK_SUCCESS != context.lib.instance.vkEnumerateDeviceExtensionProperties(self.physical, null, &extension_count, null)) return error.EnumerateExtensionProperties;
-// 
-		// const extensions = try context.allocator.tmp.alloc(c.VkExtensionProperties, extension_count);
-// 
-		// if (c.VK_SUCCESS != context.lib.instance.vkEnumerateDeviceExtensionProperties(self.physical, null, &extension_count, extensions.ptr)) return error.EnumeratExtensionPropertiese;
-// 
-		// for (DEVICE_EXTENSIONS) |required| {
-			// for (extensions) |extension| {
-				// const ext = @as([*c]const u8, &extension.extensionName);
-				// if (std.mem.eql(u8, std.mem.span(required), std.mem.span(ext))) break;
-			// } else return error.DeviceExtension;
-		// }
-// 
-		// var query_device_dynamic_state = c.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT{
-			// .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
-		// };
-// 
-		// var query_device_features_1_3 = c.VkPhysicalDeviceVulkan13Features{
-			// .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-			// .pNext = &query_device_dynamic_state,
-		// };
-// 
-		// var query_device_features = c.VkPhysicalDeviceFeatures2{
-			// .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-			// .pNext = &query_device_features_1_3,
-		// };
-// 
-		// context.lib.instance.vkGetPhysicalDeviceFeatures2(self.physical, &query_device_features);
-// 
-		// if (query_device_features_1_3.dynamicRendering != c.VK_TRUE) return error.DynamicRenderingFeature;
-		// if (query_device_features_1_3.synchronization2 != c.VK_TRUE) return error.SynchronizationFeature;
-		// if (query_device_dynamic_state.extendedDynamicState != c.VK_TRUE) return error.ExtendedDynamicStateFeature;
-// 
-		// query_device_features_1_3 = .{
-			// .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-			// .pNext = &query_device_dynamic_state,
-			// .synchronization2 = c.VK_TRUE,
-			// .dynamicRendering = c.VK_TRUE,
-		// };
-// 
-		// const queue_priority: f32 = 1.0;
-// 
-		// const queue_info = c.VkDeviceQueueCreateInfo{
-			// .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			// .queueFamilyIndex = self.family_index,
-			// .queueCount = 1,
-			// .pQueuePriorities = &queue_priority,
-		// };
-// 
-		// const info = c.VkDeviceCreateInfo{
-			// .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-			// .pNext = &query_device_features,
-			// .queueCreateInfoCount = 1,
-			// .pQueueCreateInfos = &queue_info,
-			// .ppEnabledExtensionNames = &DEVICE_EXTENSIONS[0],
-			// .enabledExtensionCount = DEVICE_EXTENSIONS.len,
-		// };
-// 
-		// if (c.VK_SUCCESS != context.lib.instance.vkCreateDevice(self.physical, &info, null, &self.handle)) return error.DeviceCreate;
-		// try context.lib.load_device(self.handle);
-// 
-		// context.lib.device.vkGetDeviceQueue(self.handle, self.family_index, 0, &self.queue);
-	// }
-// };
 // 
 // pub const Swapchain = struct {
 	// handle: c.VkSwapchainKHR,
@@ -1790,15 +1878,15 @@ const Allocator = @import("util").Allocator;
 const Matrix = @import("util").Matrix(4);
 const DoubleList = @import("util").List;
 
-# pub const Instance = @import("Instance.zig").Instance;
-# pub const Pipeline = @import("Pipeline.zig").Pipeline;
-# pub const Surface = @import("Surface.zig").Surface;
-# pub const Buffer = @import("Buffer.zig").Buffer;
-# pub const Device = @import("Device.zig").Device;
-# pub const Swapchain = @import("Swapchain.zig").Swapchain;
-# pub const Command = @import("Command.zig").Command;
-# pub const Input = @import("Shader.zig").Input;
-# pub const Semaphores = @import("Sync.zig").Semaphores;
-# pub const Fences = @import("Sync.zig").Fences;
-# pub const Descriptor = @import("Shader.zig").Descriptor;
-# pub const RenderGroup = @import("Render.zig").RenderGroup;
+// pub const Instance = @import("Instance.zig").Instance;
+// pub const Pipeline = @import("Pipeline.zig").Pipeline;
+// pub const Surface = @import("Surface.zig").Surface;
+// pub const Buffer = @import("Buffer.zig").Buffer;
+// pub const Device = @import("Device.zig").Device;
+// pub const Swapchain = @import("Swapchain.zig").Swapchain;
+// pub const Command = @import("Command.zig").Command;
+// pub const Input = @import("Shader.zig").Input;
+// pub const Semaphores = @import("Sync.zig").Semaphores;
+// pub const Fences = @import("Sync.zig").Fences;
+// pub const Descriptor = @import("Shader.zig").Descriptor;
+// pub const RenderGroup = @import("Render.zig").RenderGroup;
