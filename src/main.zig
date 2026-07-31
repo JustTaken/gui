@@ -7,7 +7,7 @@ const Wayland = wayland.Wayland(Context);
 const Vulkan = vulkan.Vulkan;
 
 const Context = struct {
-	//wayland: Wayland,
+	wayland: Wayland,
 	vulkan: Vulkan,
 };
 
@@ -20,11 +20,11 @@ pub fn main() !void {
 	const allocator = try Allocator.init(20, 20, gpa_allocator);
 	defer allocator.deinit(gpa_allocator);
 
-	const width: usize = 400;
-	const height: usize = 400;
+	const width: u32 = 400;
+	const height: u32 = 400;
 
 	_ = try allocator.main.create(Context);
-	// _ = try Vulkan.init(allocator, width, height);
+	_ = try Vulkan.init(allocator, width, height);
 	_ = try Wayland.init(allocator, width, height);
 }
 

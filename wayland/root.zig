@@ -1,6 +1,14 @@
 const std = @import("std");
+const renderer = @import("renderer");
+
+const Frame = renderer.Frame;
+const DrmFormat = renderer.DrmFormat;
+
 const Interface = @import("interface.zig");
 const Allocator = @import("util").Allocator;
+
+const List = std.DoublyLinkedList;
+const Node = List.Node;
 
 const c = @cImport({
     @cInclude("sys/socket.h");
@@ -40,12 +48,12 @@ pub fn Wayland(T: type) type {
 		reader: Reader,
 		socket: std.posix.socket_t,
 
+		supported_drm_formats: std.ArrayList(SupportedDrmFormat),
+
 		width: usize,
 		height: usize,
 
 		running: bool,
-
-		drm_formats: []DrmFormat,
 
 		wl_display: *wl.Display,
 		wl_registry: *wl.Registry,
@@ -61,7 +69,7 @@ pub fn Wayland(T: type) type {
 		zwp_linux_dmabuf_feedback_v1: *zwp.LinuxDmabufFeedbackV1,
 		zwp_linux_buffer_params_v1: *zwp.LinuxBufferParamsV1,
 
-		wl_buffer: *Buffer,
+		wl_buffers: List,
 
 		const Self = @This();
 
@@ -73,11 +81,15 @@ pub fn Wayland(T: type) type {
 
 		const Buffer = struct {
 			handle: wl.Buffer,
-			released: bool,
+			format: DrmFormat,
+			width: usize,
+			height: usize,
+			node: Node,
 		};
 
-		const DrmFormat = struct {
+		const SupportedDrmFormat = struct {
 			format: u32,
+			_: u32,
 			modifier: u64,
 		};
 
@@ -113,8 +125,6 @@ pub fn Wayland(T: type) type {
 			const zwp_linux_dmabuf_feedback_v1 = try allocator.main.create(zwp.LinuxDmabufFeedbackV1);
 			const zwp_linux_buffer_params_v1 = try allocator.main.create(zwp.LinuxBufferParamsV1);
 
-			const wl_buffer = try allocator.main.create(Buffer);
-
 			wl_display.error_callback = wl_display_error;
 			wl_display.delete_id_callback = wl_display_delete_id;
 
@@ -128,8 +138,6 @@ pub fn Wayland(T: type) type {
 			wl_surface.leave_callback = wl_surface_leave;
 			wl_surface.preferred_buffer_scale_callback = wl_surface_preferred_buffer_scale;
 			wl_surface.preferred_buffer_transform_callback = wl_surface_preferred_buffer_transform;
-
-			wl_buffer.handle.release_callback = wl_buffer_release;
 
 			xdg_wm_base.ping_callback = xdg_wm_base_ping;
 
@@ -154,8 +162,6 @@ pub fn Wayland(T: type) type {
 			zwp_linux_buffer_params_v1.created_callback = zwp_linux_buffer_params_v1_created;
 			zwp_linux_buffer_params_v1.failed_callback = zwp_linux_buffer_params_v1_failed;
 
-			wl_buffer.released = true;
-
 			const self = try allocator.main.create(Self);
 			self.functions = try std.ArrayList(Function).initCapacity(allocator.main, 100);
 			self.ptrs = try std.ArrayList(*anyopaque).initCapacity(allocator.main, 50);
@@ -165,8 +171,7 @@ pub fn Wayland(T: type) type {
 			self.width = width;
 			self.height = height;
 			self.running = false;
-			self.drm_formats = try allocator.main.alloc(DrmFormat, 20);
-			self.wl_buffer = wl_buffer;
+			self.supported_drm_formats = try std.ArrayList(SupportedDrmFormat).initCapacity(allocator.main, 500);
 
 			self.wl_display = wl_display;
 			self.wl_registry = wl_registry;
@@ -193,8 +198,6 @@ pub fn Wayland(T: type) type {
 
 		pub fn alloc(self: *Self, K: type, item: *K) !void {
 			item.id = @intCast(self.ptrs.items.len + 1);
-
-			std.debug.print("ASSIGNING ID: {d}\n", .{item.id});
 
 			try self.functions.appendBounded(K.event);
 			try self.ptrs.appendBounded(item);
@@ -244,8 +247,6 @@ pub fn Wayland(T: type) type {
 			if (self.writer.offset == 0) {
 				return;
 			}
-
-			std.debug.print("{any}\n", .{self.writer.data[0..self.writer.offset]});
 
 			var io = std.posix.iovec {
 				.base = self.writer.data.ptr,
@@ -297,76 +298,108 @@ pub fn Wayland(T: type) type {
 			return true;
 		}
 
-		fn buffer_create(self: *Self, width: usize, height: usize, index: usize) void {
+		fn buffer_create(self: *Self, allocator: *Allocator, frame: Frame) !*Buffer {
 			self.zwp_linux_dmabuf_v1.create_param_request(&self.writer, self.zwp_dmabuf_v1_params);
 
-			const frame = self.frames[index];
+			const format = frame.drm_format;
 
-			for (frame.modifier.drmFormatModifierPlaneCount) |i| {
-				const plane = frame.planes[i];
+			const modifier_hi = (format.modifier & 0xFFFFFFFF00000000) >> 32;
+			const modifier_lo = format.modifier & 0x00000000FFFFFFFF;
 
-				const modifier_hi = frame.modifier.drmFormatModifier & 0xFFFFFFFF00000000;
-				const modifier_lo = frame.modifier.drmFormatModifier & 0x00000000FFFFFFFF;
-
-				self.zwp_linux_dmabuf_v1_params.add_request(&self.writer, frame.fd, @intCast(i), @intCast(plane.offset), @intCast(plane.rowPitch), @intCast(modifier_hi), @intCast(modifier_lo));
+			for (format.planes, 0..) |plane, i| {
+				self.zwp_linux_dmabuf_v1_params.add_request(&self.writer, format.fd, @intCast(i), @intCast(plane.offset), @intCast(plane.pitch), @intCast(modifier_hi), @intCast(modifier_lo));
 			}
 
-			const format = frame.drm_format;
-			const buffer = self.wl_buffer;
+			const buffer: *Buffer = if (self.wl_buffers.pop()) |b| @fieldParentPtr("node", b) else blk: {
+				const b = allocator.main.create(Buffer);
 
-			self.zwp_linux_dmabuf_v1_params.create_immed_request(&self.writer, buffer.handle.id, @intCast(width), @intCast(height), @intCast(format), @intCast(0));
+				b.handle.release_callback = wl_buffer_release;
+				self.alloc(wl.Buffer, &b.handle);
+
+				break :blk b;
+			};
+
+			buffer.width = frame.width;
+			buffer.height = frame.height;
+			buffer.format = format;
+
+			self.zwp_linux_dmabuf_v1_params.create_immed_request(&self.writer, buffer.handle.id, @intCast(buffer.width), @intCast(buffer.height), @intCast(format), @intCast(0));
 
 			self.zwp_linux_dmabuf_v1_params.destroy_request(&self.writer);
+
+			return buffer;
+		}
+
+		fn commit(self: *Self, allocator: *Allocator, frame: Frame) void {
+			const buffer = if (self.wl_buffers.pop()) |b| blk: {
+				const buf: *Buffer = @fieldParentPtr("node", b);
+
+				const correct_dimensions = frame.width == buf.width and frame.height == buf.height;
+				const correct_drm_format = frame.format.modifier == buf.format.modifier and frame.format.format == buf.format.format;
+
+				if (!correct_dimensions or !correct_drm_format) {
+					buf.handle.destroy_request(&self.writer);
+					self.wl_buffers.prepend(b);
+
+					break :blk try self.buffer_create(allocator, frame);
+				} else break :blk buf;
+			} else try self.buffer_create(allocator, frame);
+
+			self.wl_surface.attach_request(&self.writer, buffer.handle.id);
+			self.wl_surface.damage_request(&self.writer, 0, 0, @intCast(buffer.width), @intCast(buffer.height));
+			self.wl_surface.commit_request(&self.writer);
 		}
 
 		fn wl_display_error(self: *Self, display: *wl.Display, object: Object, code: Uint, message: String) void {
-			std.debug.print("display_error -> object: {d}, code: {d}, message: {s}\n", .{object, code, message});
+			std.debug.print("wl_display_error -> object: {d}, code: {d}, message: {s}\n", .{object, code, message});
 			_ = self;
 			_ = display;
 			// _ = object;
 			// _ = code;
 			// _ = message;
-
-			std.debug.print("An error has occured\n", .{});	
 		}
 
 		fn wl_display_delete_id(self: *Self, display: *wl.Display, id: Uint) void {
-			std.debug.print("display_delete_id\n", .{});
+			std.debug.print("wl_display_delete_id\n", .{});
 			_ = self;
 			_ = display;
 			_ = id;
 		}
 
 		fn wl_registry_global(self: *Self, registry: *wl.Registry, name: Uint, interface: String, version: Uint) void {
-			std.debug.print("hello global: name: {d}, version: {d}, interface: {s}\n", .{name, version, interface});
+			const interface_name = interface[0..interface.len - 1];
 
-			if (std.mem.eql(u8, interface, xdg.WmBase.interface_name)) {
-				// self.alloc(xdg.WmBase, self.xdg_wm_base) catch @panic("OUT OF MEMORY");
-				// registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.xdg_wm_base.id, .version = version});
+			if (std.mem.eql(u8, interface_name, xdg.WmBase.interface_name)) {
+				self.alloc(xdg.WmBase, self.xdg_wm_base) catch @panic("OUT OF MEMORY");
+				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.xdg_wm_base.id, .version = version});
 
-				//self.alloc(xdg.Surface, self.xdg_surface) catch @panic("FILED TO ASSIGN INTERFACE ID");
-				//self.xdg_wm_base.get_xdg_surface_request(&self.writer, self.xdg_surface.id, self.wl_surface.id);
+				self.alloc(xdg.Surface, self.xdg_surface) catch @panic("FILED TO ASSIGN INTERFACE ID");
+				self.xdg_wm_base.get_xdg_surface_request(&self.writer, self.xdg_surface.id, self.wl_surface.id);
 
-				//self.alloc(xdg.Toplevel, self.xdg_toplevel) catch @panic("FILED TO ASSIGN INTERFACE ID");
-				//self.xdg_surface.get_toplevel_request(&self.writer, self.xdg_toplevel.id);
+				self.alloc(xdg.Toplevel, self.xdg_toplevel) catch @panic("FILED TO ASSIGN INTERFACE ID");
+				self.xdg_surface.get_toplevel_request(&self.writer, self.xdg_toplevel.id);
 
 				//self.wl_surface.commit_request(&self.writer);
-			} else if (std.mem.eql(u8, interface, wl.Compositor.interface_name)) {
+			} else if (std.mem.eql(u8, interface_name, wl.Compositor.interface_name)) {
 				self.alloc(wl.Compositor, self.wl_compositor) catch @panic("FAILED TO ASSIGN INTERFACE ID");
 				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.wl_compositor.id, .version = version});
 
-				// self.alloc(wl.Surface, self.wl_surface) catch @panic("FAILED TO ASSIGN ID");
-				// self.wl_compositor.create_surface_request(&self.writer, self.wl_surface.id);
+				self.alloc(wl.Surface, self.wl_surface) catch @panic("FAILED TO ASSIGN ID");
+				self.wl_compositor.create_surface_request(&self.writer, self.wl_surface.id);
+			} else if (std.mem.eql(u8, interface_name, wl.Seat.interface_name)) {
+				self.alloc(wl.Seat, self.wl_seat) catch @panic("FAILED TO ASSIGN INTERFACE ID");
+				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.wl_seat.id, .version = version});
+			} else if (std.mem.eql(u8, interface_name, zwp.LinuxDmabufV1.interface_name)) {
+				self.alloc(zwp.LinuxDmabufV1, self.zwp_linux_dmabuf_v1) catch @panic("FAILED TO ASSIGN INTERFACE ID");
+				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.zwp_linux_dmabuf_v1.id, .version = version});
 
-				// self.alloc(zwp.LinuxDmabufFeedbackV1, self.zwp_linux_dmabuf_feedback_v1) catch @panic("FAILED TO ASSIGN INTERFACE ID");
-				// self.zwp_linux_dmabuf_v1.get_surface_feedback_request(&self.writer, self.zwp_linux_dmabuf_feedback_v1.id, self.wl_surface.id);
-			} else if (std.mem.eql(u8, interface, wl.Seat.interface_name)) {
-				// self.alloc(wl.Seat, self.wl_seat) catch @panic("FAILED TO ASSIGN INTERFACE ID");
-				// registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.wl_seat.id, .version = version});
-			} else if (std.mem.eql(u8, interface, zwp.LinuxDmabufV1.interface_name)) {
-				// self.alloc(zwp.LinuxDmabufV1, self.zwp_linux_dmabuf_v1) catch @panic("FAILED TO ASSIGN INTERFACE ID");
-				// registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.zwp_linux_dmabuf_v1.id, .version = version});
+				self.alloc(zwp.LinuxDmabufFeedbackV1, self.zwp_linux_dmabuf_feedback_v1) catch @panic("FAILED TO ASSIGN INTERFACE ID");
+				self.zwp_linux_dmabuf_v1.get_surface_feedback_request(&self.writer, self.zwp_linux_dmabuf_feedback_v1.id, self.wl_surface.id);
+			} else {
+				std.debug.print("hello global: name: {d}, version: {d}, interface: {s}: NOT BOUND\n", .{name, version, interface});
+				return;
 			}
+			std.debug.print("hello global: name: {d}, version: {d}, interface: {s}: BOUND\n", .{name, version, interface});
 		}
 
 		fn wl_registry_global_remove(self: *Self, registry: *wl.Registry, name: Uint) void {
@@ -378,9 +411,13 @@ pub fn Wayland(T: type) type {
 
 		fn wl_seat_capabilities(self: *Self, seat: *wl.Seat, capabilities: Uint) void {
 			std.debug.print("seat_capabilities\n", .{});
+
+			if (capabilities & @intFromEnum(wl.Seat.Capability.pointer) != 0) {}
+			if (capabilities & @intFromEnum(wl.Seat.Capability.keyboard) != 0) {}
+			if (capabilities & @intFromEnum(wl.Seat.Capability.touch) != 0) {}
+
 			_ = self;
 			_ = seat;
-			_ = capabilities;
 		}
 
 		fn wl_seat_name(self: *Self, seat: *wl.Seat, name: String) void {
@@ -419,10 +456,9 @@ pub fn Wayland(T: type) type {
 		}
 
 		fn wl_buffer_release(self: *Self, buffer: *wl.Buffer) void {
-				std.debug.print("wl_buffer_release\n", .{});
-			_ = self;
+			std.debug.print("wl_buffer_release\n", .{});
 			const parent: *Buffer = @fieldParentPtr("handle", buffer);
-			parent.released = true;
+			self.wl_buffers.prepend(&parent.node);
 		}
 
 		fn xdg_wm_base_ping(self: *Self, wm_base: *xdg.WmBase, serial: Uint) void {
@@ -496,17 +532,10 @@ pub fn Wayland(T: type) type {
 			const buffer = std.posix.mmap(null, size, std.posix.PROT.READ, .{.TYPE = .PRIVATE }, fd, 0) catch @panic("MMAP");
 			defer std.posix.munmap(buffer);
 
-			var reader = Reader.init(buffer);
+			const formats = std.mem.bytesAsSlice(SupportedDrmFormat, buffer);
 
-			const count = size / std.mem.alignForward(usize, @sizeOf(u32) + @sizeOf(u64), @sizeOf(u64));
-
-			for (0..count) |i| {
-				const format = reader.read_raw(u32);
-				const padding = reader.read_raw(u32);
-				const modifier = reader.read_raw(u64);
-				_ = padding;
-
-				self.drm_formats[i] = .{ .modifier = modifier, .format = format };
+			for (formats) |f| {
+				self.supported_drm_formats.appendBounded(f) catch @panic("Out of drm array space");
 			}
 		}
 
@@ -524,19 +553,24 @@ pub fn Wayland(T: type) type {
 
 		fn zwp_linux_dmabuf_feedback_v1_tranche_target_device(self: *Self, dmabuf_feedback: *zwp.LinuxDmabufFeedbackV1, device: Array) void {
 				std.debug.print("zwp_linux_dmabuf_feedback_v1_tranche_target_device\n", .{});
+			_ = self;
 			_ = dmabuf_feedback;
-			const indices = std.mem.bytesAsSlice(u16, device);
-
-			for (indices, 0..) |idx, i| {
-				self.drm_formats[i] = self.drm_formats[idx];
-			}
+			_ = device;
 		}
 
 		fn zwp_linux_dmabuf_feedback_v1_tranche_formats(self: *Self, dmabuf_feedback: *zwp.LinuxDmabufFeedbackV1, indices: Array) void {
-				std.debug.print("zwp_linux_dmabuf_feedback_v1_tranche_formats\n", .{});
-			_ = self;
 			_ = dmabuf_feedback;
-			_ = indices;
+			std.debug.print("zwp_linux_dmabuf_feedback_v1_tranche_formats\n", .{});
+
+			const ids = std.mem.bytesAsSlice(u16, indices);
+
+			//std.debug.print("INDICES: {any}\n", .{ids});
+
+			for (ids, 0..) |idx, i| {
+				self.supported_drm_formats.items[i] = self.supported_drm_formats.items[idx];
+			}
+
+			self.supported_drm_formats.items.len = ids.len;
 		}
 
 		fn zwp_linux_dmabuf_feedback_v1_tranche_flags(self: *Self, dmabuf_feedback: *zwp.LinuxDmabufFeedbackV1, flags: Uint) void {
@@ -592,7 +626,7 @@ pub const Reader = struct {
 	pub fn read_bytes(self: *Reader, count: usize) []u8 {
 		const len = std.mem.alignForward(usize, count, @sizeOf(Uint));
 		defer self.offset += len;
-		return self.data[self.offset..self.offset + count - 1];
+		return self.data[self.offset..self.offset + count];
 	}
 
 	pub fn read_id(self: *Reader) Id {
@@ -679,8 +713,8 @@ pub const Writer = struct {
 		self.offset += size;
 	}
 
-	pub fn write_bytes(self: *Writer, bytes: []const u8, insert_null: bool) void {
-		const total = std.mem.alignForward(usize, if (insert_null) bytes.len + 1 else bytes.len, @sizeOf(Uint));
+	pub fn write_bytes(self: *Writer, bytes: []const u8) void {
+		const total = std.mem.alignForward(usize, bytes.len, @sizeOf(Uint));
 
 		std.mem.copyForwards(u8, self.data[self.offset..], bytes);
 		@memset(self.data[self.offset + bytes.len..self.offset + total], 0);
@@ -718,7 +752,7 @@ pub const Writer = struct {
 
 	pub fn write_string(self: *Writer, str: String) void {
 		self.write_raw(Uint, @intCast(str.len));
-		self.write_bytes(str, true);
+		self.write_bytes(str);
 	}
 
 	pub fn write_array(self: *Writer, a: Array) void {

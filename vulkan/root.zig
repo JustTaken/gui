@@ -1,3 +1,8 @@
+const renderer = @import("renderer");
+
+const DrmFormat = renderer.DrmFormat;
+const Plane = renderer.Plane;
+
 const MAX_FRAMES: u32 = 10;
 
 const VALIDATION_LAYERS: []const [*c]const u8 = &.{
@@ -13,6 +18,13 @@ const DEVICE_EXTENSIONS: []const [*c]const u8 = &.{
   "VK_KHR_external_memory_fd",
   "VK_EXT_external_memory_dma_buf",
   "VK_EXT_image_drm_format_modifier",
+};
+
+const PLANE_BITS: []const c.VkImageAspectFlagBits = &.{
+	c.VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT,
+	c.VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT,
+	c.VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT,
+	c.VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT,
 };
 
 const LibraryPointers = struct {
@@ -50,6 +62,12 @@ const DevicePointers = struct {
 	// vkCreateSwapchainKHR: @typeInfo(c.PFN_vkCreateSwapchainKHR).optional.child,
 	// vkDestroySwapchainKHR: @typeInfo(c.PFN_vkDestroySwapchainKHR).optional.child,
 	// vkGetSwapchainImagesKHR: @typeInfo(c.PFN_vkGetSwapchainImagesKHR).optional.child,
+	vkCreateImage: @typeInfo(c.PFN_vkCreateImage).optional.child,
+	vkGetImageMemoryRequirements: @typeInfo(c.PFN_vkGetImageMemoryRequirements).optional.child,
+	vkBindImageMemory: @typeInfo(c.PFN_vkBindImageMemory).optional.child,
+	vkGetMemoryFdKHR: @typeInfo(c.PFN_vkGetMemoryFdKHR).optional.child,
+	vkGetImageDrmFormatModifierPropertiesEXT: @typeInfo(c.PFN_vkGetImageDrmFormatModifierPropertiesEXT).optional.child,
+	vkGetImageSubresourceLayout: @typeInfo(c.PFN_vkGetImageSubresourceLayout).optional.child,
 	vkCreateImageView: @typeInfo(c.PFN_vkCreateImageView).optional.child,
 	vkDestroyImageView: @typeInfo(c.PFN_vkDestroyImageView).optional.child,
 	vkCreatePipelineLayout: @typeInfo(c.PFN_vkCreatePipelineLayout).optional.child,
@@ -159,22 +177,19 @@ pub const Vulkan = struct {
 		color: [3]f32,
 	};
 
-	pub fn init(allocator: *Allocator, width: usize, height: usize) !*Vulkan {
-		_ = width;
-		_ = height;
-
+	pub fn init(allocator: *Allocator, width: u32, height: u32) !*Vulkan {
 		const self = try allocator.main.create(Vulkan);
 		const lib = try allocator.main.create(Library);
 
 		try lib.init();
 
+		const format = c.VK_FORMAT_B8G8R8A8_SRGB;
+
 		const instance = try Instance.init(allocator, lib);
 		const device = try Device.init(allocator, instance, lib);
-		const drm_modifiers = try get_drm_modifiers(allocator, lib, device);
 
-		for (drm_modifiers) |modifier| {
-			std.debug.print("modifier: {}\n", .{modifier});
-		}
+		const image = try Image.init(allocator, device, width, height, format, lib);
+		_ = image;
 
 		return self;
 
@@ -573,7 +588,187 @@ pub const Device = struct {
 	}
 };
 
-fn get_drm_modifiers(allocator: *Allocator, lib: *Library, device: Device) ![]c.VkDrmFormatModifierPropertiesEXT {
+pub const Image = struct {
+	handle: c.VkImage,
+	view: ImageView,
+	memory: Memory,
+	format: DrmFormat,
+
+	fn init(allocator: *Allocator, device: Device, width: u32, height: u32, format: c.VkFormat, lib: *Library) !Image {
+		var self: Image = undefined;
+
+		const sharing_mode = c.VK_SHARING_MODE_EXCLUSIVE;
+		const usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+		const image_type = c.VK_IMAGE_TYPE_2D;
+		const tiling = c.VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+
+		const modifier_properties = try get_drm_modifiers(allocator, device, format, sharing_mode, usage, image_type, tiling, lib);
+		const modifiers = try allocator.tmp.alloc(u64, modifier_properties.len);
+
+		for (0..modifier_properties.len) |i| {
+			modifiers[i] = modifier_properties[i].drmFormatModifier;
+		}
+
+		const drm_info: c.VkImageDrmFormatModifierListCreateInfoEXT = .{
+			.sType =c.VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+			.drmFormatModifierCount = @intCast(modifiers.len),
+			.pDrmFormatModifiers = modifiers.ptr,
+		};
+
+		const external_info: c.VkExternalMemoryImageCreateInfo = .{
+			.sType = c.VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+			.handleTypes = c.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+			.pNext = &drm_info,
+		};
+
+		const info: c.VkImageCreateInfo = .{
+			.sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.pNext = &external_info,
+			.flags = 0,
+			.imageType = image_type,
+			.format = format,
+			.extent = .{ .width = width, .height = height, .depth = 1 },
+			.samples = c.VK_SAMPLE_COUNT_1_BIT,
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.tiling = tiling,
+			.usage = usage,
+			.sharingMode = sharing_mode,
+			.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+			//.queueFamilyIndexCount: u32,
+			//.pQueueFamilyIndices: [*c]const u32,
+		};
+
+		try check(lib.device.vkCreateImage(device.handle, &info, null, &self.handle));
+		self.memory = try Memory.from_image(device, self, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lib);
+
+		try check(lib.device.vkBindImageMemory(device.handle, self.handle, self.memory.handle, 0));
+		self.view = try ImageView.from_image(device, self, format, lib);
+
+		var props: c.VkImageDrmFormatModifierPropertiesEXT = .{
+			.sType = c.VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
+		};
+
+		try check(lib.device.vkGetImageDrmFormatModifierPropertiesEXT(device.handle, self.handle, &props));
+
+		for (modifier_properties) |p| {
+			if (p.drmFormatModifier == props.drmFormatModifier) {
+				self.format.modifier = p.drmFormatModifier;
+				self.format.format = format;
+
+				self.format.planes = try allocator.main.alloc(Plane, p.drmFormatModifierPlaneCount);
+
+				for (0..self.format.planes.len) |i| {
+					const resource: c.VkImageSubresource = .{
+						.aspectMask = PLANE_BITS[i],
+					};
+
+					var layout: c.VkSubresourceLayout = undefined;
+
+					lib.device.vkGetImageSubresourceLayout(device.handle, self.handle, &resource, &layout);
+
+					self.format.planes[i].offset = layout.offset;
+					self.format.planes[i].pitch = layout.rowPitch;
+					self.format.planes[i].size = layout.size;
+				}
+
+				break;
+			}
+		} else return error.MissingFormat;
+
+		const fd_info: c.VkMemoryGetFdInfoKHR = .{
+			.sType = c.VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
+			.handleType = c.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+			.memory = self.memory.handle,
+		};
+
+		try check(lib.device.vkGetMemoryFdKHR(device.handle, &fd_info, &self.format.fd));
+
+		return self;
+	}
+};
+
+pub const Memory = struct {
+	handle: c.VkDeviceMemory,
+
+	fn from_image(device: Device, image: Image, required_properties: c.VkMemoryPropertyFlags, lib: *Library) !Memory {
+		var requirements: c.VkMemoryRequirements = undefined;
+
+		lib.device.vkGetImageMemoryRequirements(device.handle, image.handle, &requirements);
+
+		const props = device.memory_properties;
+
+		var index: usize = 0;
+
+		for (0..props.memoryTypeCount) |i| {
+			const idx: u6 = @intCast(i);
+			const one: usize = 1;
+			const flags = props.memoryTypes[i].propertyFlags & required_properties;
+
+			if (flags & (one << idx) > 0) {
+				index = i;
+				break;
+			}
+
+		} else return error.MissingProperties;
+
+		const dedicated_info: c.VkMemoryDedicatedAllocateInfo = .{
+			.sType = c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+			.image = image.handle,
+		};
+
+		const export_info: c.VkExportMemoryAllocateInfo = .{
+			.sType = c.VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+			.handleTypes = c.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+			.pNext = &dedicated_info,
+		};
+
+		return alloc(device, requirements.size, index, &export_info, lib);
+	}
+
+	fn alloc(device: Device, size: usize, index: usize, pNext: ?*const anyopaque, lib: *Library) !Memory {
+		const info: c.VkMemoryAllocateInfo = .{
+			.sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.pNext = pNext,
+			.allocationSize = @intCast(size),
+			.memoryTypeIndex = @intCast(index),
+		};
+
+		var memory: Memory = undefined;
+
+		try check(lib.device.vkAllocateMemory(device.handle, &info, null, &memory.handle));
+
+		return memory;
+	}
+};
+
+pub const ImageView = struct {
+	handle: c.VkImageView,
+
+	fn from_image(device: Device, image: Image, format: c.VkFormat, lib: *Library) !ImageView {
+		const info: c.VkImageViewCreateInfo = .{
+			.sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = image.handle,
+			.viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+			.format = format,
+			.subresourceRange = .{
+				.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
+
+		var self: ImageView = undefined;
+
+		try check(lib.device.vkCreateImageView(device.handle, &info, null, &self.handle));
+
+		return self;
+	}
+};
+
+fn get_drm_modifiers(allocator: *Allocator, device: Device, format: c.VkFormat, sharing_mode: c.VkSharingMode, usage: c.VkImageUsageFlags, typ: c.VkImageType, tiling: c.VkImageTiling, lib: *Library) ![]c.VkDrmFormatModifierPropertiesEXT {
 	const render_features: c.VkFormatFeatureFlags = c.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | c.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
 
 	const texture_features: c.VkFormatFeatureFlags = c.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | c.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
@@ -587,8 +782,6 @@ fn get_drm_modifiers(allocator: *Allocator, lib: *Library, device: Device) ![]c.
 		.pNext = &modifier_property_list,
 	};
 
-	const format = c.VK_FORMAT_B8G8R8A8_SRGB;
-
 	lib.instance.vkGetPhysicalDeviceFormatProperties2(device.physical, format, &properties);
 
 	const count = modifier_property_list.drmFormatModifierCount;
@@ -600,7 +793,7 @@ fn get_drm_modifiers(allocator: *Allocator, lib: *Library, device: Device) ![]c.
 
 	const image_modifier_info: c.VkPhysicalDeviceImageDrmFormatModifierInfoEXT = .{
 		.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT,
-		.sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+		.sharingMode = sharing_mode,
 	};
 
 	const external_image_info: c.VkPhysicalDeviceExternalImageFormatInfo = .{
@@ -613,9 +806,9 @@ fn get_drm_modifiers(allocator: *Allocator, lib: *Library, device: Device) ![]c.
 		.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
 		.pNext = &external_image_info,
 		.format = format,
-		.usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-		.type = c.VK_IMAGE_TYPE_2D,
-		.tiling = c.VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+		.usage = usage,
+		.type = typ,
+		.tiling = tiling,
 	};
 
 	var external_image_properties: c.VkExternalImageFormatProperties = .{
@@ -633,7 +826,7 @@ fn get_drm_modifiers(allocator: *Allocator, lib: *Library, device: Device) ![]c.
 	if (memory_features & c.VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT_NV == 0) return error.MissingImport;
 	if (memory_features & c.VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT_NV == 0) return error.MissingExport;
 
-	var valid_modifiers = try std.ArrayList(c.VkDrmFormatModifierPropertiesEXT).initCapacity(allocator.main, count);
+	var valid_modifiers = try std.ArrayList(c.VkDrmFormatModifierPropertiesEXT).initCapacity(allocator.tmp, count);
 
 	for (modifiers) |modifier| {
 		if (modifier.drmFormatModifierTilingFeatures & render_features == 0) continue;

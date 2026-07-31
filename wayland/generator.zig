@@ -1,3 +1,7 @@
+// Note for second version, make each callback field optional and panic when there is no implementation of this function
+// Make enum as packed struct with boolean fields
+// Make events a union struct so the caller can implement just one even callback function and swith on event kinds.
+
 const std = @import("std");
 const xml = @import("xml");
 

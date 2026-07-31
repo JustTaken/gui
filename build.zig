@@ -1,5 +1,6 @@
 // guix shell zig gcc vulkan-loader vulkan-validationlayers mesa pkg-config
 // LD_LIBRARY_PATH=$(pkg-config --variable=libdir vulkan) zig build run
+
 const std = @import("std");
 
 pub fn build(builder: *std.Build) void {
@@ -10,7 +11,12 @@ pub fn build(builder: *std.Build) void {
 		.root_source_file = builder.path("util/root.zig"),
 		.target = target,
 		.optimize = optimize,
-		.link_libc = true,
+	});
+
+	const renderer_module = builder.addModule("renderer", .{
+		.root_source_file = builder.path("renderer/root.zig"),
+		.target = target,
+		.optimize = optimize,
 	});
 
 	const xml_module = builder.addModule("xml", .{
@@ -39,6 +45,7 @@ pub fn build(builder: *std.Build) void {
 		.imports = &.{
 			.{ .name = "xml", .module = xml_module },
 			.{ .name = "util", .module = util_module },
+			.{ .name = "renderer", .module = renderer_module },
 		},
 	});
 
@@ -49,6 +56,7 @@ pub fn build(builder: *std.Build) void {
 		.link_libc = true,
 		.imports = &.{
 			.{ .name = "util", .module = util_module },
+			.{ .name = "renderer", .module = renderer_module },
 		},
 	});
 
