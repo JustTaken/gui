@@ -6,13 +6,13 @@ pub const Parser = struct {
 	content: []const u8,
 	index: usize,
 
-	pub fn parse(allocator: std.mem.Allocator, path: []const u8) !Parser {
-		const content = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
+	pub fn parse(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Parser {
+		const content = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024));
 
 		var self: Parser = undefined;
 
 		self.allocator = allocator;
-		self.nodes = std.ArrayList(Node) {};
+		self.nodes = .empty;
 		self.content = content;
 		self.index = 0;
 
@@ -82,7 +82,7 @@ pub const Parser = struct {
 		}
 
 		fn parseProperties(parser: *Parser) !std.ArrayList(Property) {
-			var properties = std.ArrayList(Property){};
+			var properties: std.ArrayList(Property) = .empty;
 
 			while (try Property.init(parser)) |property| {
 				properties.append(parser.allocator, property) catch return error.OutOfMemory;
@@ -105,7 +105,7 @@ pub const Parser = struct {
 		}
 
 		fn parseChilds(parser: *Parser) !std.ArrayList(Node) {
-			var childs = std.ArrayList(Node) {};
+			var childs = std.ArrayList(Node).empty;
 
 			while (try Node.init(parser)) |node| {
 				childs.append(parser.allocator, node) catch return error.OutOfMemory;

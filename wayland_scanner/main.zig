@@ -4,21 +4,74 @@
 
 const std = @import("std");
 const xml = @import("xml");
+const util = @import("util");
+
+const Allocator = util.Allocator;
 
 const Buffer = std.array_list.Managed(u8);
 
-pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	const gpa_allocator = gpa.allocator();
-	const gpa_bytes = try gpa_allocator.alloc(u8, 1024 * 1024);
+pub fn main(init: std.process.Init) !void {
+	var allocator = try Allocator.init(init.arena.allocator(), 1024, 1024);
 
-	defer _ = gpa.deinit();
-	defer gpa_allocator.free(gpa_bytes);
+	var args = try init.minimal.args.iterateAllocator(allocator.main);
+	var buffer = Buffer.init(allocator.main);
 
-	var fixed_buffer = std.heap.FixedBufferAllocator.init(gpa_bytes);
-	const allocator = fixed_buffer.allocator();
+	try buffer.appendSlice("pub const Int = i32;\n");
+	try buffer.appendSlice("pub const Uint = u32;\n");
+	try buffer.appendSlice("pub const Fixed = i32;\n");
+	try buffer.appendSlice("pub const Object = u32;\n");
+	try buffer.appendSlice("pub const Fd = i32;\n");
+	try buffer.appendSlice("pub const String = []u8;\n");
+	try buffer.appendSlice("pub const Array = []u8;\n");
+	try buffer.appendSlice("pub const Opcode = u16;\n");
+	try buffer.appendSlice("pub const Id = Uint;\n");
+	try buffer.appendSlice("pub const NewId = Uint;\n");
+	try buffer.appendSlice("pub const MessageSize = u16;\n");
+	try buffer.appendSlice("pub const UnboundedNewId = struct {\ninterface: String,\nversion: Uint,\nid: Id,\n};\n");
+//
+	//try buffer.appendSlice("const root = @import(\"root.zig\");\n");
+	//try buffer.appendSlice("const Int = root.Int;\n");
+	//try buffer.appendSlice("const Uint = root.Uint;\n");
+	//try buffer.appendSlice("const Fixed = root.Fixed;\n");
+	//try buffer.appendSlice("const Object = root.Object;\n");
+	//try buffer.appendSlice("const Fd = root.Fd;\n");
+	//try buffer.appendSlice("const String = root.String;\n");
+	//try buffer.appendSlice("const Array = root.Array;\n");
+	//try buffer.appendSlice("const NewId = root.NewId;\n");
+//
+	//try buffer.appendSlice("const UnboundedNewId = root.UnboundedNewId;\n");
+	//try buffer.appendSlice("const Id = root.Id;\n");
+	//try buffer.appendSlice("const Writer = root.Writer;\n");
+	//try buffer.appendSlice("const Reader = root.Reader;\n");
 
-	try generate(allocator);
+	_ = args.next();
+
+	while (args.next()) |path| {
+		defer allocator.clearTmp();
+		generate(allocator.tmp, &buffer, init.io, path) catch {
+			try outputFile(allocator.tmp, &buffer, init.io, path);
+			break;
+		};
+	}
+	//const protocols: []const [2][]const u8 = &.{
+		//.{"asset/wayland_protocol/wayland.xml", "wl_"},
+		//.{"asset/wayland_protocol/xdg_shell.xml", "xdg_"},
+		//.{"asset/wayland_protocol/linux_dmabuf_v1.xml", "zwp_"},
+	//};
+
+	// const output_file = try std.fs.cwd().createFile("wayland/interface.zig", .{.read = true});
+	// try output_file.writeAll(buffer.items);
+}
+
+pub fn outputFile(allocator: std.mem.Allocator, buffer: *Buffer, io: std.Io, path: []const u8) !void {
+	const extension = std.fs.path.extension(path);
+
+	if (!std.mem.eql(u8, extension, ".zig")) return error.Extension;
+
+	const file = try std.Io.Dir.cwd().createFile(io, path, .{});
+
+	var writer = file.writer(io, try allocator.alloc(u8, 4096));
+	try writer.interface.writeAll(buffer.items);
 }
 
 pub fn capitalize(buffer: *Buffer, string: []const u8) !void {
@@ -41,55 +94,31 @@ pub fn capitalize(buffer: *Buffer, string: []const u8) !void {
 	}
 }
 
-pub fn generate(allocator: std.mem.Allocator) !void {
-	var buffer = Buffer.init(allocator);
-	
-	const protocols: []const [2][]const u8 = &.{
-		.{"asset/wayland_protocol/wayland.xml", "wl_"},
-		.{"asset/wayland_protocol/xdg_shell.xml", "xdg_"},
-		.{"asset/wayland_protocol/linux_dmabuf_v1.xml", "zwp_"},
-	};
+pub fn generate(allocator: std.mem.Allocator, buffer: *Buffer, io: std.Io, path: []const u8) !void {
+	const basename = std.fs.path.basename(path);
+	const extension = std.fs.path.extension(basename);
+	const prefix = try std.mem.concat(allocator, u8, &.{basename[0..basename.len - extension.len], "_"});
 
-	try buffer.appendSlice("const root = @import(\"root.zig\");\n");
-	try buffer.appendSlice("const Int = root.Int;\n");
-	try buffer.appendSlice("const Uint = root.Uint;\n");
-	try buffer.appendSlice("const Fixed = root.Fixed;\n");
-	try buffer.appendSlice("const Object = root.Object;\n");
-	try buffer.appendSlice("const Fd = root.Fd;\n");
-	try buffer.appendSlice("const String = root.String;\n");
-	try buffer.appendSlice("const Array = root.Array;\n");
-	try buffer.appendSlice("const NewId = root.NewId;\n");
-	try buffer.appendSlice("const UnboundedNewId = root.UnboundedNewId;\n");
-	try buffer.appendSlice("const Id = root.Id;\n");
-	try buffer.appendSlice("const Writer = root.Writer;\n");
-	try buffer.appendSlice("const Reader = root.Reader;\n");
+	if (!std.mem.eql(u8, extension, ".xml")) return error.Extension;
 
-	for (protocols) |protocol| {
-		const path = protocol[0];
-		const prefix = protocol[1];
+	const parser = try xml.Parser.parse(allocator, io, path);
 
-		const parser = try xml.Parser.parse(allocator, path);
+	try buffer.appendSlice("pub fn ");
+	try capitalize(buffer, prefix[0..prefix.len - 1]);
+	try buffer.appendSlice("(T: type) type {\n");
+	try buffer.appendSlice("\treturn struct {\n");
 
-		try buffer.appendSlice("pub fn ");
-		try capitalize(&buffer, prefix[0..prefix.len - 1]);
-		try buffer.appendSlice("(T: type) type {\n");
-		try buffer.appendSlice("\treturn struct {\n");
-
-		for (parser.nodes.items) |node| {
-			if (std.mem.eql(u8, node.name, "protocol")) {
-				for (node.childs.items) |child| {
-					if (std.mem.eql(u8, child.name, "interface")) {
-						try write_interface(child, &buffer, prefix);
-					}
+	for (parser.nodes.items) |node| {
+		if (std.mem.eql(u8, node.name, "protocol")) {
+			for (node.childs.items) |child| {
+				if (std.mem.eql(u8, child.name, "interface")) {
+					try write_interface(child, buffer, prefix);
 				}
 			}
 		}
-
-		try buffer.appendSlice("\t};\n}\n");
 	}
 
-	const output_file = try std.fs.cwd().createFile("wayland/interface.zig", .{.read = true});
-	try output_file.writeAll(buffer.items);
+	try buffer.appendSlice("\t};\n}\n");
 }
 
 fn write_interface_function_request(node: xml.Parser.Node, buffer: *Buffer, prefix: []const u8, interface_name: []const u8, opcode: usize) !void {

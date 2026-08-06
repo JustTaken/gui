@@ -1,8 +1,8 @@
 const std = @import("std");
 
-pub const c = @cImport({
-	@cInclude("vulkan/vulkan.h");
-});
+// pub const c = @cImport({
+	// @cInclude("vulkan/vulkan.h");
+// });
 
 pub const Allocator = struct {
 	main: std.mem.Allocator,
@@ -11,7 +11,7 @@ pub const Allocator = struct {
 	main_buffer: std.heap.FixedBufferAllocator,
 	tmp_buffer: std.heap.FixedBufferAllocator,
 
-	pub fn init(main_pages: u32, tmp_pages: u32, allocator: std.mem.Allocator) !*Allocator {
+	pub fn init(allocator: std.mem.Allocator, main_pages: u32, tmp_pages: u32) !*Allocator {
 		const self = try allocator.create(Allocator);
 		const page_size = std.heap.pageSize();
 
@@ -27,10 +27,8 @@ pub const Allocator = struct {
 		return self;
 	}
 
-	pub fn deinit(self: *Allocator, allocator: std.mem.Allocator) void {
-		allocator.free(self.tmp_buffer.buffer);
-		allocator.free(self.main_buffer.buffer);
-		allocator.destroy(self);
+	pub fn clearTmp(self: *Allocator) void {
+		self.tmp_buffer.end_index = 0;
 	}
 };
 

@@ -28,12 +28,13 @@ pub fn build(builder: *std.Build) void {
 		},
 	});
 
-	const wayland_generator_module = builder.addModule("wayland_generator", .{
-		.root_source_file = builder.path("wayland/generator.zig"),
+	const wayland_scanner_module = builder.addModule("wayland_scanner", .{
+		.root_source_file = builder.path("wayland_scanner/main.zig"),
 		.target = target,
 		.optimize = optimize,
 		.imports = &.{
 			.{ .name = "xml", .module = xml_module },
+			.{ .name = "util", .module = util_module },
 		},
 	});
 
@@ -72,16 +73,25 @@ pub fn build(builder: *std.Build) void {
 		},
 	});
 
-	const wayland_generator_exe = builder.addExecutable(.{
-		.name = "wayland_generator",
-		.root_module = wayland_generator_module,
+	const wayland_scanner_exe = builder.addExecutable(.{
+		.name = "wayland_scanner",
+		.root_module = wayland_scanner_module,
 	});
 
-	const wayland_generator_step = builder.step("make", "Build wayland protocol from xml");
-	const run_wayland_generator = builder.addRunArtifact(wayland_generator_exe);
+	//const wayland_scanner_step = builder.step("make", "Build wayland protocol from xml");
+	const run_wayland_scanner = builder.addRunArtifact(wayland_scanner_exe);
+	run_wayland_scanner.addFileArg(builder.path("asset/wayland_protocol/wl.xml"));
+	run_wayland_scanner.addFileArg(builder.path("asset/wayland_protocol/xdg.xml"));
+	run_wayland_scanner.addFileArg(builder.path("asset/wayland_protocol/zwp.xml"));
 
-	wayland_generator_step.dependOn(&run_wayland_generator.step);
-	run_wayland_generator.step.dependOn(builder.getInstallStep());
+	const output = run_wayland_scanner.addOutputFileArg("interface.zig");
+
+	wayland_module.addAnonymousImport("interface", .{
+		.root_source_file = output,
+	});
+
+	//wayland_scanner_step.dependOn(&run_wayland_scanner.step);
+	//run_wayland_scanner.step.dependOn(builder.getInstallStep());
 
 	const exe = builder.addExecutable(.{
 		.name = "exe",

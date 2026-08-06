@@ -1,5 +1,6 @@
 const std = @import("std");
 const renderer = @import("renderer");
+const interface = @import("interface");
 
 const Frame = renderer.Frame;
 const DrmFormat = renderer.DrmFormat;
@@ -11,20 +12,20 @@ const List = std.DoublyLinkedList;
 const Node = List.Node;
 
 const c = @cImport({
-    @cInclude("sys/socket.h");
+	@cInclude("sys/socket.h");
 });
 
-pub const Int = i32;
-pub const Uint = u32;
-pub const Fixed = i32;
-pub const Object = u32;
-pub const Fd = i32;
-pub const String = []u8;
-pub const Array = []u8;
-pub const Opcode = u16;
-pub const Id = Uint;
-pub const NewId = Uint;
-pub const MessageSize = u16;
+const Int = interface.Int;
+const Uint = interface.Uint;
+const Fixed = interface.Fixed;
+const Object = interface.Object;
+const Fd = interface.Fd;
+const String = interface.String;
+const Array = interface.Array;
+const Opcode = interface.Opcode;
+const Id = interface.Id;
+const NewId = interface.NewId;
+const MessageSize = interface.MessageSize;
 
 pub const UnboundedNewId = struct {
 	interface: String,
@@ -32,11 +33,11 @@ pub const UnboundedNewId = struct {
 	id: Id,
 };
 
-const cmsghdr = extern struct {
-	len: usize,
-	level: i32,
-	type: i32,
-};
+//const cmsghdr = extern struct {
+	//len: usize,
+	//level: i32,
+	//type: i32,
+//};
 
 pub fn Wayland(T: type) type {
 	_ = T;
@@ -93,25 +94,25 @@ pub fn Wayland(T: type) type {
 			modifier: u64,
 		};
 
-		pub fn init(allocator: *Allocator, width: usize, height: usize) !void {
-			const env_map = try std.process.getEnvMap(allocator.tmp);
-
-			const xdg_path = env_map.get("XDG_RUNTIME_DIR") orelse return error.EnvFailed;
-			const wayland_display = env_map.get("WAYLAND_DISPLAY") orelse return error.DisplayFailed;
+		pub fn init(allocator: *Allocator, env: *std.process.Environ.Map, width: usize, height: usize) !void {
+			const xdg_path = env.get("XDG_RUNTIME_DIR") orelse return error.EnvFailed;
+			const wayland_display = env.get("WAYLAND_DISPLAY") orelse return error.DisplayFailed;
 
 			const path = try std.fs.path.join(allocator.tmp, &.{xdg_path, wayland_display});
 
-			const socket = try std.posix.socket(std.c.AF.UNIX, std.c.SOCK.STREAM, 0);
-			defer std.posix.close(socket);
+			const socket = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM, 0);
+			defer _ = std.c.close(socket);
+
+			if (socket <= 0) return error.Socket;
 
 			var sockaddr = std.posix.sockaddr.un {
-				.path = .{0} ** 108,
+				.path = .{0} ** 104,
 			};
 
 			std.mem.copyForwards(u8, &sockaddr.path, path);
 			sockaddr.path[path.len] = 0;
 
-			try std.posix.connect(socket, @ptrCast(@alignCast(&sockaddr)), @sizeOf(std.posix.sockaddr.un));
+			if (std.c.connect(socket, @ptrCast(@alignCast(&sockaddr)), @sizeOf(std.posix.sockaddr.un)) != 0) return error.Connect;
 
 			const wl_display = try allocator.main.create(wl.Display);
 			const wl_registry = try allocator.main.create(wl.Registry);
@@ -210,9 +211,9 @@ pub fn Wayland(T: type) type {
 			};
 
 			const fd_align = std.mem.alignForward(usize, @sizeOf(Fd) * 10, @sizeOf(usize));
-			const cmsg_align = std.mem.alignForward(usize, @sizeOf(cmsghdr), @sizeOf(usize));
+			const cmsg_align = std.mem.alignForward(usize, @sizeOf(std.c.cmsghdr), @sizeOf(usize));
 
-			var header = Writer.init(try allocator.tmp.alignedAlloc(u8, .of(cmsghdr), cmsg_align + fd_align));
+			var header = Writer.init(try allocator.tmp.alignedAlloc(u8, .of(std.c.cmsghdr), cmsg_align + fd_align));
 			const ioptr: *[1]std.posix.iovec = &io;
 
 			var msg = std.posix.msghdr {
@@ -225,8 +226,8 @@ pub fn Wayland(T: type) type {
 				.flags = 0,
 			};
 
-			const cmsg: *cmsghdr = @ptrCast(@alignCast(header.data.ptr));
-			const msg_header_size = std.mem.alignForward(usize, @sizeOf(cmsghdr), @sizeOf(usize));
+			const cmsg: *std.c.cmsghdr = @ptrCast(@alignCast(header.data.ptr));
+			const msg_header_size = std.mem.alignForward(usize, @sizeOf(std.c.cmsghdr), @sizeOf(usize));
 			const size = std.c.recvmsg(self.socket, &msg, 0);
 
 			self.reader.data.len += @intCast(size);
@@ -253,17 +254,17 @@ pub fn Wayland(T: type) type {
 				.len = @intCast(self.writer.offset),
 			};
 
-			const cmsg_align: usize = @intCast(std.mem.alignForward(usize, @sizeOf(cmsghdr), @sizeOf(usize)));
+			const cmsg_align: usize = @intCast(std.mem.alignForward(usize, @sizeOf(std.c.cmsghdr), @sizeOf(usize)));
 			const fd_size: usize = @intCast(self.writer.fds.items.len * @sizeOf(Fd));
 
-			var cmsg: cmsghdr = std.mem.zeroes(cmsghdr);
+			var cmsg: std.c.cmsghdr = std.mem.zeroes(std.c.cmsghdr);
 			cmsg.len = @intCast(cmsg_align + fd_size);
 			cmsg.type = c.SCM_RIGHTS;
 			cmsg.level = c.SOL_SOCKET;
 
 			var header = Writer.init(try allocator.tmp.alloc(u8, 1024));
-			header.write_raw(cmsghdr, cmsg);
-			header.padd(cmsg_align - @sizeOf(cmsghdr));
+			header.write_raw(std.c.cmsghdr, cmsg);
+			header.padd(cmsg_align - @sizeOf(std.c.cmsghdr));
 			header.append(Fd, self.writer.fds.items);
 
 			const ioptr: *[1]std.posix.iovec = &io;
@@ -273,11 +274,13 @@ pub fn Wayland(T: type) type {
 				.iov = ioptr,
 				.iovlen = 1,
 				.control = header.data.ptr,
-				.controllen = std.mem.alignForward(usize, header.offset, @sizeOf(usize)),
+				.controllen = @intCast(std.mem.alignForward(usize, header.offset, @sizeOf(usize))),
 				.flags = 0,
 			};
 
-			if (try std.posix.sendmsg(self.socket, @ptrCast(@alignCast(&msg)), 0) != self.writer.offset) {
+			const count = std.c.sendmsg(self.socket, @ptrCast(@alignCast(&msg)), 0);
+			if (count != self.writer.offset) {
+				std.debug.print("{d}\n", .{count});
 				return error.SendMessageFail;
 			}
 
@@ -366,12 +369,12 @@ pub fn Wayland(T: type) type {
 			_ = id;
 		}
 
-		fn wl_registry_global(self: *Self, registry: *wl.Registry, name: Uint, interface: String, version: Uint) void {
-			const interface_name = interface[0..interface.len - 1];
+		fn wl_registry_global(self: *Self, registry: *wl.Registry, name: Uint, interface_string: String, version: Uint) void {
+			const interface_name = interface[0..interface_string.len - 1];
 
 			if (std.mem.eql(u8, interface_name, xdg.WmBase.interface_name)) {
 				self.alloc(xdg.WmBase, self.xdg_wm_base) catch @panic("OUT OF MEMORY");
-				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.xdg_wm_base.id, .version = version});
+				registry.bind_request(&self.writer, name, .{.interface = interface_string, .id = self.xdg_wm_base.id, .version = version});
 
 				self.alloc(xdg.Surface, self.xdg_surface) catch @panic("FILED TO ASSIGN INTERFACE ID");
 				self.xdg_wm_base.get_xdg_surface_request(&self.writer, self.xdg_surface.id, self.wl_surface.id);
@@ -382,24 +385,24 @@ pub fn Wayland(T: type) type {
 				//self.wl_surface.commit_request(&self.writer);
 			} else if (std.mem.eql(u8, interface_name, wl.Compositor.interface_name)) {
 				self.alloc(wl.Compositor, self.wl_compositor) catch @panic("FAILED TO ASSIGN INTERFACE ID");
-				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.wl_compositor.id, .version = version});
+				registry.bind_request(&self.writer, name, .{.interface = interface_string, .id = self.wl_compositor.id, .version = version});
 
 				self.alloc(wl.Surface, self.wl_surface) catch @panic("FAILED TO ASSIGN ID");
 				self.wl_compositor.create_surface_request(&self.writer, self.wl_surface.id);
 			} else if (std.mem.eql(u8, interface_name, wl.Seat.interface_name)) {
 				self.alloc(wl.Seat, self.wl_seat) catch @panic("FAILED TO ASSIGN INTERFACE ID");
-				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.wl_seat.id, .version = version});
+				registry.bind_request(&self.writer, name, .{.interface = interface_string, .id = self.wl_seat.id, .version = version});
 			} else if (std.mem.eql(u8, interface_name, zwp.LinuxDmabufV1.interface_name)) {
 				self.alloc(zwp.LinuxDmabufV1, self.zwp_linux_dmabuf_v1) catch @panic("FAILED TO ASSIGN INTERFACE ID");
-				registry.bind_request(&self.writer, name, .{.interface = interface, .id = self.zwp_linux_dmabuf_v1.id, .version = version});
+				registry.bind_request(&self.writer, name, .{.interface = interface_string, .id = self.zwp_linux_dmabuf_v1.id, .version = version});
 
 				self.alloc(zwp.LinuxDmabufFeedbackV1, self.zwp_linux_dmabuf_feedback_v1) catch @panic("FAILED TO ASSIGN INTERFACE ID");
 				self.zwp_linux_dmabuf_v1.get_surface_feedback_request(&self.writer, self.zwp_linux_dmabuf_feedback_v1.id, self.wl_surface.id);
 			} else {
-				std.debug.print("hello global: name: {d}, version: {d}, interface: {s}: NOT BOUND\n", .{name, version, interface});
+				std.debug.print("hello global: name: {d}, version: {d}, interface_string: {s}: NOT BOUND\n", .{name, version, interface_string});
 				return;
 			}
-			std.debug.print("hello global: name: {d}, version: {d}, interface: {s}: BOUND\n", .{name, version, interface});
+			std.debug.print("hello global: name: {d}, version: {d}, interface_string: {s}: BOUND\n", .{name, version, interface_string});
 		}
 
 		fn wl_registry_global_remove(self: *Self, registry: *wl.Registry, name: Uint) void {
@@ -529,8 +532,12 @@ pub fn Wayland(T: type) type {
 		fn zwp_linux_dmabuf_feedback_v1_format_table(self: *Self, dmabuf_feedback: *zwp.LinuxDmabufFeedbackV1, fd: Fd, size: Uint) void {
 				std.debug.print("zwp_linux_dmabuf_feedback_v1_format_table\n", .{});
 			_ = dmabuf_feedback;
-			const buffer = std.posix.mmap(null, size, std.posix.PROT.READ, .{.TYPE = .PRIVATE }, fd, 0) catch @panic("MMAP");
-			defer std.posix.munmap(buffer);
+			const bytes = std.c.mmap(null, size, .{ .READ = true }, .{.TYPE = .PRIVATE }, fd, 0);
+			defer _ = std.c.munmap(@alignCast(bytes), size);
+
+			const b: [*]u8 = @ptrCast(@alignCast(bytes));
+
+			const buffer = b[0..size];
 
 			const formats = std.mem.bytesAsSlice(SupportedDrmFormat, buffer);
 
@@ -611,7 +618,7 @@ pub const Reader = struct {
 			.data = d,
 			.offset = 0,
 			.size = size,
-			.fds = std.ArrayList(Fd) {},
+			.fds = .empty,
 			.fd_offset = 0,
 		};
 	}
@@ -686,7 +693,7 @@ pub const Writer = struct {
 		return .{
 			.data = data,
 			.offset = 0,
-			.fds = std.ArrayList(Fd) {},
+			.fds = .empty,
 		};
 	}
 
