@@ -11,6 +11,22 @@ const UnboundedNewId = root.UnboundedNewId;
 const Id = root.Id;
 const Writer = root.Writer;
 const Reader = root.Reader;
+
+pub fn Interface(T: type) type {
+	return struct {
+		pub const Wl = struct {
+			pub const Display = struct {
+				id: Id,
+				event: *const fn(*T, *Display, Event) void,
+
+				const Event = union(enum) {
+					error_event: struct { object: Object, opcode: Uint,  message: String },
+
+				};
+			};
+		};
+	};
+}
 pub fn Wl(T: type) type {
 	return struct {
 		pub const Display = struct {

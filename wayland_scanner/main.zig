@@ -171,19 +171,23 @@ fn write_interface_function_event(node: xml.Parser.Node, buffer: *Buffer, prefix
 	const function_name = node.properties.items[0].value;
 	const postfix = "event";
 
-	try buffer.appendSlice("\t\t\tpub fn ");
-	try buffer.appendSlice(function_name);
-	try buffer.appendSlice("_");
-	try buffer.appendSlice(postfix);
-	try buffer.appendSlice("(self: *");
-	try capitalize(buffer, interface_name[prefix.len..]);
+	//try buffer.appendSlice("\t\t\tpub fn ");
+	//try buffer.appendSlice(function_name);
+	//try buffer.appendSlice("_");
+	//try buffer.appendSlice(postfix);
+	//try buffer.appendSlice("(self: *");
+	//try capitalize(buffer, interface_name[prefix.len..]);
 
-	try buffer.appendSlice(", ptr: *T, reader: *Reader) void {\n");
-	var has_body = false;
+	//try buffer.appendSlice(", ptr: *T, reader: *Reader) void {\n");
+	//var has_body = false;
+	try buffer.appendSlice("\t\t\t\t\t\tconst event_value: Event = .{");
+	try buffer.appendSlice("\t\t\t\t\t\t\t.");
+	try buffer.appendSlice(function_name);
+	try buffer.appendSlice("_event = .{\n");
 
 	for (node.childs.items) |child| {
 		if (std.mem.eql(u8, child.name, "arg")) {
-			try buffer.appendSlice("\t\t\t\tconst ");
+			try buffer.appendSlice("\t\t\t\t\t\t\t\t.");
 			try buffer.appendSlice(child.properties.items[0].value);
 			try buffer.appendSlice(" = reader.read_");
 			try buffer.appendSlice(child.properties.items[1].value);
@@ -191,44 +195,46 @@ fn write_interface_function_event(node: xml.Parser.Node, buffer: *Buffer, prefix
 			has_body = true;
 		}
 	}
+	try buffer.appendSlice("\t\t\t\t\t\t\t}\n");
+	try buffer.appendSlice("\t\t\t\t\t\t};\n");
 
-	if (!has_body) {
-		try buffer.appendSlice("\t\t\t_ = reader;\n");
-	}
+	//if (!has_body) {
+		//try buffer.appendSlice("\t\t\t_ = reader;\n");
+	//}
 
-	try buffer.appendSlice("\t\t\t\tself.");
-	try buffer.appendSlice(function_name);
-	try buffer.appendSlice("_callback(ptr, self");
-
-	for (node.childs.items) |child| {
-		if (std.mem.eql(u8, child.name, "arg")) {
-			try buffer.appendSlice(", ");
-			try buffer.appendSlice(child.properties.items[0].value);
-		}
-	}
-
-	try buffer.appendSlice(");\n");
-
-	try buffer.appendSlice("\t\t\t}\n");
+	//try buffer.appendSlice("\t\t\t\t\t\tself.event(");
+	//try buffer.appendSlice(function_name);
+	//try buffer.appendSlice("_callback(ptr, self");
+//
+	//for (node.childs.items) |child| {
+		//if (std.mem.eql(u8, child.name, "arg")) {
+			//try buffer.appendSlice(", ");
+			//try buffer.appendSlice(child.properties.items[0].value);
+		//}
+	//}
+//
+	//try buffer.appendSlice(");\n");
+//
+	//try buffer.appendSlice("\t\t\t}\n");
 }
 
-fn write_interface_event(node: xml.Parser.Node, buffer: *Buffer, prefix: []const u8, interface_name: []const u8) !void {
-	const function_name = node.properties.items[0].value;
-
-	try buffer.appendSlice("\t\t\t");
-	try buffer.appendSlice(function_name);
-	try buffer.appendSlice("_callback: *const fn(*T, *");
-	try capitalize(buffer, interface_name[prefix.len..]);
-
-	for (node.childs.items) |child| {
-		if (std.mem.eql(u8, child.name, "arg")) {
-			try buffer.appendSlice(", ");
-			try capitalize(buffer, child.properties.items[1].value);
-		}
-	}
-
-	try buffer.appendSlice(") void,\n");
-}
+//fn write_interface_event(node: xml.Parser.Node, buffer: *Buffer, prefix: []const u8, interface_name: []const u8) !void {
+	//const function_name = node.properties.items[0].value;
+//
+	//try buffer.appendSlice("\t\t\t");
+	//try buffer.appendSlice(function_name);
+	//try buffer.appendSlice("_callback: *const fn(*T, *");
+	//try capitalize(buffer, interface_name[prefix.len..]);
+//
+	//for (node.childs.items) |child| {
+		//if (std.mem.eql(u8, child.name, "arg")) {
+			//try buffer.appendSlice(", ");
+			//try capitalize(buffer, child.properties.items[1].value);
+		//}
+	//}
+//
+	//try buffer.appendSlice(") void,\n");
+//}
 
 fn write_interface_enum(node: xml.Parser.Node, buffer: *Buffer) !void {
 	const enum_name = node.properties.items[0].value;
@@ -281,9 +287,13 @@ fn write_interface(node: xml.Parser.Node, buffer: *Buffer, prefix: []const u8) !
 		}
 	}
 
-	for (events[0..event_size]) |i| {
-			try write_interface_event(node.childs.items[i], buffer, prefix, interface_name);
-	}
+	try buffer.appendSlice("\t\t\tevent: *const fn (*T, ");
+	try capitalize(buffer, interface_name);
+	try buffer.appendSlice(", Event) void,\n");
+
+	//for (events[0..event_size]) |i| {
+			//try write_interface_event(node.childs.items[i], buffer, prefix, interface_name);
+	//}
 
 	try buffer.appendSlice("\t\t\tpub const interface_name = \"");
 	try buffer.appendSlice(interface_name);
@@ -292,7 +302,18 @@ fn write_interface(node: xml.Parser.Node, buffer: *Buffer, prefix: []const u8) !
 	try buffer.appendSlice(interface_version);
 	try buffer.appendSlice("\";\n");
 
-	try buffer.appendSlice("\t\t\tpub fn event(self_ptr: *anyopaque, ptr: *T, reader: *Reader) void {\n");
+	try buffer.appendSlice("\t\t\tconst Event = union(enum) {\n");
+	for (events[0..event_size]) |i| {
+		try buffer.appendSlice("\t\t\t\t);
+		try buffer.appendSlice(node.childs.items[i].properties.items[0].value);
+		try buffer.appendSlice("_event = struct {\n");
+		try buffer.appendSlice("_event = struct {\n");
+
+		try buffer.appendSlice("\t\t\t\t},);
+	}
+	try buffer.appendSlice("\t\t\t};\n");
+
+	try buffer.appendSlice("\t\t\tpub fn parse(self_ptr: *anyopaque, ptr: *T, reader: *Reader) void {\n");
 	try buffer.appendSlice("\t\t\t\tconst opcode = reader.read_opcode();\n");
 	try buffer.appendSlice("\t\t\t\tconst size = reader.read_message_size();\n");
 	try buffer.appendSlice("\t\t\t\t_ = size;\n");
@@ -307,8 +328,10 @@ fn write_interface(node: xml.Parser.Node, buffer: *Buffer, prefix: []const u8) !
 
 	for (events[0..event_size], 0..) |i, e| {
 		try buffer.print("\t\t\t\t\t{d} => ", .{e});
-		try buffer.appendSlice(node.childs.items[i].properties.items[0].value);
-		try buffer.appendSlice("_event(@ptrCast(@alignCast(self_ptr)), ptr, reader),\n");
+		try write_interface_event(node.childs.items[i], buffer, interface_name);
+		try buffer.appendSlice("\t\t\t\t\t},\n");
+		//try buffer.appendSlice(node.childs.items[i].properties.items[0].value);
+		//try buffer.appendSlice("_event(@ptrCast(@alignCast(self_ptr)), ptr, reader),\n");
 	}
 
 	try buffer.appendSlice("\t\t\t\t\t else => @panic(\"Unknown opcode\"),\n");
@@ -320,9 +343,9 @@ fn write_interface(node: xml.Parser.Node, buffer: *Buffer, prefix: []const u8) !
 		try write_interface_enum(node.childs.items[i], buffer);
 	}
 
-	for (events[0..event_size]) |i| {
-		try write_interface_function_event(node.childs.items[i], buffer, prefix, interface_name);
-	}
+	//for (events[0..event_size]) |i| {
+		//try write_interface_function_event(node.childs.items[i], buffer, prefix, interface_name);
+	//}
 
 	for (requests[0..request_size], 0..) |i, code| {
 		try write_interface_function_request(node.childs.items[i], buffer, prefix, interface_name, code);
